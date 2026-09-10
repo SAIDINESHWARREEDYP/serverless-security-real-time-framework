@@ -129,22 +129,29 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
           <Terminal className="w-4 h-4 text-[#00d2ff]" />
           Zero-Trust Simulation Console
         </h3>
-        <button
-          type="button"
-          onClick={() => setShowTuning(!showTuning)}
-          className={`text-[10px] px-2.5 py-1 rounded border transition-all flex items-center gap-1.5 ${
-            showTuning
-              ? 'bg-[#00d2ff] text-black font-bold border-[#00d2ff]'
-              : 'bg-[#00d2ff]/10 text-[#00d2ff] border-[#00d2ff]/30 hover:bg-[#00d2ff]/20'
-          }`}
-        >
-          <Sliders className="w-3 h-3" />
-          {showTuning ? 'Hide Policy Sliders' : 'Tune Defense Rules'}
-        </button>
+        {currentSession?.user.role === 'Admin' ? (
+          <button
+            type="button"
+            onClick={() => setShowTuning(!showTuning)}
+            className={`text-[10px] px-2.5 py-1 rounded border transition-all flex items-center gap-1.5 ${
+              showTuning
+                ? 'bg-[#00d2ff] text-black font-bold border-[#00d2ff]'
+                : 'bg-[#00d2ff]/10 text-[#00d2ff] border-[#00d2ff]/30 hover:bg-[#00d2ff]/20'
+            }`}
+          >
+            <Sliders className="w-3 h-3" />
+            {showTuning ? 'Hide Policy Sliders' : 'Tune Defense Rules'}
+          </button>
+        ) : (
+          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1">
+            <Lock className="w-2.5 h-2.5" />
+            Policy Tuning: Admin Only
+          </span>
+        )}
       </div>
 
-      {/* Defense Policy Tuning Drawer */}
-      {showTuning && (
+      {/* Defense Policy Tuning Drawer - Admin Only */}
+      {showTuning && currentSession?.user.role === 'Admin' && (
         <div className="mb-4 p-3.5 bg-[#090d16] border border-[#00d2ff]/30 rounded-lg space-y-3">
           <div className="flex items-center justify-between text-xs text-[#00d2ff] font-bold border-b border-[#223452] pb-1.5">
             <span className="flex items-center gap-1.5">
@@ -328,13 +335,24 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
           <label htmlFor="route" className="block text-[11px] text-[#6b7c96] uppercase font-bold tracking-wider">
             Target Serverless Cloud Function
           </label>
-          <button
-            type="button"
-            onClick={() => setIsCustom(!isCustom)}
-            className="text-[10px] text-[#00d2ff] hover:underline"
-          >
-            {isCustom ? 'Standard Cloud Functions' : 'Custom Route'}
-          </button>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+              currentSession?.user.role === 'Admin' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
+              currentSession?.user.role === 'Developer' ? 'bg-blue-950 text-blue-300 border border-blue-800' :
+              'bg-emerald-950 text-emerald-300 border border-emerald-800'
+            }`}>
+              {currentSession?.user.role === 'Admin' ? 'Tier 1, 2, 3 Permitted' :
+               currentSession?.user.role === 'Developer' ? 'Tier 1 & 2 Permitted' :
+               'Tier 1 Only'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsCustom(!isCustom)}
+              className="text-[10px] text-[#00d2ff] hover:underline"
+            >
+              {isCustom ? 'Standard Cloud Functions' : 'Custom Route'}
+            </button>
+          </div>
         </div>
 
         {!isCustom ? (
@@ -344,12 +362,24 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
             onChange={(e) => onSelectRoute(e.target.value)}
             className="w-full p-2.5 bg-[#090d16] border border-[#334e78] text-white text-xs rounded focus:outline-none focus:border-[#00d2ff] transition-colors"
           >
-            <option value="getDashboardMetrics">/api/getDashboardMetrics (Tier 1 • Public Telemetry - All Roles)</option>
-            <option value="viewSecurityLogs">/api/viewSecurityLogs (Tier 2 • Privileged Audit Log - Dev &amp; Admin)</option>
-            <option value="deployWorkerCode">/api/deployWorkerCode (Tier 2 • Deploy Edge Worker - Dev &amp; Admin)</option>
-            <option value="rotateEncryptionKeys">/api/rotateEncryptionKeys (Tier 3 • Rotate KMS Master Keys - Admin Only)</option>
-            <option value="updateSystemPolicy">/api/updateSystemPolicy (Tier 3 • Propagate Security Rules - Admin Only)</option>
-            <option value="purgeColdStorageBackups">/api/purgeColdStorageBackups (Tier 3 • Purge Archive Volume - Admin Only)</option>
+            <option value="getDashboardMetrics">
+              /api/getDashboardMetrics [Tier 1 • Telemetry - Permitted for {currentSession?.user.role || 'All'}]
+            </option>
+            <option value="viewSecurityLogs">
+              /api/viewSecurityLogs [Tier 2 • Audit Logs - {currentSession?.user.role === 'Guest' ? '403 Forbidden for Guest' : 'Permitted'}]
+            </option>
+            <option value="deployWorkerCode">
+              /api/deployWorkerCode [Tier 2 • Deploy Worker - {currentSession?.user.role === 'Guest' ? '403 Forbidden for Guest' : 'Permitted'}]
+            </option>
+            <option value="rotateEncryptionKeys">
+              /api/rotateEncryptionKeys [Tier 3 • KMS Master - {currentSession?.user.role === 'Admin' ? 'Permitted' : '403 Forbidden (Admin Only)'}]
+            </option>
+            <option value="updateSystemPolicy">
+              /api/updateSystemPolicy [Tier 3 • Defense Policy - {currentSession?.user.role === 'Admin' ? 'Permitted' : '403 Forbidden (Admin Only)'}]
+            </option>
+            <option value="purgeColdStorageBackups">
+              /api/purgeColdStorageBackups [Tier 3 • Archive Purge - {currentSession?.user.role === 'Admin' ? 'Permitted' : '403 Forbidden (Admin Only)'}]
+            </option>
           </select>
         ) : (
           <div className="relative">

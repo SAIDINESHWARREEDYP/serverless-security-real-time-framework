@@ -17,6 +17,7 @@ export interface SecurityPolicyConfig {
   maxRiskThreshold: number; // default 75
   sequenceViolationPenalty: number; // default 40
   enforceStrictSequence: boolean; // default true
+  globalLockdown?: boolean; // emergency kill-switch
 }
 
 export interface FunctionRule {
@@ -54,5 +55,18 @@ export interface TerminalLogEntry {
   timestamp: string;
   type: 'info' | 'post' | 'get' | 'success' | 'alert' | 'error' | 'metric';
   text: string;
+}
+
+export interface AnomalyAlert {
+  id: string;
+  timestamp: string;
+  type: 'CRITICAL_RISK' | 'PRIVILEGE_ESCALATION' | 'SEQUENCE_VIOLATION' | 'BRUTE_FORCE_ATTEMPT';
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+  username: string;
+  endpoint: string;
+  riskScore: number;
+  message: string;
+  mitigation: string;
+  acknowledged: boolean;
 }
 

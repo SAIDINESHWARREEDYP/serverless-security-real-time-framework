@@ -28,7 +28,8 @@ app.get('/api/health', (req, res) => {
 let policyConfig = {
   maxRiskThreshold: 75,
   sequenceViolationPenalty: 40,
-  enforceStrictSequence: true
+  enforceStrictSequence: true,
+  globalLockdown: false
 };
 
 // System administrative & inspection endpoints for the console
@@ -67,11 +68,34 @@ app.get('/api/system/policy-config', (req, res) => {
 });
 
 app.post('/api/system/policy-config', (req, res) => {
-  const { maxRiskThreshold, sequenceViolationPenalty, enforceStrictSequence } = req.body;
+  const { maxRiskThreshold, sequenceViolationPenalty, enforceStrictSequence, globalLockdown } = req.body;
   if (typeof maxRiskThreshold === 'number') policyConfig.maxRiskThreshold = Math.max(10, Math.min(100, maxRiskThreshold));
   if (typeof sequenceViolationPenalty === 'number') policyConfig.sequenceViolationPenalty = Math.max(0, Math.min(80, sequenceViolationPenalty));
   if (typeof enforceStrictSequence === 'boolean') policyConfig.enforceStrictSequence = enforceStrictSequence;
+  if (typeof globalLockdown === 'boolean') policyConfig.globalLockdown = globalLockdown;
   res.json({ success: true, policyConfig });
+});
+
+// Update specific user role or risk score dynamically
+app.patch('/api/system/users/:username', (req, res) => {
+  try {
+    const { username } = req.params;
+    const { role, base_risk_score } = req.body;
+    const users = db.getUsers();
+    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!user) {
+      return res.status(404).json({ error: `User '${username}' not found` });
+    }
+    if (role && ['Admin', 'Developer', 'Guest'].includes(role)) {
+      user.role = role;
+    }
+    if (typeof base_risk_score === 'number') {
+      user.base_risk_score = Math.max(0, Math.min(100, Math.round(base_risk_score)));
+    }
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update user' });
+  }
 });
 
 app.post('/api/system/reset', (req, res) => {
@@ -79,7 +103,8 @@ app.post('/api/system/reset', (req, res) => {
   policyConfig = {
     maxRiskThreshold: 75,
     sequenceViolationPenalty: 40,
-    enforceStrictSequence: true
+    enforceStrictSequence: true,
+    globalLockdown: false
   };
   res.json({ success: true, message: 'Database reset to factory test seed baseline.', policyConfig });
 });
@@ -225,6 +250,20 @@ app.all('/api/:route', async (req: Request, res: Response) => {
     if (!user) {
       return res.status(403).json({
         error: 'Security Framework Alert: Identity Spoofing Detected.'
+      });
+    }
+
+    // 1.5 Emergency SecOps Global Perimeter Lockdown
+    if (policyConfig.globalLockdown && user.role !== 'Admin') {
+      await db.prepare('INSERT INTO security_audit_logs (username, requested_function, calculated_risk, status, reason) VALUES (?, ?, ?, ?, ?)')
+        .bind(user.username, path, 100, 'BLOCKED', `[EMERGENCY LOCKDOWN] Cloudflare Edge Firewall actively rejecting non-administrative principal access.`).run();
+      return res.status(403).json({
+        error: `Security Perimeter Lockdown Active: All non-administrative execution is actively suspended by SecOps.`,
+        metrics: {
+          riskScore: 100,
+          status: 'BLOCKED',
+          threatReason: 'Emergency SecOps global lockdown active.'
+        }
       });
     }
 

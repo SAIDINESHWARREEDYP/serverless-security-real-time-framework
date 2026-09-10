@@ -24,7 +24,10 @@ import {
   Users,
   Layers,
   Zap,
-  Filter
+  Filter,
+  Download,
+  Check,
+  FileSpreadsheet
 } from 'lucide-react';
 import { User, SecurityAuditLog, SecurityPolicyConfig } from '../types.ts';
 
@@ -251,6 +254,88 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
     ? Math.round(logs.reduce((s, l) => s + l.calculated_risk, 0) / totalAuditCount)
     : 15;
   const blockRate = totalAuditCount > 0 ? Math.round((totalBlocked / totalAuditCount) * 100) : 0;
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  const handleExportRiskCSV = () => {
+    if (userRiskData.length === 0) return;
+
+    const escapeCsv = (val: string | number | undefined | null) => {
+      const str = String(val ?? '');
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const headers = [
+      'Principal Username',
+      'Assigned Role',
+      'Base Risk (%)',
+      'Total Invocations',
+      'Allowed Requests',
+      'Blocked Requests',
+      'Max Observed Risk (%)',
+      'Average Risk (%)',
+      'Threat Classification',
+      'Policy Cutoff Threshold (%)',
+      'Compliance Clearance'
+    ];
+
+    const rows = userRiskData.map((u) => {
+      const threatClass =
+        u.threatIndex >= maxThreshold ? 'CRITICAL_BREACH' :
+        u.threatIndex >= 50 ? 'ELEVATED_RISK' :
+        u.threatIndex >= 25 ? 'MODERATE_RISK' : 'NOMINAL';
+      const compliance = u.blocked > 0 ? 'ANOMALY_INTERCEPTED' : 'CLEARED_NOMINAL';
+
+      return [
+        escapeCsv(u.username),
+        escapeCsv(u.role),
+        escapeCsv(u.baseRisk),
+        escapeCsv(u.totalRequests),
+        escapeCsv(u.allowed),
+        escapeCsv(u.blocked),
+        escapeCsv(u.observedMaxRisk),
+        escapeCsv(u.avgRisk),
+        escapeCsv(threatClass),
+        escapeCsv(maxThreshold),
+        escapeCsv(compliance)
+      ];
+    });
+
+    const summaryRows = [
+      [],
+      ['--- AUDIT SUMMARY & POLICIES ---'],
+      ['Total Active Principals Evaluated', userRiskData.length],
+      ['Total Requests Intercepted in Ledger', logs.length],
+      ['Total Blocked Requests', totalBlocked],
+      ['Total Allowed Requests', totalAllowed],
+      ['Overall Average System Risk', `${overallAvgRisk}%`],
+      ['System Max Risk Cutoff Threshold', `${maxThreshold}%`],
+      ['Sequence Violation Threat Penalty', `+${policyConfig?.sequenceViolationPenalty ?? 40}%`],
+      ['Audit Report Generation ISO Time', new Date().toISOString()]
+    ];
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((r) => r.join(',')),
+      ...summaryRows.map((r) => r.map((c) => escapeCsv(c)).join(','))
+    ].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    link.setAttribute('download', `system_risk_distribution_audit_report_${dateStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setDownloadSuccess(true);
+    setTimeout(() => setDownloadSuccess(false), 2500);
+  };
 
   return (
     <div className="bg-[#0f172a] border border-[#223452] rounded-xl p-5 shadow-lg relative overflow-hidden font-mono">
@@ -278,8 +363,31 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
           </div>
         </div>
 
-        {/* View Switchers */}
-        <div className="flex items-center gap-2 self-start md:self-auto">
+        {/* View Switchers & CSV Export Button */}
+        <div className="flex items-center gap-2 flex-wrap self-start md:self-auto">
+          <button
+            id="btn-export-risk-distribution-csv"
+            onClick={handleExportRiskCSV}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border shadow-sm ${
+              downloadSuccess
+                ? 'bg-emerald-600 text-white border-emerald-500'
+                : 'bg-[#12233f] hover:bg-[#1a3159] text-blue-400 hover:text-white border-blue-500/40'
+            }`}
+            title="Download full Risk Distribution and Audit Matrix as CSV"
+          >
+            {downloadSuccess ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-white" />
+                <span>CSV Exported!</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Risk CSV</span>
+              </>
+            )}
+          </button>
+
           <div className="flex bg-[#090d16] border border-[#223452] rounded-lg p-1 text-xs">
             <button
               onClick={() => setActiveView('both')}
