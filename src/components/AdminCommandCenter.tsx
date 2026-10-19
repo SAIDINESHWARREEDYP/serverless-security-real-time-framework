@@ -22,15 +22,26 @@ import {
   Play,
   UserCheck,
   UserX,
+  UserPlus,
+  Clock,
+  Sparkles,
+  Building2,
   ExternalLink,
   ChevronRight,
   Shield,
   Activity,
   Layers,
   ArrowRight,
-  Search
+  Search,
+  FileSpreadsheet,
+  FileText,
+  Download,
+  Printer
 } from 'lucide-react';
-import { User, SecurityAuditLog, FunctionRule, SecurityPolicyConfig, AuthSession } from '../types.ts';
+import { User, SecurityAuditLog, FunctionRule, SecurityPolicyConfig, AuthSession, UserApprovalStatus } from '../types.ts';
+import { generateSecurityReportData, formatSecurityReportCSV, downloadFile } from '../utils/securityReport.ts';
+import { UserDatabaseModal } from './UserDatabaseModal.tsx';
+import { useTheme } from '../context/ThemeContext.tsx';
 
 interface AdminCommandCenterProps {
   users: User[];
@@ -46,13 +57,20 @@ interface AdminCommandCenterProps {
   onAddTerminalLog: (type: 'info' | 'post' | 'get' | 'success' | 'alert' | 'error' | 'metric', text: string) => void;
   onDirectInvoke: (endpoint: string) => Promise<void>;
   isResetting?: boolean;
+  onOpenSecurityReport?: () => void;
+  onApproveUser?: (username: string) => Promise<void>;
+  onRejectUser?: (username: string, reason?: string) => Promise<void>;
+  onAddUser?: (userData: any) => Promise<void>;
+  onDeleteUser?: (username: string) => Promise<void>;
+  onBatchSeedUsers?: () => Promise<void>;
+  onOpenUserDatabase?: () => void;
 }
 
 export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
   users,
   logs,
   rules,
-  policyConfig = { maxRiskThreshold: 75, sequenceViolationPenalty: 40, enforceStrictSequence: true, globalLockdown: false },
+  policyConfig = { maxRiskThreshold: 75, sequenceViolationPenalty: 40, enforceStrictSequence: true, globalLockdown: false, requireAdminApprovalForNewLogins: true },
   currentSession,
   onSwitchSession,
   onUpdatePolicyConfig,
@@ -61,14 +79,26 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
   onRefreshData,
   onAddTerminalLog,
   onDirectInvoke,
-  isResetting = false
+  isResetting = false,
+  onOpenSecurityReport,
+  onApproveUser,
+  onRejectUser,
+  onAddUser,
+  onDeleteUser,
+  onBatchSeedUsers,
+  onOpenUserDatabase
 }) => {
+  const { theme, isLight } = useTheme();
   // Local state for policy tuning
   const [threshold, setThreshold] = useState(policyConfig.maxRiskThreshold ?? 75);
   const [penalty, setPenalty] = useState(policyConfig.sequenceViolationPenalty ?? 40);
   const [strictSeq, setStrictSeq] = useState(policyConfig.enforceStrictSequence ?? true);
+  const [requireApproval, setRequireApproval] = useState(policyConfig.requireAdminApprovalForNewLogins ?? true);
   const [isSavingPolicy, setIsSavingPolicy] = useState(false);
   const [userSearch, setUserSearch] = useState('');
+  const [userFilterTab, setUserFilterTab] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'QUARANTINED'>('ALL');
+  const [isUserDbModalOpen, setIsUserDbModalOpen] = useState(false);
+  const [approvingUser, setApprovingUser] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState<'ALL' | 'BLOCKED' | 'ALLOWED'>('ALL');
   const [cloudPingStatus, setCloudPingStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [cloudPingLatency, setCloudPingLatency] = useState<number | null>(null);
@@ -124,9 +154,10 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
         maxRiskThreshold: threshold,
         sequenceViolationPenalty: penalty,
         enforceStrictSequence: strictSeq,
+        requireAdminApprovalForNewLogins: requireApproval,
         globalLockdown: isGlobalLockdown
       });
-      onAddTerminalLog('success', `[POLICY] Security policy updated: Cutoff=${threshold}%, Penalty=+${penalty}%, Strict=${strictSeq}`);
+      onAddTerminalLog('success', `[POLICY] Security policy updated: Cutoff=${threshold}%, Penalty=+${penalty}%, Strict=${strictSeq}, ApprovalGate=${requireApproval}`);
     } finally {
       setIsSavingPolicy(false);
     }
@@ -150,12 +181,113 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
         maxRiskThreshold: t,
         sequenceViolationPenalty: p,
         enforceStrictSequence: s,
+        requireAdminApprovalForNewLogins: requireApproval,
         globalLockdown: isGlobalLockdown
       });
       onAddTerminalLog('info', `[POLICY] Applied policy preset: [${preset.toUpperCase()}]`);
     } finally {
       setIsSavingPolicy(false);
     }
+  };
+
+  // Approve a pending user
+  const handleApproveUserAction = async (username: string) => {
+    setApprovingUser(username);
+    try {
+      if (onApproveUser) {
+        await onApproveUser(username);
+      } else {
+        const res = await fetch('/api/system/users/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            approvedBy: currentSession?.user.username || 'secops_admin'
+          })
+        });
+        if (res.ok) await onRefreshData();
+      }
+      onAddTerminalLog('success', `[IAM CLEARANCE] User [${username}] has been APPROVED for system access.`);
+    } catch (err: any) {
+      onAddTerminalLog('error', `[IAM CLEARANCE] Approval failed: ${err?.message || String(err)}`);
+    } finally {
+      setApprovingUser(null);
+    }
+  };
+
+  // Reject a pending user
+  const handleRejectUserAction = async (username: string) => {
+    setApprovingUser(username);
+    try {
+      if (onRejectUser) {
+        await onRejectUser(username);
+      } else {
+        const res = await fetch('/api/system/users/reject', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username,
+            reason: 'SecOps Administrator denied clearance.'
+          })
+        });
+        if (res.ok) await onRefreshData();
+      }
+      onAddTerminalLog('alert', `[IAM CLEARANCE] Access clearance for [${username}] was REJECTED.`);
+    } catch (err: any) {
+      onAddTerminalLog('error', `[IAM CLEARANCE] Rejection failed: ${err?.message || String(err)}`);
+    } finally {
+      setApprovingUser(null);
+    }
+  };
+
+  // Delete user
+  const handleDeleteUserAction = async (username: string) => {
+    if (username === 'secops_admin') return;
+    try {
+      if (onDeleteUser) {
+        await onDeleteUser(username);
+      } else {
+        const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+        if (res.ok) await onRefreshData();
+      }
+      onAddTerminalLog('info', `[IAM ADMIN] Identity [${username}] deleted from database.`);
+    } catch (err: any) {
+      onAddTerminalLog('error', `[IAM ADMIN] Deletion failed: ${err?.message || String(err)}`);
+    }
+  };
+
+  // Batch seed users
+  const handleBatchSeedAction = async () => {
+    try {
+      if (onBatchSeedUsers) {
+        await onBatchSeedUsers();
+      } else {
+        const res = await fetch('/api/system/users/batch-seed', { method: 'POST' });
+        if (res.ok) await onRefreshData();
+      }
+      onAddTerminalLog('success', `[IAM DATABASE] Seeded enterprise multi-department identities.`);
+    } catch (err: any) {
+      onAddTerminalLog('error', `[IAM DATABASE] Batch seed failed: ${err?.message || String(err)}`);
+    }
+  };
+
+  // Add user via modal
+  const handleAddUserAction = async (userData: any) => {
+    if (onAddUser) {
+      await onAddUser(userData);
+    } else {
+      const res = await fetch('/api/system/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData)
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to save identity');
+      }
+      await onRefreshData();
+    }
+    onAddTerminalLog('success', `[IAM DATABASE] Saved new principal [${userData.username}] to database.`);
   };
 
   // Change user role or risk score
@@ -223,10 +355,53 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
   };
 
   // Filtered users list
-  const filteredUsers = users.filter(u =>
-    u.username.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.role.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const [reportDownloadStatus, setReportDownloadStatus] = useState<'idle' | 'json' | 'csv'>('idle');
+
+  const handleDownloadReportJSON = () => {
+    setReportDownloadStatus('json');
+    const report = generateSecurityReportData(users, logs, rules, policyConfig, currentSession);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    downloadFile(
+      JSON.stringify(report, null, 2),
+      `security_compliance_audit_report_${report.reportMetadata.reportId.toLowerCase()}_${dateStr}.json`,
+      'application/json'
+    );
+    onAddTerminalLog('success', `[COMPLIANCE] Downloaded Security Audit Report (${report.reportMetadata.reportId}.json).`);
+    setTimeout(() => setReportDownloadStatus('idle'), 2000);
+  };
+
+  const handleDownloadReportCSV = () => {
+    setReportDownloadStatus('csv');
+    const report = generateSecurityReportData(users, logs, rules, policyConfig, currentSession);
+    const csv = formatSecurityReportCSV(report);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    downloadFile(
+      csv,
+      `security_compliance_audit_report_${report.reportMetadata.reportId.toLowerCase()}_${dateStr}.csv`,
+      'text/csv;charset=utf-8;'
+    );
+    onAddTerminalLog('success', `[COMPLIANCE] Downloaded Security Audit Ledger (${report.reportMetadata.reportId}.csv).`);
+    setTimeout(() => setReportDownloadStatus('idle'), 2000);
+  };
+
+  const pendingUsers = users.filter(u => u.status === 'PENDING_APPROVAL');
+  const approvedUsers = users.filter(u => u.status === 'APPROVED');
+  const quarantinedUsers = users.filter(u => u.base_risk_score >= 80 || u.status === 'SUSPENDED');
+
+  const filteredUsers = users.filter(u => {
+    const q = userSearch.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      u.username.toLowerCase().includes(q) ||
+      (u.department && u.department.toLowerCase().includes(q)) ||
+      u.role.toLowerCase().includes(q);
+
+    if (!matchesSearch) return false;
+    if (userFilterTab === 'PENDING') return u.status === 'PENDING_APPROVAL';
+    if (userFilterTab === 'APPROVED') return u.status === 'APPROVED';
+    if (userFilterTab === 'QUARANTINED') return u.base_risk_score >= 80 || u.status === 'SUSPENDED';
+    return true;
+  });
 
   // Available functions
   const systemFunctions = [
@@ -283,29 +458,41 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
   return (
     <div className="space-y-6 font-sans">
       {/* 1. TOP EXECUTIVE SECOPS BANNER */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl backdrop-blur-md">
+      <div className={`rounded-2xl border p-5 shadow-xl transition-all ${
+        isLight
+          ? 'bg-white border-slate-200 text-slate-800 shadow-slate-200/50'
+          : 'bg-slate-900/90 border-slate-800 text-slate-100'
+      }`}>
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className={`p-3 rounded-xl border flex items-center justify-center ${
+            <div className={`p-3 rounded-xl border flex items-center justify-center shrink-0 ${
               isGlobalLockdown
                 ? 'bg-rose-500/20 border-rose-500/50 text-rose-400 animate-pulse'
+                : isLight
+                ? 'bg-blue-50 border-blue-200 text-blue-600'
                 : 'bg-blue-500/10 border-blue-500/30 text-blue-400'
             }`}>
               <ShieldAlert className="w-7 h-7" />
             </div>
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+                <h2 className={`text-lg sm:text-xl font-bold tracking-tight ${
+                  isLight ? 'text-slate-900' : 'text-white'
+                }`}>
                   Executive SecOps Command &amp; Administration Center
                 </h2>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${
+                  isLight
+                    ? 'bg-blue-50 text-blue-700 border-blue-200 font-semibold'
+                    : 'bg-blue-500/15 text-blue-400 border-blue-500/30 font-semibold'
+                }`}>
                   Master Authority
                 </span>
                 <span className={`text-[10px] uppercase font-mono px-2.5 py-0.5 rounded border font-bold ${defconColors[defconLevel as keyof typeof defconColors]}`}>
                   DEFCON {defconLevel} {defconLevel === 1 ? '• EMERGENCY LOCKDOWN' : defconLevel <= 3 ? '• ELEVATED' : '• NOMINAL'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Centralized governance console for identity lifecycle, dynamic edge policy enforcement, and live Cloudflare Worker pipeline testing.
               </p>
             </div>
@@ -363,6 +550,18 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
               <Trash2 className="w-3.5 h-3.5 text-slate-400" />
               <span>Clear Ledger</span>
             </button>
+
+            {/* Download Security Report */}
+            <button
+              id="btn-admin-download-report"
+              type="button"
+              onClick={onOpenSecurityReport ? onOpenSecurityReport : handleDownloadReportJSON}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-colors shadow-sm"
+              title="Download or Preview Compliance Security Report (JSON/CSV)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Security Report</span>
+            </button>
           </div>
         </div>
 
@@ -387,6 +586,112 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
             <span>Intercepted Logs: <strong className="text-white">{totalLogs}</strong></span>
             <span>•</span>
             <span>Blocked Threats: <strong className="text-rose-400">{blockedLogs}</strong></span>
+          </div>
+        </div>
+      </div>
+
+      {/* 1.5 COMPLIANCE & SECURITY AUDIT REPORT AGGREGATOR */}
+      <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-950/20 via-[#0d1728] to-slate-950 p-5 shadow-lg relative overflow-hidden font-mono">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-emerald-500/20 pb-4 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-white text-base">
+                  Enterprise Security &amp; Compliance Audit Report
+                </h3>
+                <span className="text-[10px] uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                  ISO-27001 / SOC-2 / NIST SP 800-207
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5 font-sans">
+                Aggregates active system health telemetry, Markov sequence risk metrics, and audit log statistics into printable JSON and CSV audit trails.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap self-start lg:self-auto">
+            <button
+              id="btn-admin-download-json"
+              type="button"
+              onClick={handleDownloadReportJSON}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-md"
+              title="Download aggregated security report as JSON"
+            >
+              {reportDownloadStatus === 'json' ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>JSON Saved!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download JSON Report</span>
+                </>
+              )}
+            </button>
+
+            <button
+              id="btn-admin-download-csv"
+              type="button"
+              onClick={handleDownloadReportCSV}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md"
+              title="Download aggregated security report as CSV"
+            >
+              {reportDownloadStatus === 'csv' ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>CSV Saved!</span>
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Download CSV Report</span>
+                </>
+              )}
+            </button>
+
+            {onOpenSecurityReport && (
+              <button
+                id="btn-admin-preview-report"
+                type="button"
+                onClick={onOpenSecurityReport}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 transition-colors"
+                title="Preview printable audit document & signature seals"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-300" />
+                <span>Printable View</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+            <span className="text-slate-400 text-[10px] uppercase block">Provisioned Principals</span>
+            <span className="text-lg font-bold text-white mt-1 block">{users.length} Identities</span>
+            <span className="text-[10px] text-emerald-400">All Scored Baseline</span>
+          </div>
+          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+            <span className="text-slate-400 text-[10px] uppercase block">Audit Ledger Trail</span>
+            <span className="text-lg font-bold text-white mt-1 block">{totalLogs} Invocations</span>
+            <span className="text-[10px] text-blue-400">{blockedLogs} Blocked ({blockRate.toFixed(0)}%)</span>
+          </div>
+          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+            <span className="text-slate-400 text-[10px] uppercase block">Mean System Threat</span>
+            <span className="text-lg font-bold text-white mt-1 block">
+              {totalLogs > 0 ? Math.round(logs.reduce((s, l) => s + l.calculated_risk, 0) / totalLogs) : 15}%
+            </span>
+            <span className="text-[10px] text-amber-400">Cutoff: {threshold}%</span>
+          </div>
+          <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+            <span className="text-slate-400 text-[10px] uppercase block">Compliance Clearance</span>
+            <span className="text-lg font-bold text-emerald-400 mt-1 block">
+              {isGlobalLockdown ? 'DEFCON 1 LOCKDOWN' : blockedLogs > 0 ? 'ANOMALIES INTERCEPTED' : 'PASSED NOMINAL'}
+            </span>
+            <span className="text-[10px] text-slate-400">D1 ACID Ledger Verified</span>
           </div>
         </div>
       </div>
@@ -503,6 +808,28 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
                 }`}
               >
                 {strictSeq ? 'ACTIVE' : 'BYPASSED'}
+              </button>
+            </div>
+
+            {/* Mandatory Admin Approval for New Logins Toggle */}
+            <div className="bg-slate-950/60 p-3.5 rounded-lg border border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-slate-300 font-semibold block flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  Mandatory Admin Approval Gate for New Logins:
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  Gates new registrations and logins until verified by SecOps Administrator.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRequireApproval(!requireApproval)}
+                className={`px-3 py-1 rounded text-xs font-bold transition-colors ${
+                  requireApproval ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {requireApproval ? 'ENFORCED' : 'BYPASSED'}
               </button>
             </div>
 
@@ -629,25 +956,193 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
       </div>
 
       {/* 3. PRINCIPAL GOVERNANCE & 1-CLICK IMPERSONATION MATRIX */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-4">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg space-y-4">
+        {/* Header and Directory Controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
           <div>
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-400" />
               <h3 className="font-bold text-white text-base">
-                Principal Identity Governance &amp; Impersonation Matrix
+                Principal Identity Governance &amp; User Database
               </h3>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Control all system users, switch identity with 1 click to test permissions, or adjust base risk scores in real-time.
+              Manage all system users, review pending verification requests, seed corporate identities, or assume sessions with 1 click.
             </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleBatchSeedAction}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
+              title="Populate test multi-department identities"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Seed Directory</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenUserDatabase) onOpenUserDatabase();
+                else setIsUserDbModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Save New User Login</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ACCESS VERIFICATION & APPROVAL QUEUE */}
+        {pendingUsers.length > 0 ? (
+          <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-950/15 space-y-3 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-400 animate-spin" />
+                <h4 className="text-xs font-bold text-amber-300 uppercase tracking-wider">
+                  Access Verification Queue ({pendingUsers.length} Awaiting Approval)
+                </h4>
+              </div>
+              <span className="text-[11px] font-mono text-amber-400/80">
+                Zero-Trust Gate Enforcement Active
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {pendingUsers.map((pUser) => (
+                <div
+                  key={pUser.id || pUser.username}
+                  className="p-3 rounded-lg bg-slate-950/90 border border-amber-500/30 flex flex-col justify-between gap-2.5 text-xs"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center font-mono font-bold text-xs text-amber-300">
+                        {pUser.username.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-bold text-white font-mono text-xs">
+                          {pUser.username}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {pUser.department || 'Engineering Ops'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                        {pUser.role}
+                      </span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        {pUser.base_risk_score}% Risk
+                      </span>
+                    </div>
+                  </div>
+
+                  {pUser.requestJustification && (
+                    <p className="text-[11px] text-slate-300 italic border-l-2 border-amber-500/40 pl-2">
+                      "{pUser.requestJustification}"
+                    </p>
+                  )}
+
+                  <div className="pt-2 border-t border-slate-800 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={approvingUser === pUser.username}
+                      onClick={() => handleRejectUserAction(pUser.username)}
+                      className="px-2.5 py-1 text-xs font-semibold rounded bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 transition-colors flex items-center gap-1"
+                    >
+                      <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Reject</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={approvingUser === pUser.username}
+                      onClick={() => handleApproveUserAction(pUser.username)}
+                      className="px-3 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors flex items-center gap-1"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{approvingUser === pUser.username ? 'Approving...' : 'Approve Clearance'}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>Identity Verification Queue: All active principals have valid security clearance.</span>
+            </div>
+            <span className="font-mono text-[10px] text-slate-500">0 Pending Approvals</span>
+          </div>
+        )}
+
+        {/* Directory Search & Filter Tabs */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+          {/* Filter Tabs */}
+          <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800 text-xs">
+            <button
+              type="button"
+              onClick={() => setUserFilterTab('ALL')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                userFilterTab === 'ALL'
+                  ? 'bg-slate-800 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              All ({users.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserFilterTab('PENDING')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors flex items-center gap-1 ${
+                userFilterTab === 'PENDING'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>Pending</span>
+              {pendingUsers.length > 0 && (
+                <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-bold text-[9px] flex items-center justify-center">
+                  {pendingUsers.length}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserFilterTab('APPROVED')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                userFilterTab === 'APPROVED'
+                  ? 'bg-slate-800 text-emerald-300 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Approved ({approvedUsers.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserFilterTab('QUARANTINED')}
+              className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                userFilterTab === 'QUARANTINED'
+                  ? 'bg-slate-800 text-rose-300 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Quarantined ({quarantinedUsers.length})
+            </button>
           </div>
 
           <div className="relative w-full sm:w-64">
             <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
             <input
               type="text"
-              placeholder="Search principals..."
+              placeholder="Search principals, dept, or role..."
               value={userSearch}
               onChange={(e) => setUserSearch(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
@@ -660,11 +1155,11 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
           <table className="w-full text-left text-xs font-mono">
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
-                <th className="pb-2.5 font-bold">Principal</th>
+                <th className="pb-2.5 font-bold">Principal / Dept</th>
                 <th className="pb-2.5 font-bold">Role</th>
+                <th className="pb-2.5 font-bold">Status</th>
                 <th className="pb-2.5 font-bold">Base Risk</th>
                 <th className="pb-2.5 font-bold">Activity Stats</th>
-                <th className="pb-2.5 font-bold">Threat Clearance</th>
                 <th className="pb-2.5 font-bold text-right">Admin Interventions</th>
               </tr>
             </thead>
@@ -674,6 +1169,7 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
                 const userLogs = logs.filter(l => l.username === user.username);
                 const userBlocked = userLogs.filter(l => l.status === 'BLOCKED').length;
                 const userTotal = userLogs.length;
+                const isPending = user.status === 'PENDING_APPROVAL';
 
                 return (
                   <tr key={user.id} className={`hover:bg-slate-800/40 transition-colors ${isCurrent ? 'bg-blue-950/20' : ''}`}>
@@ -684,12 +1180,17 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
                           user.role === 'Developer' ? 'bg-blue-400' : 'bg-slate-400'
                         }`} />
                         <div>
-                          <span className="font-bold text-white text-xs">{user.username}</span>
-                          {isCurrent && (
-                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                              Active
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-white text-xs">{user.username}</span>
+                            {isCurrent && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-sans truncate">
+                            {user.department || 'Cloud Platform'}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -706,6 +1207,29 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
                         <option value="Developer">Developer</option>
                         <option value="Guest">Guest</option>
                       </select>
+                    </td>
+
+                    <td className="py-3 pr-4">
+                      {user.status === 'APPROVED' ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 w-fit">
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          Approved
+                        </span>
+                      ) : user.status === 'PENDING_APPROVAL' ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 w-fit animate-pulse font-semibold">
+                          <Clock className="w-2.5 h-2.5" />
+                          Pending Gate
+                        </span>
+                      ) : user.status === 'SUSPENDED' ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1 w-fit">
+                          <XCircle className="w-2.5 h-2.5" />
+                          Suspended
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 w-fit">
+                          {user.status || 'Active'}
+                        </span>
+                      )}
                     </td>
 
                     <td className="py-3 pr-4">
@@ -735,60 +1259,83 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
                       )}
                     </td>
 
-                    <td className="py-3 pr-4">
-                      {user.base_risk_score >= 80 ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                          QUARANTINED
-                        </span>
-                      ) : userBlocked > 0 ? (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          ANOMALY FLAG
-                        </span>
-                      ) : (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          CLEARED
-                        </span>
-                      )}
-                    </td>
-
                     <td className="py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {/* 1-Click Assume Identity */}
-                        <button
-                          type="button"
-                          onClick={() => onSwitchSession(user)}
-                          className={`px-2 py-1 text-[11px] rounded flex items-center gap-1 transition-colors ${
-                            isCurrent
-                              ? 'bg-blue-600 text-white font-bold'
-                              : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-700'
-                          }`}
-                          title="Assume this user's session to test their access privileges"
-                        >
-                          <UserCheck className="w-3 h-3 text-blue-400" />
-                          <span>{isCurrent ? 'Impersonating' : 'Assume Identity'}</span>
-                        </button>
+                        {/* If pending: Quick Approve / Reject in row */}
+                        {isPending ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveUserAction(user.username)}
+                              disabled={approvingUser === user.username}
+                              className="px-2 py-1 text-[11px] font-semibold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1"
+                              title="Approve user"
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Approve</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectUserAction(user.username)}
+                              disabled={approvingUser === user.username}
+                              className="px-2 py-1 text-[11px] rounded bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 transition-colors"
+                              title="Reject user"
+                            >
+                              <XCircle className="w-3 h-3" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {/* 1-Click Assume Identity */}
+                            <button
+                              type="button"
+                              onClick={() => onSwitchSession(user)}
+                              className={`px-2 py-1 text-[11px] rounded flex items-center gap-1 transition-colors ${
+                                isCurrent
+                                  ? 'bg-blue-600 text-white font-bold'
+                                  : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                              }`}
+                              title="Assume this user's session to test their access privileges"
+                            >
+                              <UserCheck className="w-3 h-3 text-blue-400" />
+                              <span>{isCurrent ? 'Active' : 'Assume'}</span>
+                            </button>
 
-                        {/* Reset Risk to 0% */}
-                        <button
-                          type="button"
-                          onClick={() => handleModifyUser(user.username, { base_risk_score: 0 })}
-                          disabled={userUpdating === user.username}
-                          className="px-2 py-1 text-[11px] rounded bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
-                          title="Clear base risk score to 0%"
-                        >
-                          0%
-                        </button>
+                            {/* Reset Risk to 0% */}
+                            <button
+                              type="button"
+                              onClick={() => handleModifyUser(user.username, { base_risk_score: 0 })}
+                              disabled={userUpdating === user.username}
+                              className="px-2 py-1 text-[11px] rounded bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
+                              title="Clear base risk score to 0%"
+                            >
+                              0%
+                            </button>
 
-                        {/* Quarantine Principal */}
-                        <button
-                          type="button"
-                          onClick={() => handleModifyUser(user.username, { base_risk_score: 100 })}
-                          disabled={userUpdating === user.username}
-                          className="px-2 py-1 text-[11px] rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 transition-colors"
-                          title="Quarantine principal (set base risk to 100%)"
-                        >
-                          <UserX className="w-3 h-3" />
-                        </button>
+                            {/* Quarantine Principal */}
+                            <button
+                              type="button"
+                              onClick={() => handleModifyUser(user.username, { base_risk_score: 100 })}
+                              disabled={userUpdating === user.username}
+                              className="px-2 py-1 text-[11px] rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 transition-colors"
+                              title="Quarantine principal (set base risk to 100%)"
+                            >
+                              <UserX className="w-3 h-3" />
+                            </button>
+
+                            {/* Delete User (non-admin) */}
+                            {user.username !== 'secops_admin' && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteUserAction(user.username)}
+                                className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors"
+                                title="Delete user from database"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -936,6 +1483,18 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
           </div>
         </div>
       </div>
+
+      {/* User Database Management Modal */}
+      <UserDatabaseModal
+        isOpen={isUserDbModalOpen}
+        onClose={() => setIsUserDbModalOpen(false)}
+        users={users}
+        onApproveUser={handleApproveUserAction}
+        onRejectUser={handleRejectUserAction}
+        onAddUser={handleAddUserAction}
+        onDeleteUser={handleDeleteUserAction}
+        onBatchSeedUsers={handleBatchSeedAction}
+      />
     </div>
   );
 };

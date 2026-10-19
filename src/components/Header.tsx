@@ -2,26 +2,32 @@ import React from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
-  RefreshCw,
-  Trash2,
   Database,
   Cloud,
   UserCheck,
   Lock,
-  BarChart3,
-  Shield,
-  FileText,
-  Users,
-  Cpu,
-  LayoutGrid,
   LogOut,
-  Sparkles,
   Fingerprint,
-  Code
+  Clock,
+  Sun,
+  Moon,
+  Menu
 } from 'lucide-react';
 import { AuthSession } from '../types.ts';
+import { useTheme } from '../context/ThemeContext.tsx';
+import { getSectionMetaForTab } from '../utils/sectionThemes.ts';
 
-export type FeatureTabId = 'admin' | 'guest' | 'health' | 'interceptor' | 'audit' | 'iam' | 'architecture' | 'overview';
+export type FeatureTabId =
+  | 'admin'
+  | 'developer'
+  | 'guest'
+  | 'ai-threats'
+  | 'health'
+  | 'interceptor'
+  | 'audit'
+  | 'iam'
+  | 'architecture'
+  | 'overview';
 
 interface HeaderProps {
   onReset: () => void;
@@ -33,12 +39,20 @@ interface HeaderProps {
   onOpenAuthModal: () => void;
   activeTab: FeatureTabId;
   onSelectTab: (tab: FeatureTabId) => void;
+  onOpenSidebar: () => void;
   logsCount?: number;
   usersCount?: number;
   blockedCount?: number;
   connectionStatus?: 'connected' | 'syncing' | 'reconnecting';
   onQuickSwitchRole?: (role: 'Admin' | 'Developer' | 'Guest') => void;
   onLogout?: () => void;
+  onOpenSecurityReport?: () => void;
+  pendingApprovalCount?: number;
+  onOpenUserDatabase?: () => void;
+  onRunCredentialStuffing?: () => void;
+  onRunLateralMovementDrill?: () => void;
+  onToggleEmergencyLockdown?: () => void;
+  isEmergencyLockdownActive?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -51,317 +65,292 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuthModal,
   activeTab,
   onSelectTab,
+  onOpenSidebar,
   logsCount = 0,
-  usersCount = 4,
+  usersCount = 0,
   blockedCount = 0,
   connectionStatus = 'connected',
-  onQuickSwitchRole,
-  onLogout
+  onLogout,
+  onOpenSecurityReport,
+  pendingApprovalCount = 0,
+  onOpenUserDatabase,
+  onRunCredentialStuffing,
+  onRunLateralMovementDrill,
+  onToggleEmergencyLockdown,
+  isEmergencyLockdownActive = false
 }) => {
-  // All possible module navigation items
-  const allNavFeatures = [
-    {
-      id: 'admin' as FeatureTabId,
-      label: 'Admin Command',
-      icon: ShieldAlert,
-      badge: 'SecOps',
-      badgeColor: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-      allowedRoles: ['Admin']
-    },
-    {
-      id: 'guest' as FeatureTabId,
-      label: 'Guest Workspace',
-      icon: UserCheck,
-      badge: 'Tier 1 Only',
-      badgeColor: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-      allowedRoles: ['Guest']
-    },
-    {
-      id: 'interceptor' as FeatureTabId,
-      label: currentSession?.user.role === 'Developer' ? 'Developer Workbench' : 'Security Interceptor',
-      icon: Shield,
-      badge: currentSession?.user.role === 'Developer' ? 'Tier 1 & 2' : 'Active Sim',
-      badgeColor: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-      allowedRoles: ['Admin', 'Developer']
-    },
-    {
-      id: 'audit' as FeatureTabId,
-      label: currentSession?.user.role === 'Guest' ? 'My Activity' : 'Audit Ledger',
-      icon: FileText,
-      badge: `${logsCount} Events`,
-      badgeColor: 'bg-slate-700/60 text-slate-300 border-slate-600',
-      allowedRoles: ['Admin', 'Developer', 'Guest']
-    },
-    {
-      id: 'health' as FeatureTabId,
-      label: currentSession?.user.role === 'Guest' ? 'Cluster Status' : 'Health & Analytics',
-      icon: BarChart3,
-      badge: blockedCount > 0 ? `${blockedCount} Blocked` : 'Nominal',
-      badgeColor: blockedCount > 0 ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-      allowedRoles: ['Admin', 'Developer', 'Guest']
-    },
-    {
-      id: 'iam' as FeatureTabId,
-      label: 'IAM & Access',
-      icon: Users,
-      badge: `${usersCount} Principals`,
-      badgeColor: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
-      allowedRoles: ['Admin']
-    },
-    {
-      id: 'architecture' as FeatureTabId,
-      label: currentSession?.user.role === 'Developer' ? 'Pipeline Flow' : 'Cloud Architecture',
-      icon: Cpu,
-      badge: currentSession?.user.role === 'Developer' ? 'Review' : 'D1 + Edge',
-      badgeColor: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-      allowedRoles: ['Admin', 'Developer']
-    },
-    {
-      id: 'overview' as FeatureTabId,
-      label: 'All Modules',
-      icon: LayoutGrid,
-      badge: 'Master View',
-      badgeColor: 'bg-slate-800 text-slate-400 border-slate-700',
-      allowedRoles: ['Admin']
-    }
-  ];
+  const { theme, toggleTheme, isLight } = useTheme();
+  const currentRole = currentSession?.user.role || 'Guest';
 
-  // Dynamic role-based nav filter
-  const currentRole = currentSession?.user.role;
-  const navFeatures = currentRole
-    ? allNavFeatures.filter((f) => f.allowedRoles.includes(currentRole))
-    : [];
+  // Section metadata for active tab (disciplined section-wise color identity)
+  const sectionMeta = getSectionMetaForTab(activeTab);
 
   return (
-    <header className="border-b border-slate-800/80 pb-4 mb-6">
-      {/* Top Banner: Branding, Status, and Quick Action Controls */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-400 shadow-sm">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-white text-lg sm:text-xl font-bold tracking-tight flex items-center gap-2">
+    <header className="border-b border-slate-800/80 pb-5 mb-8 space-y-5">
+      {/* Top Organization Breadcrumb & System Indicator */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono text-slate-400 pb-2 border-b border-slate-800/40">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-slate-300 dark:text-slate-200">Google Cloud Platform</span>
+          <span className="text-slate-600">/</span>
+          <span>Zero-Trust Enterprise Mesh</span>
+          <span className="text-slate-600">/</span>
+          <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-semibold">
+            CLUSTER-EAST-01 • ANYCAST 140+ POPS
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className={`w-2 h-2 rounded-full ${
+              connectionStatus === 'connected' ? 'bg-emerald-500 animate-pulse' :
+              connectionStatus === 'syncing' ? 'bg-blue-400 animate-ping' :
+              'bg-amber-400 animate-pulse'
+            }`}></span>
+            <span className={connectionStatus === 'connected' ? 'text-emerald-500 font-semibold' : 'text-slate-400'}>
+              {connectionStatus === 'connected' ? 'Edge Mesh Active • 1.4ms' :
+               connectionStatus === 'syncing' ? 'Synchronizing Pipeline...' :
+               'Reconnecting Gateway...'}
+            </span>
+          </div>
+          <span className="text-slate-700">|</span>
+          <span className="text-[11px] text-slate-500">SLA: 99.99% • NIST SP 800-207</span>
+        </div>
+      </div>
+
+      {/* Main Brand & Action Header */}
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+        <div className="flex items-start sm:items-center gap-3.5">
+          {/* PRIMARY MENU TRIGGER: Purely at the last left of the logo */}
+          <button
+            id="btn-open-sidebar"
+            type="button"
+            onClick={onOpenSidebar}
+            className={`p-3 rounded-2xl border shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 shrink-0 flex items-center justify-center cursor-pointer group ${
+              isLight
+                ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-500 shadow-blue-500/25 ring-2 ring-blue-500/10'
+                : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-400/50 shadow-blue-500/30 ring-2 ring-blue-500/20'
+            }`}
+            title="Open Navigation Menu"
+            aria-label="Open Navigation Menu"
+          >
+            <Menu className="w-6 h-6 transition-transform group-hover:rotate-3" />
+          </button>
+
+          {/* Framework Logo */}
+          <div className={`p-3 rounded-2xl border shadow-md transition-transform hover:scale-105 shrink-0 ${
+            isLight
+              ? 'bg-slate-100 border-slate-200 text-slate-800'
+              : 'bg-slate-900 border-slate-800 text-blue-400'
+          }`}>
+            <ShieldCheck className="w-7 h-7" />
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-lg sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
                 Serverless Security Verification Framework
-                <span className="hidden sm:inline-block text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                  Zero Trust v2.4
-                </span>
               </h1>
-              <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
-                <span>Enterprise Edge Policy Enforcement &amp; Runtime Verification Matrix</span>
-                <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-                  connectionStatus === 'connected' ? 'bg-emerald-400 animate-pulse' :
-                  connectionStatus === 'syncing' ? 'bg-blue-400 animate-ping' :
-                  'bg-amber-400 animate-pulse'
-                }`}></span>
-                <span className={`text-[11px] font-mono ${
-                  connectionStatus === 'connected' ? 'text-emerald-400' :
-                  connectionStatus === 'syncing' ? 'text-blue-400' :
-                  'text-amber-400'
-                }`}>
-                  {connectionStatus === 'connected' ? 'Edge Interceptor Online' :
-                   connectionStatus === 'syncing' ? 'Syncing Pipeline...' :
-                   'Edge Connecting...'}
+
+              {/* Theme Toggle Button (Light / Dark) directly right of title */}
+              <button
+                id="btn-toggle-theme"
+                type="button"
+                onClick={toggleTheme}
+                className={`glossy-btn flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-semibold transition-all border shadow-xs ${
+                  theme === 'dark'
+                    ? 'bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-800 hover:border-slate-700'
+                    : 'bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-950 border-slate-300 hover:border-slate-400'
+                }`}
+                title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              >
+                {theme === 'dark' ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="font-sans font-medium text-[11px]">Light</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                    <span className="font-sans font-medium text-[11px]">Dark</span>
+                  </>
+                )}
+              </button>
+
+              <span className="text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-semibold tracking-wider">
+                Zero Trust v2.4
+              </span>
+
+              {isEmergencyLockdownActive && (
+                <span className="text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-md bg-rose-600 text-white border border-rose-500 font-bold tracking-wider animate-pulse">
+                  🚨 EMERGENCY LOCKDOWN
                 </span>
-              </div>
+              )}
             </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Autonomous Cloudflare Edge Policy Enforcement, Markov Sequence Validation &amp; Real-time Audit Ledger
+            </p>
           </div>
         </div>
 
-        {/* Global Action Utility Buttons */}
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Global Toolbar Controls */}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Active Workspace Status Badge - Themed to Active Section */}
+          <div className={`hidden md:flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-mono ${
+            isLight
+              ? `${sectionMeta.tagBadgeLight} bg-white shadow-xs`
+              : `${sectionMeta.tagBadgeDark} bg-slate-900/90`
+          }`}>
+            <span className="text-[10px] uppercase font-bold tracking-wider opacity-70">
+              Sec {sectionMeta.sectionNumber}:
+            </span>
+            <span className="font-bold">{sectionMeta.tabName}</span>
+          </div>
+
           {/* Active Session / IAM Trigger */}
           <button
             id="btn-open-auth-modal"
             onClick={onOpenAuthModal}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-mono font-semibold transition-all border shadow-sm ${
+            className={`glossy-btn flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-mono font-semibold transition-all border shadow-xs ${
               currentSession
-                ? 'bg-slate-900/90 hover:bg-slate-800 text-white border-blue-500/40 hover:border-blue-400'
-                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/40'
+                ? isLight
+                  ? 'bg-white hover:bg-slate-50 text-slate-900 border-slate-300'
+                  : 'bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-slate-600'
+                : isLight
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-slate-300'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
             }`}
-            title="Open IAM Portal - Switch users or sign in with any custom identity"
+            title="Open Identity & Access Portal"
           >
             {currentSession ? (
               <>
-                <UserCheck className="w-4 h-4 text-emerald-400" />
+                <UserCheck className={`w-4 h-4 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                 <div className="flex items-center gap-1.5">
-                  <span className="text-slate-200 font-medium">{currentSession.user.username}</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                    currentSession.user.role === 'Admin' ? 'bg-purple-900/80 text-purple-200 border border-purple-700/60' :
-                    currentSession.user.role === 'Developer' ? 'bg-blue-900/80 text-blue-200 border border-blue-700/60' :
-                    'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                  }`}>
+                  <span className={`${isLight ? 'text-slate-900 font-bold' : 'text-slate-200 font-medium'}`}>
+                    {currentSession.user.username}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold bg-slate-800 text-slate-200 border border-slate-700">
                     {currentSession.user.role}
                   </span>
                 </div>
               </>
             ) : (
               <>
-                <Lock className="w-4 h-4 text-amber-400" />
-                <span>Sign In / Custom User</span>
+                <Lock className="w-4 h-4 text-slate-400" />
+                <span>Sign In / Identity</span>
               </>
             )}
           </button>
 
+          {/* Cloud Blueprint Specs */}
           <button
             id="btn-open-cloud-guide"
             onClick={onOpenCloudGuide}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-mono font-medium transition-colors shadow-sm"
-            title="Open Cloud Deployment & Execution Manual"
+            className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-mono font-medium transition-colors shadow-xs ${
+              isLight
+                ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+            }`}
+            title="Open Cloud Deployment Blueprint & Architecture Manual"
           >
             <Cloud className="w-3.5 h-3.5 text-blue-400" />
-            <span>Cloud Blueprint</span>
+            <span className="hidden sm:inline">Cloud Blueprint</span>
           </button>
 
+          {/* Schema & Rules */}
           <button
             id="btn-inspect-db"
             onClick={onOpenDbModal}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-mono transition-colors"
-            title="Inspect SQL Tables & Rules"
+            className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-mono transition-colors border shadow-xs ${
+              isLight
+                ? 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-300'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700'
+            }`}
+            title="Inspect Database Schema & Markov Rules Matrix"
           >
             <Database className="w-3.5 h-3.5 text-slate-400" />
-            <span>Schema &amp; Rules</span>
+            <span className="hidden sm:inline">Schema Matrix</span>
           </button>
 
-          {currentRole === 'Admin' && (
-            <>
-              <button
-                id="btn-clear-logs"
-                onClick={onClearLogs}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 text-xs font-mono transition-colors"
-                title="Clear live security audit logs (Admin Only)"
-              >
-                <Trash2 className="w-3.5 h-3.5 text-rose-400/80" />
-                <span>Clear Logs</span>
-              </button>
-
-              <button
-                id="btn-reset-db"
-                onClick={onReset}
-                disabled={isResetting}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-mono transition-colors disabled:opacity-50"
-                title="Reset Database to initial state (Admin Only)"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isResetting ? 'animate-spin' : ''}`} />
-                <span>Reset Baseline</span>
-              </button>
-            </>
+          {/* Pending Approval Badge Notification */}
+          {currentRole === 'Admin' && pendingApprovalCount > 0 && (
+            <button
+              id="btn-header-pending-approvals"
+              onClick={onOpenUserDatabase ? onOpenUserDatabase : () => onSelectTab('admin')}
+              className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-mono font-medium transition-colors shadow-xs animate-pulse ${
+                isLight
+                  ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+                  : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/40'
+              }`}
+              title={`${pendingApprovalCount} pending registration approvals awaiting SecOps clearance`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>{pendingApprovalCount} Approval{pendingApprovalCount > 1 ? 's' : ''}</span>
+            </button>
           )}
 
           {currentSession && onLogout && (
             <button
               id="btn-logout"
               onClick={onLogout}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white border border-rose-800/60 text-xs font-mono transition-colors"
+              className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-mono transition-colors border shadow-xs ${
+                isLight
+                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-900 border-rose-200'
+                  : 'bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 hover:text-white border-rose-800/60'
+              }`}
               title="Terminate Active Zero-Trust Session"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Sign Out</span>
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* QUICK ROLE SIMULATION & SWITCHER BAR */}
-      {currentSession && onQuickSwitchRole && (
-        <div className="mt-3.5 p-2 bg-slate-950/80 rounded-lg border border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-          <div className="flex items-center gap-2">
+      {/* ACTIVE ROLE CLEARANCE BANNER (ONLY ACTIVE ROLE DISPLAYED) */}
+      {currentSession && (
+        <div className={`glossy-panel p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs font-mono transition-all border ${
+          isLight ? sectionMeta.bannerBorderLight : sectionMeta.bannerBorderDark
+        } ${isLight ? sectionMeta.bannerBgLight : sectionMeta.bannerBgDark}`}>
+          <div className="flex items-center gap-2.5 flex-wrap">
             <span className="text-[11px] text-slate-400 flex items-center gap-1.5 uppercase tracking-wider font-semibold">
-              <Fingerprint className="w-3.5 h-3.5 text-blue-400" />
+              <Fingerprint className={`w-3.5 h-3.5 ${isLight ? sectionMeta.accentTextLight : sectionMeta.accentTextDark}`} />
               Active Role Clearance:
             </span>
-            <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
-              currentRole === 'Admin' ? 'bg-purple-950 text-purple-300 border-purple-700' :
-              currentRole === 'Developer' ? 'bg-blue-950 text-blue-300 border-blue-700' :
-              'bg-emerald-950 text-emerald-300 border-emerald-700'
+            <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+              isLight
+                ? 'bg-white text-slate-800 border-slate-300 shadow-xs'
+                : 'bg-slate-900 text-slate-100 border-slate-700'
             }`}>
-              {currentRole === 'Admin' ? 'ADMIN (ALL FEATURES UNLOCKED)' :
-               currentRole === 'Developer' ? 'DEVELOPER (TIER 1 & 2 WORKBENCH)' :
-               'GUEST (TIER 1 TELEMETRY ONLY)'}
+              {currentRole === 'Admin' ? 'ADMINISTRATOR (TIER 3: UNRESTRICTED GOVERNANCE)' :
+               currentRole === 'Developer' ? 'DEVELOPER (TIER 2: WORKBENCH & INVOCATION)' :
+               'GUEST (TIER 1: TELEMETRY ONLY)'}
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700 font-bold">
+              MFA VERIFIED
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] text-slate-500 uppercase mr-1">1-Click Test Role:</span>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 text-[11px]">Active Workspace:</span>
+            <span className={`font-bold px-3 py-1 rounded-lg border ${
+              isLight ? sectionMeta.tagBadgeLight : sectionMeta.tagBadgeDark
+            }`}>
+              [{sectionMeta.sectionNumber}] {sectionMeta.tabName}
+            </span>
             <button
               type="button"
-              onClick={() => onQuickSwitchRole('Guest')}
-              className={`px-2.5 py-1 rounded text-[11px] transition-all border ${
-                currentRole === 'Guest'
-                  ? 'bg-emerald-600 text-white font-bold border-emerald-500 shadow-sm'
-                  : 'bg-slate-900 text-slate-400 hover:text-emerald-300 border-slate-800 hover:border-emerald-800'
+              onClick={onOpenSidebar}
+              className={`text-[11px] font-sans font-semibold hover:underline underline-offset-2 ml-1 flex items-center gap-1 cursor-pointer ${
+                isLight ? sectionMeta.accentTextLight : sectionMeta.accentTextDark
               }`}
-              title="Switch to Guest role (Tier 1 Telemetry only)"
             >
-              Guest (alice_guest)
-            </button>
-            <button
-              type="button"
-              onClick={() => onQuickSwitchRole('Developer')}
-              className={`px-2.5 py-1 rounded text-[11px] transition-all border ${
-                currentRole === 'Developer'
-                  ? 'bg-blue-600 text-white font-bold border-blue-500 shadow-sm'
-                  : 'bg-slate-900 text-slate-400 hover:text-blue-300 border-slate-800 hover:border-blue-800'
-              }`}
-              title="Switch to Developer role (Tier 1 & 2 Workbench)"
-            >
-              Developer (bob_dev)
-            </button>
-            <button
-              type="button"
-              onClick={() => onQuickSwitchRole('Admin')}
-              className={`px-2.5 py-1 rounded text-[11px] transition-all border ${
-                currentRole === 'Admin'
-                  ? 'bg-purple-600 text-white font-bold border-purple-500 shadow-sm'
-                  : 'bg-slate-900 text-slate-400 hover:text-purple-300 border-slate-800 hover:border-purple-800'
-              }`}
-              title="Switch to Admin role (Executive SecOps & Governance)"
-            >
-              Admin (secops_admin)
+              <Menu className="w-3 h-3" />
+              <span>Menu →</span>
             </button>
           </div>
         </div>
-      )}
-
-      {/* Feature Line Navigation Bar - Filtered strictly by role */}
-      {navFeatures.length > 0 && (
-        <nav
-          aria-label="Framework Feature Navigation"
-          className="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin"
-        >
-          <div className="text-[11px] font-mono text-slate-500 uppercase tracking-wider pr-2 hidden md:block select-none">
-            Permitted Tabs:
-          </div>
-          {navFeatures.map((feat) => {
-            const Icon = feat.icon;
-            const isActive = activeTab === feat.id;
-            return (
-              <button
-                key={feat.id}
-                id={`nav-tab-${feat.id}`}
-                onClick={() => onSelectTab(feat.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap border ${
-                  isActive
-                    ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/20'
-                    : 'bg-slate-900/80 hover:bg-slate-800/90 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                <span>{feat.label}</span>
-                <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
-                    isActive
-                      ? 'bg-blue-700/60 text-blue-100 border-blue-400/40'
-                      : feat.badgeColor
-                  }`}
-                >
-                  {feat.badge}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
       )}
     </header>
   );

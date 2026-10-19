@@ -18,7 +18,8 @@ import {
   Sliders,
   Sparkles
 } from 'lucide-react';
-import { User, AuthSession } from '../types.ts';
+import { User, AuthSession, MfaPendingChallenge } from '../types.ts';
+import { MfaVerificationCard } from './MfaVerificationCard.tsx';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -45,6 +46,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaPendingChallenge | null>(null);
 
   // Custom user registration / real-time identity state
   const [customUsername, setCustomUsername] = useState('');
@@ -70,6 +72,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       if (!res.ok || !data.success) {
         setErrorMsg(data.error || 'Authentication Failed.');
+        setLoading(false);
+        return;
+      }
+
+      // Check for MFA Second Factor Requirement
+      if (data.mfaRequired && data.mfaSessionId) {
+        setMfaChallenge({
+          mfaSessionId: data.mfaSessionId,
+          username: data.user?.username || selectedUsername,
+          user: data.user || {
+            id: `usr_${selectedUsername}`,
+            username: selectedUsername,
+            password_hash: password,
+            role: data.role || 'Developer',
+            base_risk_score: data.userRisk ?? 20
+          },
+          phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
+          emailMasked: data.emailMasked,
+          methods: data.methods || ['authenticator', 'sms'],
+          demoTotpCode: data.demoTotpCode,
+          demoSmsCode: data.demoSmsCode,
+          message: data.message
+        });
         setLoading(false);
         return;
       }
@@ -134,7 +159,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         username: cleanName,
         password_hash: customPassword || 'ZeroTrust_2026',
         role: customRole,
-        base_risk_score: Number(customRisk)
+        base_risk_score: Number(customRisk),
+        status: data.user?.status || 'APPROVED'
       };
 
       const newSession: AuthSession = {
@@ -170,6 +196,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026' })
       });
       const data = await res.json();
+      if (data.mfaRequired && data.mfaSessionId) {
+        setMfaChallenge({
+          mfaSessionId: data.mfaSessionId,
+          username: data.user?.username || targetUser.username,
+          user: data.user || targetUser,
+          phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
+          emailMasked: data.emailMasked,
+          methods: data.methods || ['authenticator', 'sms'],
+          demoTotpCode: data.demoTotpCode,
+          demoSmsCode: data.demoSmsCode,
+          message: data.message
+        });
+        setLoading(false);
+        return;
+      }
 
       if (res.ok && data.success) {
         const newSession: AuthSession = {
@@ -292,8 +333,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* Current Session Banner if logged in */}
-          {currentSession && (
+          {/* MULTI-FACTOR AUTHENTICATION CHALLENGE */}
+          {mfaChallenge ? (
+            <MfaVerificationCard
+              challenge={mfaChallenge}
+              onVerifySuccess={(session) => {
+                setMfaChallenge(null);
+                onLoginSuccess(session);
+                onClose();
+              }}
+              onCancel={() => setMfaChallenge(null)}
+              variant="modal"
+            />
+          ) : (
+            <>
+              {/* Current Session Banner if logged in */}
+              {currentSession && (
             <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-lg flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
@@ -609,6 +664,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               )}
             </div>
           )}
+          </>
+        )}
         </div>
 
         {/* Footer */}

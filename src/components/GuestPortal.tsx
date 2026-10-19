@@ -1,22 +1,27 @@
 import React, { useState } from 'react';
 import {
-  Shield,
-  ShieldAlert,
   ShieldCheck,
+  ShieldAlert,
   Lock,
   Unlock,
   Play,
   Activity,
-  Terminal,
-  Server,
   UserCheck,
   AlertTriangle,
   RefreshCw,
   ExternalLink,
   ChevronRight,
-  Info
+  CheckCircle2,
+  Sparkles,
+  Send,
+  Building,
+  KeyRound,
+  FileCheck,
+  Fingerprint,
+  Layers
 } from 'lucide-react';
-import { User, SecurityAuditLog, AuthSession } from '../types.ts';
+import { motion, AnimatePresence } from 'motion/react';
+import { SecurityAuditLog, AuthSession } from '../types.ts';
 
 interface GuestPortalProps {
   currentSession: AuthSession;
@@ -33,6 +38,9 @@ export const GuestPortal: React.FC<GuestPortalProps> = ({
 }) => {
   const [testResult, setTestResult] = useState<any | null>(null);
   const [testingEndpoint, setTestingEndpoint] = useState<string | null>(null);
+  const [escalationJustification, setEscalationJustification] = useState('');
+  const [escalationSubmitted, setEscalationSubmitted] = useState(false);
+  const [activeTab, setActiveTab] = useState<'passport' | 'actions' | 'compliance'>('passport');
 
   const guestLogs = logs.filter(
     (l) => l.username.toLowerCase() === currentSession.user.username.toLowerCase()
@@ -42,7 +50,6 @@ export const GuestPortal: React.FC<GuestPortalProps> = ({
     setTestingEndpoint('getDashboardMetrics');
     try {
       await onFireFunction('getDashboardMetrics');
-      // Fetch fresh metrics response for display in the portal
       const res = await fetch('/api/getDashboardMetrics', {
         headers: {
           Authorization: `Bearer ${currentSession.token}`
@@ -66,381 +73,340 @@ export const GuestPortal: React.FC<GuestPortalProps> = ({
     }
   };
 
-  const roleClearanceMatrix = [
-    {
-      name: 'getDashboardMetrics',
-      route: '/api/getDashboardMetrics',
-      tier: 'Tier 1',
-      allowed: true,
-      description: 'Public health metrics, cluster telemetry, and node status.',
-      accessBadge: 'Permitted (Guest Clearance)'
-    },
-    {
-      name: 'viewSecurityLogs',
-      route: '/api/viewSecurityLogs',
-      tier: 'Tier 2',
-      allowed: false,
-      description: 'Distributed D1 security audit logs and sequence records.',
-      accessBadge: 'Requires Developer or Admin'
-    },
-    {
-      name: 'deployWorkerCode',
-      route: '/api/deployWorkerCode',
-      tier: 'Tier 2',
-      allowed: false,
-      description: 'Deploy V8 isolate serverless bundles to edge nodes.',
-      accessBadge: 'Requires Developer or Admin'
-    },
-    {
-      name: 'updateSystemPolicy',
-      route: '/api/updateSystemPolicy',
-      tier: 'Tier 3',
-      allowed: false,
-      description: 'Push Markov rules and dynamic defense thresholds.',
-      accessBadge: 'Admin Only'
-    },
-    {
-      name: 'rotateEncryptionKeys',
-      route: '/api/rotateEncryptionKeys',
-      tier: 'Tier 3',
-      allowed: false,
-      description: 'Rotate master cryptographic KMS keys.',
-      accessBadge: 'Admin Only'
-    },
-    {
-      name: 'purgeColdStorageBackups',
-      route: '/api/purgeColdStorageBackups',
-      tier: 'Tier 3',
-      allowed: false,
-      description: 'Purge distributed audit archive volumes.',
-      accessBadge: 'Admin Only'
-    }
-  ];
+  const handleEscalateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!escalationJustification.trim()) return;
+    setEscalationSubmitted(true);
+    setTimeout(() => {
+      setEscalationJustification('');
+    }, 3000);
+  };
 
   return (
-    <div className="space-y-6 font-sans">
-      {/* 1. GUEST IDENTITY & CLEARANCE HERO */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl backdrop-blur-md">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="p-3 rounded-xl border bg-emerald-500/10 border-emerald-500/30 text-emerald-400">
-              <UserCheck className="w-7 h-7" />
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className="space-y-6 font-sans"
+    >
+      {/* 1. CORPORATE ACCESS PORTAL BANNER */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shrink-0">
+              <UserCheck className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-lg font-bold text-white tracking-tight">
-                  Guest Identity &amp; Telemetry Workspace
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                  Corporate Employee &amp; Guest Access Portal
                 </h2>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
-                  Role: Guest (Tier 1 Read-Only)
-                </span>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                  Principal: {currentSession.user.username}
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
+                  Tier 1 Clearance // Least Privilege
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-1">
-                You are authenticated with limited Guest privileges under the Zero-Trust Principle of Least Privilege (PoLP).
+              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                Zero-Trust authenticated user workstation. Clean personal clearance passport, permitted corporate business endpoints, and compliance status.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-xs">
-            <div>
-              <span className="text-slate-500 text-[10px] block uppercase">Base Risk Score</span>
-              <span className="text-emerald-400 font-bold text-sm">{currentSession.user.base_risk_score}%</span>
-            </div>
-            <div className="h-6 w-px bg-slate-800" />
-            <div>
-              <span className="text-slate-500 text-[10px] block uppercase">Auth Scheme</span>
-              <span className="text-white font-bold text-xs">HMAC-SHA256</span>
-            </div>
+          {/* Sub-tab Navigation */}
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-mono">
+            <button
+              onClick={() => setActiveTab('passport')}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                activeTab === 'passport'
+                  ? 'bg-emerald-600 text-white font-medium'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Digital Passport
+            </button>
+            <button
+              onClick={() => setActiveTab('actions')}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                activeTab === 'actions'
+                  ? 'bg-emerald-600 text-white font-medium'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Permitted Operations
+            </button>
+            <button
+              onClick={() => setActiveTab('compliance')}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                activeTab === 'compliance'
+                  ? 'bg-emerald-600 text-white font-medium'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Compliance Posture
+            </button>
           </div>
-        </div>
-
-        <div className="mt-4 pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-400">
-          <span>Session Token: <code className="text-slate-300 font-mono">{currentSession.token}</code></span>
-          <span className="text-emerald-400 font-mono">Status: Authenticated &amp; Sandboxed</span>
         </div>
       </div>
 
-      {/* 2. INTERACTIVE PERMITTED FUNCTION INVOKER */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Permitted Action Card */}
-        <div className="rounded-xl border border-emerald-500/30 bg-slate-900/80 p-5 shadow-lg flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                <Activity className="w-5 h-5 text-emerald-400" />
-                <h3 className="font-bold text-white text-sm uppercase tracking-wider">
-                  Permitted Serverless Function
-                </h3>
+      {/* VIEW 1: DIGITAL IDENTITY PASSPORT */}
+      {activeTab === 'passport' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Holographic Security Passport Card */}
+          <div className="lg:col-span-7">
+            <div className="p-6 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-emerald-500/30 shadow-xl relative overflow-hidden font-mono">
+              {/* Background Security Watermark Pattern */}
+              <div className="absolute -right-8 -bottom-8 opacity-5 pointer-events-none">
+                <ShieldCheck className="w-64 h-64 text-emerald-400" />
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold">
-                Authorization Granted
-              </span>
-            </div>
 
-            <div className="space-y-3">
-              <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800">
-                <div className="flex items-center justify-between">
-                  <code className="text-sm font-bold text-emerald-400 font-mono">
-                    /api/getDashboardMetrics
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4 mb-5">
+                <div>
+                  <div className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold">
+                    CORPORATE IDENTITY SECURITY PASSPORT
+                  </div>
+                  <div className="text-xl font-bold text-white mt-1">
+                    {currentSession.user.username}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    {currentSession.user.department || 'General Operations & Compliance'}
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    {currentSession.user.status || 'APPROVED'}
+                  </span>
+                  <div className="text-[10px] text-slate-500 mt-1">Status Verified</div>
+                </div>
+              </div>
+
+              {/* Passport Specs Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5 text-xs">
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 uppercase block">Role Clearance</span>
+                  <strong className="text-white text-sm">{currentSession.user.role}</strong>
+                </div>
+
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 uppercase block">Risk Profile</span>
+                  <strong className="text-emerald-400 text-sm">{currentSession.user.base_risk_score}% (Nominal)</strong>
+                </div>
+
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 uppercase block">Cryptographic Scheme</span>
+                  <strong className="text-white text-xs">HMAC-SHA256</strong>
+                </div>
+
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 uppercase block">Session Inception</span>
+                  <strong className="text-slate-300 text-xs">{currentSession.loginTime}</strong>
+                </div>
+
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800/80 sm:col-span-2">
+                  <span className="text-[10px] text-slate-500 uppercase block">JWT Signature Token</span>
+                  <code className="text-slate-300 text-[11px] truncate block">
+                    {currentSession.token}
                   </code>
-                  <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded">
-                    GET • Tier 1
-                  </span>
                 </div>
-                <p className="text-xs text-slate-300 mt-2">
-                  Fetches public cluster metrics, system node health, and live edge runtime configuration. This route is accessible by all roles including Guests.
-                </p>
               </div>
 
-              {testResult && (
-                <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                    Live Response Payload:
-                  </span>
-                  <pre className="text-emerald-300 text-[11px] overflow-x-auto max-h-40 scrollbar-thin">
-                    {JSON.stringify(testResult, null, 2)}
-                  </pre>
-                </div>
-              )}
+              {/* Principle of Least Privilege Notice */}
+              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/20 text-emerald-300/90 text-xs flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  Protected under Zero-Trust architecture. Invocations are strictly bound to Tier 1 business endpoints.
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-between">
-            <span className="text-xs text-slate-400 font-mono">Expected Result: 200 OK</span>
+          {/* Right Column: Clearance Escalation Request Card */}
+          <div className="lg:col-span-5 space-y-4">
+            <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-sm font-mono text-xs">
+              <div className="flex items-center gap-2 pb-3 mb-3 border-b border-slate-800 text-white font-bold">
+                <KeyRound className="w-4 h-4 text-blue-400" />
+                Request Role Clearance Escalation
+              </div>
+              <p className="text-slate-400 text-xs mb-3 font-sans">
+                Need temporary Developer or elevated privileges for an approved project or sprint? Submit an access justification to SecOps:
+              </p>
+
+              {escalationSubmitted ? (
+                <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-xs space-y-1 text-center">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-1" />
+                  <strong className="block text-white">Escalation Request Dispatched</strong>
+                  <p className="text-[11px] text-slate-400">SecOps administrators have received your request for review.</p>
+                </div>
+              ) : (
+                <form onSubmit={handleEscalateSubmit} className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1">
+                      Project Justification &amp; Ticket ID:
+                    </label>
+                    <textarea
+                      value={escalationJustification}
+                      onChange={(e) => setEscalationJustification(e.target.value)}
+                      rows={3}
+                      placeholder="e.g. JIRA-4092: Need Developer access for Cloudflare isolate deployment testing."
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!escalationJustification.trim()}
+                    className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Submit Escalation to Admin</span>
+                  </button>
+                </form>
+              )}
+            </div>
+
+            {/* My Personal Access Events */}
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+                <span className="text-white font-semibold">My Access Events ({guestLogs.length})</span>
+                <span className="text-[10px] text-slate-500">Live Audit</span>
+              </div>
+              <div className="space-y-1 max-h-36 overflow-y-auto">
+                {guestLogs.length > 0 ? (
+                  guestLogs.map((l) => (
+                    <div
+                      key={l.id}
+                      className="p-1.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between text-[11px]"
+                    >
+                      <code className="text-slate-300 truncate">{l.requested_function}</code>
+                      <span className={`text-[10px] px-1 rounded ${
+                        l.status === 'ALLOWED' ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                      }`}>
+                        {l.status}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-3 text-slate-500 text-xs">
+                    No recent activity logged for this user.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 2: PERMITTED OPERATIONS */}
+      {activeTab === 'actions' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Permitted Operation Card */}
+          <div className="p-5 rounded-xl bg-slate-900/90 border border-emerald-500/30 font-mono text-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <span className="text-white font-bold flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-400" />
+                Permitted Serverless Route: /api/getDashboardMetrics
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                Tier 1 Read-Only
+              </span>
+            </div>
+
+            <p className="text-slate-400 text-xs font-sans">
+              Queries public cluster metrics, system node health, and edge runtime configurations. Cleared for all corporate principals.
+            </p>
+
             <button
-              type="button"
               onClick={handleInvokePermitted}
               disabled={isFiring || testingEndpoint === 'getDashboardMetrics'}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors disabled:opacity-50"
             >
-              {testingEndpoint === 'getDashboardMetrics' ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Invoking Route...
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-white" />
-                  Execute Permitted Function
-                </>
-              )}
+              <Play className={`w-3.5 h-3.5 ${testingEndpoint === 'getDashboardMetrics' ? 'animate-spin' : ''}`} />
+              <span>{testingEndpoint === 'getDashboardMetrics' ? 'Querying Route...' : 'Execute Permitted Route'}</span>
             </button>
-          </div>
-        </div>
 
-        {/* Zero-Trust RBAC Enforcement Test */}
-        <div className="rounded-xl border border-rose-500/30 bg-slate-900/80 p-5 shadow-lg flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="w-5 h-5 text-rose-400" />
-                <h3 className="font-bold text-white text-sm uppercase tracking-wider">
-                  Zero-Trust RBAC Enforcement Test
-                </h3>
+            {testResult && (
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-500 text-[10px] block mb-1">Payload Response:</span>
+                <pre className="text-emerald-300 text-[11px] overflow-x-auto max-h-48">
+                  {JSON.stringify(testResult, null, 2)}
+                </pre>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 font-semibold">
-                Access Restricted
+            )}
+          </div>
+
+          {/* Attempt High-Tier Action to Demonstrate Zero-Trust RBAC */}
+          <div className="p-5 rounded-xl bg-slate-900/90 border border-rose-500/30 font-mono text-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <span className="text-white font-bold flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400" />
+                Zero-Trust Enforcement Test (Simulate Block)
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                Tier 2/3 Guarded
               </span>
             </div>
 
-            <div className="space-y-3">
-              <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800">
-                <div className="flex items-center justify-between">
-                  <code className="text-sm font-bold text-rose-400 font-mono">
-                    /api/deployWorkerCode
-                  </code>
-                  <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded">
-                    POST • Tier 2
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300 mt-2">
-                  Testing what happens when a Guest principal attempts to invoke privileged Tier 2 or Tier 3 routes. The Cloudflare Edge Interceptor will evaluate RBAC and immediately reject the request.
-                </p>
-              </div>
+            <p className="text-slate-400 text-xs font-sans">
+              Test invoking a restricted function like <code>deployWorkerCode</code> or <code>updateSystemPolicy</code>. Zero-Trust will immediately intercept and log the RBAC violation.
+            </p>
 
-              <div className="p-3 rounded-lg bg-rose-950/20 border border-rose-500/20 text-xs text-rose-300 space-y-1 font-mono">
-                <div className="font-bold text-rose-400 flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5" />
-                  Expected Firewall Interception:
-                </div>
-                <div className="text-[11px] text-slate-300">
-                  HTTP 403 Forbidden: "RBAC Breach: Role 'Guest' unauthorized for Tier 2 endpoint."
-                </div>
-              </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleTestUnauthorized('deployWorkerCode')}
+                disabled={isFiring || testingEndpoint === 'deployWorkerCode'}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 font-semibold text-xs transition-colors disabled:opacity-50"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Test /deployWorkerCode</span>
+              </button>
+
+              <button
+                onClick={() => handleTestUnauthorized('updateSystemPolicy')}
+                disabled={isFiring || testingEndpoint === 'updateSystemPolicy'}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 font-semibold text-xs transition-colors disabled:opacity-50"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Test /updateSystemPolicy</span>
+              </button>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-between">
-            <span className="text-xs text-slate-400 font-mono">Expected Result: 403 Forbidden</span>
-            <button
-              type="button"
-              onClick={() => handleTestUnauthorized('deployWorkerCode')}
-              disabled={isFiring || testingEndpoint === 'deployWorkerCode'}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-md transition-colors disabled:opacity-50"
-            >
-              {testingEndpoint === 'deployWorkerCode' ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Testing Interceptor...
-                </>
-              ) : (
-                <>
-                  <ShieldAlert className="w-3.5 h-3.5" />
-                  Trigger Interception Demo
-                </>
-              )}
-            </button>
+      {/* VIEW 3: COMPLIANCE POSTURE */}
+      {activeTab === 'compliance' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2">
+            <div className="flex items-center gap-2 text-white font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              Multi-Factor Authentication (MFA)
+            </div>
+            <p className="text-slate-400 text-[11px] font-sans">
+              Session is bound to an authenticated identity with zero unencrypted credentials stored client-side.
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2">
+            <div className="flex items-center gap-2 text-white font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              Principle of Least Privilege (PoLP)
+            </div>
+            <p className="text-slate-400 text-[11px] font-sans">
+              All Tier 2 &amp; Tier 3 functions are restricted at the edge firewall, preventing privilege escalation.
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2">
+            <div className="flex items-center gap-2 text-white font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              Real-Time Audit Trail
+            </div>
+            <p className="text-slate-400 text-[11px] font-sans">
+              Every request calculates dynamic Markov risk and writes an immutable audit record to the security ledger.
+            </p>
           </div>
         </div>
-      </div>
-
-      {/* 3. ROLE CLEARANCE MATRIX & FUNCTION PERMISSIONS */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-          <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-blue-400" />
-            <h3 className="font-bold text-white text-sm uppercase tracking-wider">
-              System Function Role Clearance Matrix
-            </h3>
-          </div>
-          <span className="text-xs text-slate-400 font-mono">
-            Evaluated per request at Edge
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-mono">
-            <thead>
-              <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
-                <th className="pb-2 font-bold">Function Name</th>
-                <th className="pb-2 font-bold">Tier</th>
-                <th className="pb-2 font-bold">Your Clearance</th>
-                <th className="pb-2 font-bold">Function Description</th>
-                <th className="pb-2 font-bold text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {roleClearanceMatrix.map((item) => (
-                <tr key={item.name} className="hover:bg-slate-800/30 transition-colors">
-                  <td className="py-3 pr-4 font-bold text-white">
-                    <div className="flex items-center gap-2">
-                      {item.allowed ? (
-                        <Unlock className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Lock className="w-3.5 h-3.5 text-slate-500" />
-                      )}
-                      <span>{item.name}</span>
-                    </div>
-                  </td>
-                  <td className="py-3 pr-4 text-slate-400">{item.tier}</td>
-                  <td className="py-3 pr-4">
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded font-semibold border ${
-                        item.allowed
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}
-                    >
-                      {item.accessBadge}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4 text-slate-300 text-xs font-sans">
-                    {item.description}
-                  </td>
-                  <td className="py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        item.allowed
-                          ? handleInvokePermitted()
-                          : handleTestUnauthorized(item.name)
-                      }
-                      disabled={isFiring || testingEndpoint === item.name}
-                      className={`px-2.5 py-1 rounded text-xs font-bold transition-colors ${
-                        item.allowed
-                          ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700'
-                      }`}
-                    >
-                      {item.allowed ? 'Invoke' : 'Test 403'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 4. PERSONAL REQUEST AUDIT LEDGER */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-5 h-5 text-blue-400" />
-            <h3 className="font-bold text-white text-sm uppercase tracking-wider">
-              My Execution Audit Ledger ({guestLogs.length} Records)
-            </h3>
-          </div>
-          <span className="text-xs text-slate-400 font-mono">
-            Filtered to principal: {currentSession.user.username}
-          </span>
-        </div>
-
-        {guestLogs.length === 0 ? (
-          <div className="p-8 text-center text-slate-500 text-xs font-mono">
-            No activity records found for this guest session yet. Click "Execute Permitted Function" or "Trigger Interception Demo" above to generate audit events.
-          </div>
-        ) : (
-          <div className="space-y-2 font-mono text-xs max-h-60 overflow-y-auto scrollbar-thin">
-            {guestLogs.slice(0, 10).map((log) => (
-              <div
-                key={log.id}
-                className={`p-3 rounded-lg border flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                  log.status === 'ALLOWED'
-                    ? 'bg-emerald-950/20 border-emerald-500/30'
-                    : 'bg-rose-950/20 border-rose-500/30'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                      log.status === 'ALLOWED'
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : 'bg-rose-500/20 text-rose-400'
-                    }`}
-                  >
-                    {log.status}
-                  </span>
-                  <code className="text-white font-bold">{log.requested_function}</code>
-                  <span className="text-slate-400 text-[11px]">
-                    Risk: <strong className={log.calculated_risk > 50 ? 'text-rose-400' : 'text-emerald-400'}>{log.calculated_risk}%</strong>
-                  </span>
-                </div>
-                <div className="text-[11px] text-slate-400 sm:text-right">
-                  <span>{log.reason}</span>
-                  <span className="ml-2 text-slate-500 text-[10px]">{log.timestamp}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 5. LEAST PRIVILEGE ARCHITECTURE NOTICE */}
-      <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 text-xs text-slate-400 flex items-start gap-3">
-        <Info className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
-        <div className="space-y-1">
-          <div className="font-bold text-white">
-            NIST SP 800-207 Zero-Trust Isolation Architecture
-          </div>
-          <p>
-            In accordance with the Principle of Least Privilege (PoLP), guest principals are strictly restricted from viewing developer code pipelines, modifying security policies, or accessing administrative command centers. Switch to a Developer or Administrator account to explore higher clearance capabilities.
-          </p>
-        </div>
-      </div>
-    </div>
+      )}
+    </motion.div>
   );
 };

@@ -1,6 +1,6 @@
 {
   "name": "Serverless Security Verification Framework",
-  "description": "Enterprise serverless security verification framework featuring RBAC evaluation, sequential invocation flow checking, dynamic risk scoring, and real-time audit logging.",
+  "description": "Enterprise Cloud & Edge serverless zero-trust security framework with role-differentiated access (Admin, Developer, Guest), AI threat shield defense against OWASP LLM & cloud exploits, sequential invocation flow checking, and real-time audit ledger.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

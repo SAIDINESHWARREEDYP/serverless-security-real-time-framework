@@ -12,6 +12,14 @@ import { AnomalyAlertBanner } from './components/AnomalyAlertBanner.tsx';
 import { GuestPortal } from './components/GuestPortal.tsx';
 import { ZeroTrustLoginGateway } from './components/ZeroTrustLoginGateway.tsx';
 import { AccessRestrictedCard } from './components/AccessRestrictedCard.tsx';
+import { SecurityReportModal } from './components/SecurityReportModal.tsx';
+import { UserDatabaseModal } from './components/UserDatabaseModal.tsx';
+import { DeveloperWorkbench } from './components/DeveloperWorkbench.tsx';
+import { AICloudThreatShield } from './components/AICloudThreatShield.tsx';
+import { EdgeTopologyGraphic } from './components/EdgeTopologyGraphic.tsx';
+import { SidebarNavigation } from './components/SidebarNavigation.tsx';
+import { useTheme } from './context/ThemeContext.tsx';
+import { getSectionMetaForTab } from './utils/sectionThemes.ts';
 import {
   User,
   FunctionRule,
@@ -36,10 +44,13 @@ import {
   Layers,
   Sparkles,
   Cloud,
-  ExternalLink
+  ExternalLink,
+  Bot,
+  FileText
 } from 'lucide-react';
 
 export default function App() {
+  const { theme } = useTheme();
   const [users, setUsers] = useState<User[]>([
     { id: 'usr_secops_admin', username: 'secops_admin', password_hash: 'ZeroTrust_2026', role: 'Admin', base_risk_score: 0 },
     { id: 'usr_cloud_dev', username: 'cloud_dev', password_hash: 'ZeroTrust_2026', role: 'Developer', base_risk_score: 15 },
@@ -65,10 +76,19 @@ export default function App() {
   const [isDbModalOpen, setIsDbModalOpen] = useState<boolean>(false);
   const [isCloudGuideOpen, setIsCloudGuideOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isSecurityReportOpen, setIsSecurityReportOpen] = useState<boolean>(false);
+  const [isUserDbModalOpen, setIsUserDbModalOpen] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [terminalLogs, setTerminalLogs] = useState<TerminalLogEntry[]>([]);
 
+  // Calculate pending users count for notification badges
+  const pendingApprovalCount = useMemo(() => {
+    return users.filter(u => u.status === 'PENDING_APPROVAL').length;
+  }, [users]);
+
   // Navigation: Active Feature Tab
-  const [activeTab, setActiveTab] = useState<FeatureTabId>('health');
+  const [activeTab, setActiveTab] = useState<FeatureTabId>('admin');
+  const currentSectionMeta = useMemo(() => getSectionMetaForTab(activeTab), [activeTab]);
 
   // Authenticated session state
   const [currentSession, setCurrentSession] = useState<AuthSession | null>({
@@ -187,6 +207,86 @@ export default function App() {
       }
     } catch (e: any) {
       addTerminalLog('error', `[SECOPS] Quarantine action failed: ${e?.message || String(e)}`);
+    }
+  };
+
+  const [isEmergencyLockdown, setIsEmergencyLockdown] = useState<boolean>(false);
+
+  // 1. Enterprise Drill: Credential Stuffing Wave
+  const handleRunCredentialStuffing = async () => {
+    addTerminalLog('alert', '[DRILL] ⚡ Initiating Enterprise Credential Stuffing Wave (3 simulated automated bursts)...');
+    try {
+      const sprayTargets = ['threat_actor', 'unknown_botnet_42', 'auditor_guest'];
+      for (const target of sprayTargets) {
+        addTerminalLog('post', `[DRILL BURST] Simulating unauthorized automated login for [${target}]...`);
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: target, password: 'INVALID_BREACHED_PASSWORD_2026' })
+        });
+        const data = await res.json();
+        if (!data.success) {
+          addTerminalLog('alert', `[DRILL MITIGATED] Zero-Trust Perimeter intercepted [${target}]: ${data.error}`);
+        }
+      }
+      await fetchOverview();
+      addTerminalLog('success', '[DRILL COMPLETED] Credential Stuffing wave completely deflected by edge rate-limits.');
+    } catch (err: any) {
+      addTerminalLog('error', `[DRILL FAILED] ${err?.message || String(err)}`);
+    }
+  };
+
+  // 2. Enterprise Drill: Lateral Movement Exploit (out of order sequence)
+  const handleRunLateralMovementDrill = async () => {
+    addTerminalLog('alert', '[DRILL] 🔀 Testing Lateral Movement & Markov Sequence Anomaly detection...');
+    try {
+      addTerminalLog('post', '[DRILL] Authenticating as Tier 1 Guest [auditor_guest]...');
+      const authRes = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'auditor_guest', password: 'ZeroTrust_2026', skipMfa: true })
+      });
+      const authData = await authRes.json();
+      if (!authData.token) {
+        addTerminalLog('error', '[DRILL] Auth failed for guest.');
+        return;
+      }
+      addTerminalLog('alert', '[DRILL] Invariant Violation Attempt: Guest calling /api/purgeColdStorageBackups (Skipping login -> metrics sequence)...');
+      const exploitRes = await fetch('/api/purgeColdStorageBackups', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${authData.token}` }
+      });
+      const exploitData = await exploitRes.json();
+      if (exploitRes.status !== 200) {
+        addTerminalLog('alert', `[DRILL INTERCEPTED] Edge Interceptor blocked lateral jump: ${exploitData.error}`);
+        if (exploitData.metrics) {
+          addTerminalLog('metric', `[DRILL PENALTY] Composite Risk: ${exploitData.metrics.riskScore}% (Markov Drift + RBAC breach detected).`);
+        }
+      }
+      await fetchOverview();
+      addTerminalLog('success', '[DRILL COMPLETED] Autonomous Markov Interceptor successfully contained lateral movement.');
+    } catch (err: any) {
+      addTerminalLog('error', `[DRILL FAILED] ${err?.message || String(err)}`);
+    }
+  };
+
+  // 3. Enterprise Drill: Toggle Emergency Lockdown
+  const handleToggleEmergencyLockdown = async () => {
+    const nextState = !isEmergencyLockdown;
+    setIsEmergencyLockdown(nextState);
+    const newThreshold = nextState ? 25 : 75;
+    try {
+      await handleUpdatePolicyConfig({
+        ...policyConfig,
+        maxRiskThreshold: newThreshold
+      });
+      if (nextState) {
+        addTerminalLog('alert', '[PERIMETER] 🚨 EMERGENCY ZERO-TRUST LOCKDOWN ENGAGED! Max Risk Cutoff set to 25% across all edge nodes.');
+      } else {
+        addTerminalLog('success', '[PERIMETER] Standard operational baseline restored. Max Risk Cutoff normalized to 75%.');
+      }
+    } catch (err: any) {
+      addTerminalLog('error', `[PERIMETER LOCKDOWN ERROR] ${err?.message || String(err)}`);
     }
   };
 
@@ -432,7 +532,8 @@ export default function App() {
           username: clean,
           password_hash: 'ZeroTrust_2026',
           role: inlineRole,
-          base_risk_score: Number(inlineRisk)
+          base_risk_score: Number(inlineRisk),
+          status: data.user?.status || 'APPROVED'
         };
 
         const newSession: AuthSession = {
@@ -467,7 +568,7 @@ export default function App() {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026' })
+        body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026', skipMfa: true })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -482,11 +583,11 @@ export default function App() {
         addTerminalLog('info', `[IAM] Active session switched to: ${targetUser.username} (${targetUser.role})`);
 
         // Automatically guide the user to their role-appropriate tab if current tab is forbidden
-        if (targetUser.role === 'Guest' && (activeTab === 'admin' || activeTab === 'iam' || activeTab === 'architecture' || activeTab === 'overview' || activeTab === 'interceptor')) {
+        if (targetUser.role === 'Guest' && (activeTab === 'admin' || activeTab === 'developer' || activeTab === 'iam' || activeTab === 'architecture' || activeTab === 'overview' || activeTab === 'interceptor' || activeTab === 'health')) {
           setActiveTab('guest');
-        } else if (targetUser.role === 'Developer' && (activeTab === 'admin' || activeTab === 'iam' || activeTab === 'overview' || activeTab === 'guest')) {
-          setActiveTab('interceptor');
-        } else if (targetUser.role === 'Admin' && activeTab === 'guest') {
+        } else if (targetUser.role === 'Developer' && (activeTab === 'admin' || activeTab === 'iam' || activeTab === 'overview' || activeTab === 'guest' || activeTab === 'health' || activeTab === 'interceptor')) {
+          setActiveTab('developer');
+        } else if (targetUser.role === 'Admin' && (activeTab === 'guest' || activeTab === 'developer')) {
           setActiveTab('admin');
         }
       } else {
@@ -513,7 +614,7 @@ export default function App() {
     if (targetRole === 'Guest') {
       setActiveTab('guest');
     } else if (targetRole === 'Developer') {
-      setActiveTab('interceptor');
+      setActiveTab('developer');
     } else {
       setActiveTab('admin');
     }
@@ -536,7 +637,7 @@ export default function App() {
     if (session.user.role === 'Guest') {
       setActiveTab('guest');
     } else if (session.user.role === 'Developer') {
-      setActiveTab('interceptor');
+      setActiveTab('developer');
     } else {
       setActiveTab('admin');
     }
@@ -549,12 +650,85 @@ export default function App() {
     await handleFirePipeline(userToInvoke, cleanRoute);
   };
 
+  const handleApproveUser = async (username: string) => {
+    try {
+      const res = await fetch('/api/system/users/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          approvedBy: currentSession?.user.username || 'secops_admin'
+        })
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to approve user');
+      }
+      await fetchOverview();
+      addTerminalLog('success', `[IAM CLEARANCE] Principal [${username}] has been APPROVED.`);
+    } catch (err: any) {
+      addTerminalLog('error', `[IAM CLEARANCE] Approval failed: ${err?.message || String(err)}`);
+    }
+  };
+
+  const handleRejectUser = async (username: string, reason?: string) => {
+    try {
+      const res = await fetch('/api/system/users/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          reason: reason || 'Access denied by SecOps Administrator.'
+        })
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to reject user');
+      }
+      await fetchOverview();
+      addTerminalLog('alert', `[IAM CLEARANCE] Principal [${username}] access request REJECTED.`);
+    } catch (err: any) {
+      addTerminalLog('error', `[IAM CLEARANCE] Rejection failed: ${err?.message || String(err)}`);
+    }
+  };
+
+  const handleAddUser = async (userData: any) => {
+    const res = await fetch('/api/system/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userData)
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.error || 'Failed to save identity');
+    }
+    await fetchOverview();
+    addTerminalLog('success', `[IAM DATABASE] Saved identity [${userData.username}] to database.`);
+  };
+
+  const handleDeleteUser = async (username: string) => {
+    if (username === 'secops_admin') return;
+    const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+    if (res.ok) {
+      await fetchOverview();
+      addTerminalLog('info', `[IAM DATABASE] Identity [${username}] removed.`);
+    }
+  };
+
+  const handleBatchSeedUsers = async () => {
+    const res = await fetch('/api/system/users/batch-seed', { method: 'POST' });
+    if (res.ok) {
+      await fetchOverview();
+      addTerminalLog('success', `[IAM DATABASE] Seeded enterprise multi-department identities.`);
+    }
+  };
+
   const blockedCount = logs.filter(l => l.status === 'BLOCKED').length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8 font-sans selection:bg-blue-600/30 selection:text-white">
-      <div className="max-w-[1440px] mx-auto">
-        {/* Navigation & Header with Dynamic Feature Line Navigation */}
+    <div className={`min-h-screen ${theme === 'light' ? 'bg-[#f8fafc] text-slate-900' : 'bg-slate-950 text-slate-100'} p-4 sm:p-6 lg:p-8 font-sans selection:bg-blue-600/30 selection:text-white transition-colors duration-200`}>
+      <div className="max-w-[1600px] mx-auto space-y-8">
+        {/* Navigation & Header with Sidebar Drawer Trigger */}
         <Header
           onReset={handleReset}
           onClearLogs={handleClearLogs}
@@ -565,12 +739,45 @@ export default function App() {
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           activeTab={activeTab}
           onSelectTab={setActiveTab}
+          onOpenSidebar={() => setIsSidebarOpen(true)}
           logsCount={logs.length}
           usersCount={users.length}
           blockedCount={blockedCount}
           connectionStatus={connectionStatus}
           onQuickSwitchRole={handleQuickSwitchRole}
           onLogout={handleLogout}
+          onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
+          pendingApprovalCount={pendingApprovalCount}
+          onOpenUserDatabase={() => setIsUserDbModalOpen(true)}
+          onRunCredentialStuffing={handleRunCredentialStuffing}
+          onRunLateralMovementDrill={handleRunLateralMovementDrill}
+          onToggleEmergencyLockdown={handleToggleEmergencyLockdown}
+          isEmergencyLockdownActive={isEmergencyLockdown}
+        />
+
+        {/* Glossy Slide-out Sidebar Navigation Drawer */}
+        <SidebarNavigation
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          activeTab={activeTab}
+          onSelectTab={(tab) => {
+            setActiveTab(tab);
+            setIsSidebarOpen(false);
+          }}
+          currentSession={currentSession}
+          logsCount={logs.length}
+          usersCount={users.length}
+          blockedCount={blockedCount}
+          pendingApprovalCount={pendingApprovalCount}
+          onOpenCloudGuide={() => setIsCloudGuideOpen(true)}
+          onOpenDbModal={() => setIsDbModalOpen(true)}
+          onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
+          onLogout={handleLogout}
+          onRunCredentialStuffing={handleRunCredentialStuffing}
+          onRunLateralMovementDrill={handleRunLateralMovementDrill}
+          onToggleEmergencyLockdown={handleToggleEmergencyLockdown}
+          isEmergencyLockdownActive={isEmergencyLockdown}
         />
 
         {/* If no active session, show the Zero-Trust Login Gateway */}
@@ -595,8 +802,56 @@ export default function App() {
               />
             )}
 
-            {/* FEATURE VIEW 0: EXECUTIVE ADMIN COMMAND & SECOPS CENTER */}
-            {activeTab === 'admin' && (
+            {/* Dedicated Workspace View with Glossy Transition */}
+            <main key={activeTab} className="animate-section-glossy space-y-8 min-h-[520px]">
+              {/* Section Identity Kicker - Displays Section and Workspace in Section-Specific Color */}
+              <div className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                theme === 'light'
+                  ? `${currentSectionMeta.bannerBgLight} ${currentSectionMeta.bannerBorderLight}`
+                  : `${currentSectionMeta.bannerBgDark} ${currentSectionMeta.bannerBorderDark}`
+              }`}>
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded-lg border shrink-0 ${
+                    theme === 'light' ? currentSectionMeta.tagBadgeLight : currentSectionMeta.tagBadgeDark
+                  }`}>
+                    SECTION {currentSectionMeta.sectionNumber}
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                        {currentSectionMeta.tabName}
+                      </h2>
+                      <span className="text-slate-400 text-xs hidden sm:inline">·</span>
+                      <span className={`text-xs font-semibold hidden sm:inline ${
+                        theme === 'light' ? currentSectionMeta.accentTextLight : currentSectionMeta.accentTextDark
+                      }`}>
+                        {currentSectionMeta.title}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      {currentSectionMeta.description}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
+                  <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${
+                    theme === 'light' ? currentSectionMeta.tagBadgeLight : currentSectionMeta.tagBadgeDark
+                  }`}>
+                    {currentSectionMeta.tabRoleTier}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsSidebarOpen(true)}
+                    className="text-xs font-sans font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:underline cursor-pointer"
+                  >
+                    All Modules →
+                  </button>
+                </div>
+              </div>
+
+              {/* FEATURE VIEW 0: EXECUTIVE ADMIN COMMAND & SECOPS CENTER */}
+              {activeTab === 'admin' && (
               currentSession.user.role === 'Admin' ? (
                 <AdminCommandCenter
                   users={users}
@@ -612,15 +867,51 @@ export default function App() {
                   onAddTerminalLog={addTerminalLog}
                   onDirectInvoke={handleDirectInvokeFromAdmin}
                   isResetting={isResetting}
+                  onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
+                  onApproveUser={handleApproveUser}
+                  onRejectUser={handleRejectUser}
+                  onAddUser={handleAddUser}
+                  onDeleteUser={handleDeleteUser}
+                  onBatchSeedUsers={handleBatchSeedUsers}
+                  onOpenUserDatabase={() => setIsUserDbModalOpen(true)}
                 />
               ) : (
                 <AccessRestrictedCard
                   requiredRole="Admin"
                   currentSession={currentSession}
-                  onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'interceptor' : 'guest')}
+                  onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
                   onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
                 />
               )
+            )}
+
+            {/* FEATURE VIEW: DEVELOPER CLOUD & EDGE WORKBENCH */}
+            {activeTab === 'developer' && (
+              currentSession.user.role === 'Guest' ? (
+                <AccessRestrictedCard
+                  requiredRole="Developer"
+                  currentSession={currentSession}
+                  onNavigateToPermitted={() => setActiveTab('guest')}
+                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                />
+              ) : (
+                <DeveloperWorkbench
+                  currentSession={currentSession}
+                  rules={rules}
+                  logs={logs}
+                  onFireFunction={handleDirectInvokeFromAdmin}
+                  isFiring={isFiring}
+                  onOpenArchitecture={() => setIsCloudGuideOpen(true)}
+                />
+              )
+            )}
+
+            {/* FEATURE VIEW: NEXT-GEN AI & CLOUD THREAT SENTINEL */}
+            {activeTab === 'ai-threats' && (
+              <AICloudThreatShield
+                currentUsername={currentSession.user.username}
+                userRole={currentSession.user.role}
+              />
             )}
 
             {/* FEATURE VIEW: RESTRICTED GUEST WORKSPACE */}
@@ -633,95 +924,115 @@ export default function App() {
               />
             )}
 
-            {/* FEATURE VIEW 1: HEALTH & RISK ANALYTICS */}
+            {/* FEATURE VIEW 1: HEALTH & RISK ANALYTICS (ADMIN ONLY) */}
             {activeTab === 'health' && (
-              <div className="space-y-6">
-                <ThreatSummaryCard logs={logs} />
-                <SystemHealthDashboard
-                  users={users}
-                  logs={logs}
-                  policyConfig={policyConfig}
-                />
-              </div>
-            )}
-
-            {/* FEATURE VIEW 2: SECURITY INTERCEPTOR & SIMULATOR */}
-            {activeTab === 'interceptor' && (
-              currentSession.user.role === 'Guest' ? (
+              currentSession.user.role !== 'Admin' ? (
                 <AccessRestrictedCard
-                  requiredRole="Developer"
+                  requiredRole="Admin"
                   currentSession={currentSession}
-                  onNavigateToPermitted={() => setActiveTab('guest')}
+                  onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
                   onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
                 />
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                  <div className="lg:col-span-5 xl:col-span-5">
-                    <SimulationControl
-                      users={users}
-                      selectedUser={selectedUser}
-                      onSelectUser={setSelectedUser}
-                      selectedRoute={selectedRoute}
-                      onSelectRoute={setSelectedRoute}
-                      onFire={handleFirePipeline}
-                      isFiring={isFiring}
-                      terminalLogs={terminalLogs}
-                      onClearTerminal={() => setTerminalLogs([])}
-                      currentSession={currentSession}
-                      policyConfig={policyConfig}
-                      onUpdatePolicyConfig={handleUpdatePolicyConfig}
-                    />
-                  </div>
+                <div className="space-y-6">
+                  <ThreatSummaryCard logs={logs} />
+                  <SystemHealthDashboard
+                    users={users}
+                    logs={logs}
+                    policyConfig={policyConfig}
+                    onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
+                  />
+                </div>
+              )
+            )}
 
-                  <div className="lg:col-span-7 xl:col-span-7 space-y-4">
-                    {/* Interceptor Policy Guide Card */}
-                    <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-xl font-mono text-xs">
-                      <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-                        <div className="flex items-center gap-2 text-white font-bold text-sm">
-                          <Shield className="w-4 h-4 text-blue-400" />
-                          Runtime Interception Architecture
-                        </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                          Live Enforcement
-                        </span>
-                      </div>
+            {/* FEATURE VIEW 2: SECURITY INTERCEPTOR & SIMULATOR (ADMIN ONLY) */}
+            {activeTab === 'interceptor' && (
+              currentSession.user.role !== 'Admin' ? (
+                <AccessRestrictedCard
+                  requiredRole="Admin"
+                  currentSession={currentSession}
+                  onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
+                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                />
+              ) : (
+                <div className="space-y-6">
+                  {/* Live Edge Verification Topology Banner */}
+                  <EdgeTopologyGraphic
+                    blockedCount={blockedCount}
+                    totalRequests={logs.length}
+                    isSimulating={isFiring}
+                    onTriggerTestPacket={() => handleFirePipeline(selectedUser, selectedRoute)}
+                  />
 
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                        <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                          <div className="text-slate-400 text-[10px] uppercase font-bold">1. RBAC Guard</div>
-                          <div className="text-white font-semibold mt-1">Role Validation</div>
-                          <div className="text-[11px] text-slate-400 mt-1">Admin, Developer, Guest clearances checked before function invocation.</div>
-                        </div>
-
-                        <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                          <div className="text-slate-400 text-[10px] uppercase font-bold">2. Markov Sequence</div>
-                          <div className="text-white font-semibold mt-1">Order Validation</div>
-                          <div className="text-[11px] text-slate-400 mt-1">Out-of-order jumps incur a +{policyConfig.sequenceViolationPenalty}% threat penalty.</div>
-                        </div>
-
-                        <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                          <div className="text-slate-400 text-[10px] uppercase font-bold">3. Cutoff Firewall</div>
-                          <div className="text-white font-semibold mt-1">Risk Threshold</div>
-                          <div className="text-[11px] text-slate-400 mt-1">Requests exceeding {policyConfig.maxRiskThreshold}% risk are immediately blocked.</div>
-                        </div>
-                      </div>
-
-                      {/* Quick Fire Presets */}
-                      <div className="p-3 bg-blue-950/20 border border-blue-500/30 rounded-lg text-blue-300">
-                        <div className="font-semibold text-white mb-1 flex items-center gap-2">
-                          <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                          Simulation Tip:
-                        </div>
-                        Use the 1-Click Test Scenarios in the left panel to instantly demonstrate legitimate admin flows, privilege escalation attempts, sequence anomalies, and high-risk exploits!
-                      </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                    <div className="lg:col-span-5 xl:col-span-5">
+                      <SimulationControl
+                        users={users}
+                        selectedUser={selectedUser}
+                        onSelectUser={setSelectedUser}
+                        selectedRoute={selectedRoute}
+                        onSelectRoute={setSelectedRoute}
+                        onFire={handleFirePipeline}
+                        isFiring={isFiring}
+                        terminalLogs={terminalLogs}
+                        onClearTerminal={() => setTerminalLogs([])}
+                        currentSession={currentSession}
+                        policyConfig={policyConfig}
+                        onUpdatePolicyConfig={handleUpdatePolicyConfig}
+                      />
                     </div>
 
-                    {/* Compact Audit Log Stream Preview */}
-                    <AuditLogStream
-                      logs={logs}
-                      onRefresh={fetchOverview}
-                      isRefreshing={isRefreshing}
-                    />
+                    <div className="lg:col-span-7 xl:col-span-7 space-y-5">
+                      {/* Interceptor Policy Guide Card */}
+                      <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-xl font-mono text-xs shadow-sm">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                          <div className="flex items-center gap-2 text-white font-bold text-sm">
+                            <Shield className="w-4 h-4 text-blue-400" />
+                            Runtime Interception Architecture
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold">
+                            Live Enforcement
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                            <div className="text-slate-400 text-[10px] uppercase font-bold">1. RBAC Guard</div>
+                            <div className="text-white font-semibold mt-1">Role Validation</div>
+                            <div className="text-[11px] text-slate-400 mt-1">Admin, Developer, Guest clearances checked before function invocation.</div>
+                          </div>
+
+                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                            <div className="text-slate-400 text-[10px] uppercase font-bold">2. Markov Sequence</div>
+                            <div className="text-white font-semibold mt-1">Order Validation</div>
+                            <div className="text-[11px] text-slate-400 mt-1">Out-of-order jumps incur a +{policyConfig.sequenceViolationPenalty}% threat penalty.</div>
+                          </div>
+
+                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                            <div className="text-slate-400 text-[10px] uppercase font-bold">3. Cutoff Firewall</div>
+                            <div className="text-white font-semibold mt-1">Risk Threshold</div>
+                            <div className="text-[11px] text-slate-400 mt-1">Requests exceeding {policyConfig.maxRiskThreshold}% risk are immediately blocked.</div>
+                          </div>
+                        </div>
+
+                        {/* Quick Fire Presets */}
+                        <div className="p-3 bg-blue-950/20 border border-blue-500/30 rounded-lg text-blue-300">
+                          <div className="font-semibold text-white mb-1 flex items-center gap-2">
+                            <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                            Simulation Tip:
+                          </div>
+                          Use the 1-Click Test Scenarios in the left panel to instantly demonstrate legitimate admin flows, privilege escalation attempts, sequence anomalies, and high-risk exploits!
+                        </div>
+                      </div>
+
+                      {/* Compact Audit Log Stream Preview */}
+                      <AuditLogStream
+                        logs={logs}
+                        onRefresh={fetchOverview}
+                        isRefreshing={isRefreshing}
+                      />
+                    </div>
                   </div>
                 </div>
               )
@@ -842,10 +1153,10 @@ export default function App() {
                   </div>
 
                   {/* Active User Roster Cards */}
-                  <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl shadow-lg">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        <UserCheck className="w-4 h-4 text-blue-400" />
+                  <div className={`p-6 rounded-2xl shadow-lg border ${theme === 'light' ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
+                    <div className="flex items-center justify-between border-b pb-4 mb-4 border-slate-200 dark:border-slate-800">
+                      <h3 className={`text-sm font-bold flex items-center gap-2 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                        <UserCheck className="w-4 h-4 text-blue-500" />
                         Active Principals Roster ({users.length})
                       </h3>
                       <span className="text-xs text-slate-400">
@@ -853,62 +1164,68 @@ export default function App() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {users.map((u) => {
-                        const isCurrent = currentSession?.user.username === u.username;
-                        const isUntrusted = u.base_risk_score >= 70;
-                        return (
-                          <div
-                            key={u.id}
-                            className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
-                              isCurrent
-                                ? 'bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/50'
-                                : isUntrusted
-                                ? 'bg-rose-950/20 border-rose-900/60 hover:border-rose-700/80'
-                                : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            <div>
-                              <div className="flex items-start justify-between mb-2">
-                                <div className="text-xs font-bold text-white truncate max-w-[150px]">
-                                  {u.username}
-                                </div>
-                                {isCurrent && (
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                    Active
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="space-y-1 text-[11px] text-slate-400">
-                                <div>Role: <span className="text-slate-200 font-semibold">{u.role}</span></div>
-                                <div>
-                                  Base Risk:{' '}
-                                  <span className={`font-bold ${
-                                    u.base_risk_score >= 70 ? 'text-rose-400' :
-                                    u.base_risk_score > 20 ? 'text-amber-400' :
-                                    'text-emerald-400'
-                                  }`}>
-                                    {u.base_risk_score}%
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => handleQuickSwitchUser(u)}
-                              className={`mt-4 w-full py-1.5 px-3 rounded-lg text-xs font-semibold transition-all border ${
+                    <div className="max-h-[520px] overflow-y-auto scrollbar-thin pr-1.5">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {users.map((u) => {
+                          const isCurrent = currentSession?.user.username === u.username;
+                          const isUntrusted = u.base_risk_score >= 70;
+                          return (
+                            <div
+                              key={u.id}
+                              className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
                                 isCurrent
-                                  ? 'bg-blue-600 text-white border-blue-500'
-                                  : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800'
+                                  ? 'bg-blue-950/20 border-blue-500 ring-1 ring-blue-500/50 shadow-sm'
+                                  : isUntrusted
+                                  ? 'bg-rose-950/20 border-rose-900/60 hover:border-rose-700/80'
+                                  : theme === 'light'
+                                  ? 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                                  : 'bg-slate-950 border-slate-800 hover:border-slate-700'
                               }`}
                             >
-                              {isCurrent ? 'Current Identity' : 'Switch To User'}
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <div>
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className={`text-xs font-bold truncate max-w-[150px] ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                                    {u.username}
+                                  </div>
+                                  {isCurrent && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 font-semibold">
+                                      Active
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                                  <div>Role: <span className={`font-semibold ${theme === 'light' ? 'text-slate-700' : 'text-slate-200'}`}>{u.role}</span></div>
+                                  <div>
+                                    Base Risk:{' '}
+                                    <span className={`font-bold ${
+                                      u.base_risk_score >= 70 ? 'text-rose-500' :
+                                      u.base_risk_score > 20 ? 'text-amber-500' :
+                                      'text-emerald-500'
+                                    }`}>
+                                      {u.base_risk_score}%
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleQuickSwitchUser(u)}
+                                className={`mt-4 w-full py-1.5 px-3 rounded-lg text-xs font-semibold transition-all border ${
+                                  isCurrent
+                                    ? 'bg-blue-600 text-white border-blue-500'
+                                    : theme === 'light'
+                                    ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-xs'
+                                    : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800'
+                                }`}
+                              >
+                                {isCurrent ? 'Current Identity' : 'Switch To User'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -926,11 +1243,19 @@ export default function App() {
                 />
               ) : (
                 <div className="space-y-6 font-mono text-xs">
+                  {/* Live Interactive Edge Topology Diagram */}
+                  <EdgeTopologyGraphic
+                    blockedCount={blockedCount}
+                    totalRequests={logs.length}
+                    isSimulating={isFiring}
+                    onTriggerTestPacket={() => handleFirePipeline(selectedUser, selectedRoute)}
+                  />
+
                   {/* Visual Multi-Layer Pipeline Flowchart */}
-                  <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-5">
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-blue-400" />
+                  <div className={`p-6 rounded-2xl border shadow-sm ${theme === 'light' ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
+                    <div className="flex items-center justify-between border-b pb-3 mb-5 border-slate-200 dark:border-slate-800">
+                      <h3 className={`text-sm font-bold flex items-center gap-2 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                        <Layers className="w-4 h-4 text-blue-500" />
                         Edge Verification Pipeline Architecture
                       </h3>
                       <div className="flex items-center gap-2">
@@ -944,38 +1269,38 @@ export default function App() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-center">
-                      <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                      <div className={`p-4 rounded-xl border ${theme === 'light' ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                         <div className="text-[10px] uppercase font-bold text-slate-500">Step 1</div>
-                        <div className="text-white font-bold mt-1 text-sm">Client Request</div>
+                        <div className={`font-bold mt-1 text-sm ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>Client Request</div>
                         <div className="text-[11px] text-slate-400 mt-2">HTTP Bearer JWT Token passed in Authorization header</div>
                       </div>
 
-                      <div className="p-4 bg-slate-950 border border-blue-500/40 rounded-lg">
-                        <div className="text-[10px] uppercase font-bold text-blue-400">Step 2</div>
-                        <div className="text-blue-300 font-bold mt-1 text-sm">Edge Interceptor</div>
+                      <div className={`p-4 rounded-xl border ${theme === 'light' ? 'bg-blue-50 border-blue-200' : 'bg-slate-950 border-blue-500/40'}`}>
+                        <div className="text-[10px] uppercase font-bold text-blue-500">Step 2</div>
+                        <div className="text-blue-500 font-bold mt-1 text-sm">Edge Interceptor</div>
                         <div className="text-[11px] text-slate-400 mt-2">RBAC evaluation + Markov sequence transition validation</div>
                       </div>
 
-                      <div className="p-4 bg-slate-950 border border-amber-500/40 rounded-lg">
-                        <div className="text-[10px] uppercase font-bold text-amber-400">Step 3</div>
-                        <div className="text-amber-300 font-bold mt-1 text-sm">Risk Scorer</div>
+                      <div className={`p-4 rounded-xl border ${theme === 'light' ? 'bg-amber-50 border-amber-200' : 'bg-slate-950 border-amber-500/40'}`}>
+                        <div className="text-[10px] uppercase font-bold text-amber-500">Step 3</div>
+                        <div className="text-amber-500 font-bold mt-1 text-sm">Risk Scorer</div>
                         <div className="text-[11px] text-slate-400 mt-2">R_final = min(100, Base + Violations). Firewall cut-off: 75%</div>
                       </div>
 
-                      <div className="p-4 bg-slate-950 border border-emerald-500/40 rounded-lg">
-                        <div className="text-[10px] uppercase font-bold text-emerald-400">Step 4</div>
-                        <div className="text-emerald-300 font-bold mt-1 text-sm">Audit Commit</div>
+                      <div className={`p-4 rounded-xl border ${theme === 'light' ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-950 border-emerald-500/40'}`}>
+                        <div className="text-[10px] uppercase font-bold text-emerald-500">Step 4</div>
+                        <div className="text-emerald-500 font-bold mt-1 text-sm">Audit Commit</div>
                         <div className="text-[11px] text-slate-400 mt-2">Verdict recorded in Cloudflare D1 distributed SQLite table</div>
                       </div>
                     </div>
                   </div>
 
                   {/* D1 Transition Rules Manager */}
-                  <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                  <div className={`p-6 rounded-2xl border shadow-sm ${theme === 'light' ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
+                    <div className="flex items-center justify-between border-b pb-3 mb-4 border-slate-200 dark:border-slate-800">
                       <div>
-                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                          <Database className="w-4 h-4 text-blue-400" />
+                        <h3 className={`text-sm font-bold flex items-center gap-2 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                          <Database className="w-4 h-4 text-blue-500" />
                           Sequential Markov Transition Rules Matrix ({rules.length})
                         </h3>
                         <p className="text-[11px] text-slate-400 mt-0.5">
@@ -991,14 +1316,14 @@ export default function App() {
 
                     {/* Add Rule Form - Admin Only */}
                     {currentSession.user.role === 'Admin' && (
-                      <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg mb-4 flex flex-col sm:flex-row items-center gap-3">
+                      <div className={`p-4 rounded-xl border mb-4 flex flex-col sm:flex-row items-center gap-3 ${theme === 'light' ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                         <div className="flex-1 w-full">
                           <label className="block text-[10px] text-slate-400 uppercase font-bold mb-1">Current Function</label>
                           <input
                             type="text"
                             value={newRuleCurrent}
                             onChange={(e) => setNewRuleCurrent(e.target.value)}
-                            className="w-full p-2 bg-slate-900 border border-slate-800 text-white rounded text-xs"
+                            className={`w-full p-2 border rounded-lg text-xs ${theme === 'light' ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'}`}
                             placeholder="e.g. login, getDashboardMetrics"
                           />
                         </div>
@@ -1009,14 +1334,14 @@ export default function App() {
                             type="text"
                             value={newRuleNext}
                             onChange={(e) => setNewRuleNext(e.target.value)}
-                            className="w-full p-2 bg-slate-900 border border-slate-800 text-white rounded text-xs"
+                            className={`w-full p-2 border rounded-lg text-xs ${theme === 'light' ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'}`}
                             placeholder="e.g. viewSecurityLogs, deployWorkerCode"
                           />
                         </div>
                         <button
                           type="button"
                           onClick={() => handleAddRule(newRuleCurrent, newRuleNext)}
-                          className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-xs whitespace-nowrap flex items-center gap-1.5"
+                          className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs whitespace-nowrap flex items-center gap-1.5 shadow-sm"
                         >
                           <Plus className="w-3.5 h-3.5" />
                           Add Transition Rule
@@ -1024,8 +1349,8 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Rules List */}
-                    <div className="divide-y divide-slate-800">
+                    {/* Rules List with Scrollbar */}
+                    <div className="max-h-[360px] overflow-y-auto scrollbar-thin pr-1 divide-y divide-slate-800">
                       {rules.map((rule) => (
                         <div key={rule.id} className="py-2.5 flex items-center justify-between">
                           <div className="flex items-center gap-3">
@@ -1052,7 +1377,7 @@ export default function App() {
               )
             )}
 
-            {/* FEATURE VIEW 6: CONSOLIDATED CONSOLE (ALL MODULES - ADMIN ONLY) */}
+            {/* FEATURE VIEW 6: CONSOLIDATED CONSOLE (EXECUTIVE SYNTHESIS) */}
             {activeTab === 'overview' && (
               currentSession.user.role !== 'Admin' ? (
                 <AccessRestrictedCard
@@ -1062,44 +1387,101 @@ export default function App() {
                   onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
                 />
               ) : (
-                <div className="space-y-6">
+                <div className="space-y-8">
+                  {/* High-level KPI metrics */}
                   <ThreatSummaryCard logs={logs} />
 
+                  {/* Visual Topology Graphic on Overview */}
+                  <EdgeTopologyGraphic
+                    blockedCount={blockedCount}
+                    totalRequests={logs.length}
+                    isSimulating={isFiring}
+                    onTriggerTestPacket={() => handleFirePipeline(selectedUser, selectedRoute)}
+                  />
+
+                  {/* Health and Risk Analytics */}
                   <SystemHealthDashboard
                     users={users}
                     logs={logs}
                     policyConfig={policyConfig}
+                    onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
                   />
 
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                    <div className="lg:col-span-5 xl:col-span-4">
-                      <SimulationControl
-                        users={users}
-                        selectedUser={selectedUser}
-                        onSelectUser={setSelectedUser}
-                        selectedRoute={selectedRoute}
-                        onSelectRoute={setSelectedRoute}
-                        onFire={handleFirePipeline}
-                        isFiring={isFiring}
-                        terminalLogs={terminalLogs}
-                        onClearTerminal={() => setTerminalLogs([])}
-                        currentSession={currentSession}
-                        policyConfig={policyConfig}
-                        onUpdatePolicyConfig={handleUpdatePolicyConfig}
-                      />
-                    </div>
+                  {/* Quick Jump Action Cards to Individual Workspaces */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('interceptor')}
+                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 font-bold">
+                            Live Simulation
+                          </span>
+                          <Shield className="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform" />
+                        </div>
+                        <h4 className="text-sm font-bold text-white mb-1">Runtime Interceptor</h4>
+                        <p className="text-xs text-slate-400">
+                          Simulate client HTTP packets, test Markov transition sequences, and inspect firewall thresholds.
+                        </p>
+                      </div>
+                      <div className="mt-4 text-xs font-mono font-semibold text-blue-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                        <span>Open Interceptor</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </div>
+                    </button>
 
-                    <div className="lg:col-span-7 xl:col-span-8">
-                      <AuditLogStream
-                        logs={logs}
-                        onRefresh={fetchOverview}
-                        isRefreshing={isRefreshing}
-                      />
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('ai-threats')}
+                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 font-bold">
+                            Autonomous Defense
+                          </span>
+                          <Bot className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                        </div>
+                        <h4 className="text-sm font-bold text-white mb-1">AI Threat Sentinel</h4>
+                        <p className="text-xs text-slate-400">
+                          Autonomous behavioral anomaly detection, real-time threat neutralization, and heuristic analysis.
+                        </p>
+                      </div>
+                      <div className="mt-4 text-xs font-mono font-semibold text-indigo-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                        <span>Open Sentinel</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('audit')}
+                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
+                            {logs.length} Recorded Events
+                          </span>
+                          <FileText className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                        </div>
+                        <h4 className="text-sm font-bold text-white mb-1">Compliance Audit Ledger</h4>
+                        <p className="text-xs text-slate-400">
+                          Stream live cryptographic logs, filter by principal or verdict, and export verification records.
+                        </p>
+                      </div>
+                      <div className="mt-4 text-xs font-mono font-semibold text-emerald-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                        <span>Open Audit Stream</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </div>
+                    </button>
                   </div>
                 </div>
               )
             )}
+            </main>
           </>
         )}
 
@@ -1153,6 +1535,28 @@ export default function App() {
       <CloudGuideModal
         isOpen={isCloudGuideOpen}
         onClose={() => setIsCloudGuideOpen(false)}
+      />
+
+      <SecurityReportModal
+        isOpen={isSecurityReportOpen}
+        onClose={() => setIsSecurityReportOpen(false)}
+        users={users}
+        logs={logs}
+        rules={rules}
+        policyConfig={policyConfig}
+        currentSession={currentSession}
+        onAddTerminalLog={addTerminalLog}
+      />
+
+      <UserDatabaseModal
+        isOpen={isUserDbModalOpen}
+        onClose={() => setIsUserDbModalOpen(false)}
+        users={users}
+        onApproveUser={handleApproveUser}
+        onRejectUser={handleRejectUser}
+        onAddUser={handleAddUser}
+        onDeleteUser={handleDeleteUser}
+        onBatchSeedUsers={handleBatchSeedUsers}
       />
     </div>
   );

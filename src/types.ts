@@ -1,9 +1,33 @@
+export type UserApprovalStatus = 'APPROVED' | 'PENDING_APPROVAL' | 'REJECTED' | 'SUSPENDED';
+
 export interface User {
   id: string;
   username: string;
   password_hash: string;
   role: 'Admin' | 'Developer' | 'Guest';
   base_risk_score: number;
+  status?: UserApprovalStatus;
+  department?: string;
+  email?: string;
+  phone?: string;
+  mfa_enabled?: boolean;
+  createdAt?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  lastLoginAt?: string;
+  requestJustification?: string;
+}
+
+export interface MfaPendingChallenge {
+  mfaSessionId: string;
+  username: string;
+  user: User;
+  phoneMasked: string;
+  emailMasked?: string;
+  methods: Array<'authenticator' | 'sms'>;
+  demoTotpCode: string;
+  demoSmsCode: string;
+  message?: string;
 }
 
 export interface AuthSession {
@@ -11,6 +35,7 @@ export interface AuthSession {
   token: string;
   loginTime: string;
   expiresInSeconds: number;
+  mfaMethod?: 'authenticator' | 'sms' | 'hardware_token';
 }
 
 export interface SecurityPolicyConfig {
@@ -18,6 +43,7 @@ export interface SecurityPolicyConfig {
   sequenceViolationPenalty: number; // default 40
   enforceStrictSequence: boolean; // default true
   globalLockdown?: boolean; // emergency kill-switch
+  requireAdminApprovalForNewLogins?: boolean; // zero-trust onboarding gate
 }
 
 export interface FunctionRule {
