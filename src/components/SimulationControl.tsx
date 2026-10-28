@@ -13,7 +13,10 @@ import {
   Zap, 
   ShieldCheck, 
   Layers, 
-  Flame 
+  Flame,
+  Activity,
+  AlertOctagon,
+  Timer
 } from 'lucide-react';
 import { TerminalLogEntry, User, AuthSession, SecurityPolicyConfig } from '../types.ts';
 
@@ -73,7 +76,7 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
   };
 
   // Run automated multi-step viva demonstration attack & defense scenarios
-  const executeScenario = async (scenarioType: 'admin_path' | 'rbac_breach' | 'sequence_anomaly' | 'high_risk_exploit') => {
+  const executeScenario = async (scenarioType: 'admin_path' | 'rbac_breach' | 'sequence_anomaly' | 'high_risk_exploit' | 'rate_limit' | 'fail_closed') => {
     if (isFiring || isRunningScenario) return;
     setIsRunningScenario(true);
 
@@ -108,6 +111,26 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
         setIsCustom(false);
         onSelectRoute('viewSecurityLogs');
         await onFire('threat_actor', 'viewSecurityLogs');
+      } else if (scenarioType === 'rate_limit') {
+        // Dynamic rate limiting check: bursts requests > 10 req/min
+        onSelectUser('cloud_dev');
+        setIsCustom(false);
+        await fetch('/api/security/rate-limit-drill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'cloud_dev' })
+        });
+        await onFire('cloud_dev', 'getDashboardMetrics');
+      } else if (scenarioType === 'fail_closed') {
+        // Fail-Closed Exception Guarantee: triggers pipeline fault, verified 100% block
+        onSelectUser('secops_admin');
+        setIsCustom(false);
+        await fetch('/api/security/fail-closed-drill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'secops_admin', errorType: 'EDGE_POLICY_EVAL_TIMEOUT' })
+        });
+        await onFire('secops_admin', 'getDashboardMetrics');
       }
     } finally {
       setIsRunningScenario(false);
@@ -288,6 +311,38 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
               <div className="text-[10px] text-red-400/70">70% base risk cutoff (&gt;=75%)</div>
             </div>
             <ShieldAlert className="w-3 h-3 text-red-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            disabled={isFiring || isRunningScenario}
+            onClick={() => executeScenario('rate_limit')}
+            className="p-2 text-left rounded bg-[#17120a] hover:bg-[#251b0d] border border-amber-800/60 text-[#94a3b8] hover:text-amber-300 transition-all flex items-center justify-between group disabled:opacity-50"
+          >
+            <div>
+              <div className="text-amber-200 font-bold group-hover:text-amber-300 flex items-center gap-1.5">
+                <Activity className="w-3 h-3 text-amber-400" />
+                Rate Limiting (+20%)
+              </div>
+              <div className="text-[10px] text-amber-400/70">&gt;10 req/min (ABNORMAL_REQUEST_RATE)</div>
+            </div>
+            <Timer className="w-3 h-3 text-amber-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            disabled={isFiring || isRunningScenario}
+            onClick={() => executeScenario('fail_closed')}
+            className="p-2 text-left rounded bg-[#1f0e13] hover:bg-[#2e121a] border border-rose-800/70 text-[#94a3b8] hover:text-rose-300 transition-all flex items-center justify-between group disabled:opacity-50"
+          >
+            <div>
+              <div className="text-rose-200 font-bold group-hover:text-rose-300 flex items-center gap-1.5">
+                <AlertOctagon className="w-3 h-3 text-rose-400" />
+                Fail-Closed Guarantee
+              </div>
+              <div className="text-[10px] text-rose-400/70">Pipeline fault =&gt; 100% Critical Block</div>
+            </div>
+            <AlertOctagon className="w-3 h-3 text-rose-400 shrink-0" />
           </button>
         </div>
       </div>

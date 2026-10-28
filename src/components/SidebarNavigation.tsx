@@ -185,7 +185,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
     }
   ];
 
-  if (!isOpen) return null;
+  if (!isOpen || !currentSession) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden flex">

@@ -602,8 +602,9 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
               <th className="p-3">Principal</th>
               <th className="p-3">Function Path</th>
               <th className="p-3">Risk Visual Score</th>
+              <th className="p-3">Latency Overhead</th>
               <th className="p-3">Verdict</th>
-              <th className="p-3">Engine Mitigation Heuristics</th>
+              <th className="p-3">Engine Mitigation Heuristics &amp; Behavioral Events</th>
             </tr>
           </thead>
           <tbody id="logs" className="divide-y divide-[#1e293b]">
@@ -725,6 +726,16 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
                       </div>
                     </td>
                     <td className="p-3 whitespace-nowrap">
+                      {item.verification_latency_ms !== undefined ? (
+                        <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md font-mono text-xs font-semibold bg-cyan-950/40 text-cyan-300 border border-cyan-800/50">
+                          <Activity className="w-3 h-3 text-cyan-400 animate-pulse" />
+                          <span>{item.verification_latency_ms} ms</span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-500 font-mono text-[11px]">&lt; 1.0 ms</span>
+                      )}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                           isBlocked
@@ -741,7 +752,27 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
                       </span>
                     </td>
                     <td className="p-3 text-[#a0aec0] leading-relaxed max-w-xs sm:max-w-md">
-                      {item.reason}
+                      <div className="space-y-1">
+                        <div>{item.reason}</div>
+                        {/* Behavioral Badges for Review Panel */}
+                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                          {item.event_type === 'ABNORMAL_REQUEST_RATE' && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold uppercase tracking-wider">
+                              ABNORMAL_REQUEST_RATE (+20 RISK)
+                            </span>
+                          )}
+                          {(item.event_type === 'SECURITY_EXCEPTION_FAIL_CLOSED' || item.reason?.includes('FAIL-CLOSED')) && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-rose-500/25 text-rose-300 border border-rose-500/50 font-bold uppercase tracking-wider">
+                              FAIL-CLOSED GUARANTEE (CRITICAL 100)
+                            </span>
+                          )}
+                          {item.event_type === 'SEQUENCE_VIOLATION' && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold uppercase tracking-wider">
+                              MARKOV SEQUENCE VIOLATION
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 );

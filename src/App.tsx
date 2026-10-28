@@ -313,7 +313,11 @@ export default function App() {
         const data: SystemOverview = await res.json();
         if (data && Array.isArray(data.users)) setUsers(data.users);
         if (data && Array.isArray(data.rules)) setRules(data.rules);
-        if (data && Array.isArray(data.logs)) setLogs(data.logs);
+        if (data && Array.isArray(data.auditEvents) && data.auditEvents.length > 0) {
+          setLogs(data.auditEvents);
+        } else if (data && Array.isArray(data.logs)) {
+          setLogs(data.logs);
+        }
         if (data && data.policyConfig) setPolicyConfig(data.policyConfig);
         setConnectionStatus('connected');
       } else {
@@ -409,6 +413,30 @@ export default function App() {
       });
 
       const pipelineData = await pipelineResponse.json();
+      const latencyMs = pipelineData.metrics?.verification_latency_ms
+        ?? pipelineResponse.headers.get('x-verification-latency-ms')
+        ?? pipelineResponse.headers.get('x-security-verification-duration-ms');
+
+      if (latencyMs !== undefined && latencyMs !== null) {
+        addTerminalLog(
+          'metric',
+          `[LATENCY MONITOR] Edge Verification Pipeline Overhead: ${latencyMs} ms (Captured via high-res performance.now() timer).`
+        );
+      }
+
+      if (pipelineData.metrics?.rateLimitExceeded || pipelineData.metrics?.eventType === 'ABNORMAL_REQUEST_RATE') {
+        addTerminalLog(
+          'alert',
+          `[RATE LIMIT ALERT] ABNORMAL_REQUEST_RATE: Frequency exceeded 10 req/min threshold. Risk score penalized +20%.`
+        );
+      }
+
+      if (pipelineData.metrics?.failClosed) {
+        addTerminalLog(
+          'alert',
+          `[FAIL-CLOSED GUARANTEE] Critical security pipeline exception handled: Request immediately BLOCKED with 100% Critical Risk score.`
+        );
+      }
 
       if (pipelineResponse.status === 200) {
         addTerminalLog('metric', `[METRIC] Security Clearance: STATUS 200 (OK - ALLOWED).`);

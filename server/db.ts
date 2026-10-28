@@ -37,7 +37,11 @@ export interface SecurityAuditLog {
   calculated_risk: number;
   status: 'ALLOWED' | 'BLOCKED';
   reason: string;
+  verification_latency_ms?: number;
+  event_type?: string;
 }
+
+export type SecurityEvent = SecurityAuditLog;
 
 const INITIAL_USERS: User[] = [
   {
@@ -142,6 +146,7 @@ class SecurityDatabase {
   private users: User[] = [];
   private rules: FunctionRule[] = [];
   private logs: SecurityAuditLog[] = [];
+  private auditEvents: SecurityAuditLog[] = [];
   private ruleIdCounter = 1;
   private logIdCounter = 1;
   private userIdCounter = 100;
@@ -154,12 +159,14 @@ class SecurityDatabase {
     this.users = JSON.parse(JSON.stringify(INITIAL_USERS));
     this.rules = INITIAL_RULES.map((r, i) => ({ id: i + 1, ...r }));
     this.logs = [];
+    this.auditEvents = [];
     this.ruleIdCounter = this.rules.length + 1;
     this.logIdCounter = 1;
   }
 
   public clearLogs() {
     this.logs = [];
+    this.auditEvents = [];
   }
 
   public getUsers(): User[] {
@@ -323,6 +330,20 @@ class SecurityDatabase {
     return [...this.logs].sort((a, b) => b.id - a.id);
   }
 
+  public getAuditEvents(): SecurityAuditLog[] {
+    return (this.auditEvents.length > 0 ? this.auditEvents : this.logs).slice().sort((a, b) => b.id - a.id);
+  }
+
+  /**
+   * Rate limiting query: Count requests executed by username within windowMs (default 60s)
+   */
+  public getRecentRequestCount(username: string, windowMs = 60000): number {
+    const cutoff = Date.now() - windowMs;
+    return this.logs.filter(
+      l => l.username.toLowerCase() === username.toLowerCase() && new Date(l.timestamp).getTime() >= cutoff
+    ).length;
+  }
+
   /**
    * Compatibility layer providing env.DB.prepare(sql).bind(...).first() / .all() / .run()
    */
@@ -339,11 +360,23 @@ class SecurityDatabase {
         const trimmed = sql.trim();
         if (trimmed.includes('FROM users WHERE username = ?')) {
           const username = boundParams[0];
-          return self.users.find(u => u.username === username) || null;
+          return self.users.find(u => u.username.toLowerCase() === (username || '').toLowerCase()) || null;
         }
-        if (trimmed.includes('FROM security_audit_logs WHERE username = ?')) {
+        if (trimmed.includes('COUNT(*)') && (trimmed.includes('security_audit_logs') || trimmed.includes('security_events') || trimmed.includes('audit_events'))) {
           const username = boundParams[0];
-          const userLogs = self.logs.filter(l => l.username === username);
+          const count = self.getRecentRequestCount(username, 60000);
+          return { count, total: count };
+        }
+        if (trimmed.includes('FROM audit_events WHERE username = ?')) {
+          const username = boundParams[0];
+          const source = self.auditEvents.length > 0 ? self.auditEvents : self.logs;
+          const userLogs = source.filter(l => l.username.toLowerCase() === (username || '').toLowerCase());
+          if (userLogs.length === 0) return null;
+          return userLogs[userLogs.length - 1];
+        }
+        if (trimmed.includes('FROM security_audit_logs WHERE username = ?') || trimmed.includes('FROM security_events WHERE username = ?')) {
+          const username = boundParams[0];
+          const userLogs = self.logs.filter(l => l.username.toLowerCase() === (username || '').toLowerCase());
           if (userLogs.length === 0) return null;
           return userLogs[userLogs.length - 1]; // last log
         }
@@ -355,7 +388,14 @@ class SecurityDatabase {
       },
       async all(): Promise<{ results: any[] }> {
         const trimmed = sql.trim();
-        if (trimmed.includes('FROM security_audit_logs')) {
+        if (trimmed.includes('FROM audit_events')) {
+          const limitMatch = trimmed.match(/LIMIT\s+(\d+)/i);
+          const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
+          const source = self.auditEvents.length > 0 ? self.auditEvents : self.logs;
+          const sorted = [...source].sort((a, b) => b.id - a.id).slice(0, limit);
+          return { results: sorted };
+        }
+        if (trimmed.includes('FROM security_audit_logs') || trimmed.includes('FROM security_events')) {
           const limitMatch = trimmed.match(/LIMIT\s+(\d+)/i);
           const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
           const sorted = [...self.logs].sort((a, b) => b.id - a.id).slice(0, limit);
@@ -371,18 +411,26 @@ class SecurityDatabase {
       },
       async run(): Promise<{ success: boolean; id?: number }> {
         const trimmed = sql.trim();
-        if (trimmed.startsWith('INSERT INTO security_audit_logs')) {
-          const [username, requested_function, calculated_risk, status, reason] = boundParams;
+        if (trimmed.startsWith('INSERT INTO security_audit_logs') || trimmed.startsWith('INSERT INTO security_events') || trimmed.startsWith('INSERT INTO audit_events')) {
+          const [username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type] = boundParams;
+          const numericLatency = typeof verification_latency_ms === 'number'
+            ? verification_latency_ms
+            : (parseFloat(verification_latency_ms) || 0.0);
+
           const newLog: SecurityAuditLog = {
             id: self.logIdCounter++,
             timestamp: new Date().toISOString(),
-            username,
-            requested_function,
-            calculated_risk,
-            status,
-            reason
+            username: username || 'unknown',
+            requested_function: requested_function || '/api/unknown',
+            calculated_risk: typeof calculated_risk === 'number' ? calculated_risk : 0,
+            status: status === 'ALLOWED' ? 'ALLOWED' : 'BLOCKED',
+            reason: reason || 'Audit evaluation recorded.',
+            verification_latency_ms: numericLatency,
+            event_type: event_type || (reason?.includes('ABNORMAL_REQUEST_RATE') ? 'ABNORMAL_REQUEST_RATE' : 'STANDARD_VERIFICATION')
           };
+
           self.logs.push(newLog);
+          self.auditEvents.push(newLog);
           return { success: true, id: newLog.id };
         }
         return { success: true };

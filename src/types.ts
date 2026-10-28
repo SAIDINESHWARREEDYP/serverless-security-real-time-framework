@@ -60,18 +60,25 @@ export interface SecurityAuditLog {
   calculated_risk: number;
   status: 'ALLOWED' | 'BLOCKED';
   reason: string;
+  verification_latency_ms?: number;
+  event_type?: string;
 }
+
+export type AuditEvent = SecurityAuditLog;
 
 export interface SystemOverview {
   users: User[];
   rules: FunctionRule[];
   logs: SecurityAuditLog[];
+  auditEvents?: SecurityAuditLog[];
   stats: {
     totalUsers: number;
     totalRules: number;
     totalLogs: number;
+    totalAuditEvents?: number;
     blockedCount: number;
     allowedCount: number;
+    avgVerificationLatencyMs?: number;
   };
   policyConfig?: SecurityPolicyConfig;
 }

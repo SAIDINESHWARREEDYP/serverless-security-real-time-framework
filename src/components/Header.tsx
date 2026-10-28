@@ -120,21 +120,23 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Main Brand & Action Header */}
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
         <div className="flex items-start sm:items-center gap-3.5">
-          {/* PRIMARY MENU TRIGGER: Purely at the last left of the logo */}
-          <button
-            id="btn-open-sidebar"
-            type="button"
-            onClick={onOpenSidebar}
-            className={`p-3 rounded-2xl border shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 shrink-0 flex items-center justify-center cursor-pointer group ${
-              isLight
-                ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-500 shadow-blue-500/25 ring-2 ring-blue-500/10'
-                : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-400/50 shadow-blue-500/30 ring-2 ring-blue-500/20'
-            }`}
-            title="Open Navigation Menu"
-            aria-label="Open Navigation Menu"
-          >
-            <Menu className="w-6 h-6 transition-transform group-hover:rotate-3" />
-          </button>
+          {/* PRIMARY MENU TRIGGER: Purely at the last left of the logo (Visible only after login) */}
+          {currentSession && (
+            <button
+              id="btn-open-sidebar"
+              type="button"
+              onClick={onOpenSidebar}
+              className={`p-3 rounded-2xl border shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 shrink-0 flex items-center justify-center cursor-pointer group ${
+                isLight
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-500 shadow-blue-500/25 ring-2 ring-blue-500/10'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-400/50 shadow-blue-500/30 ring-2 ring-blue-500/20'
+              }`}
+              title="Open Navigation Menu"
+              aria-label="Open Navigation Menu"
+            >
+              <Menu className="w-6 h-6 transition-transform group-hover:rotate-3" />
+            </button>
+          )}
 
           {/* Framework Logo */}
           <div className={`p-3 rounded-2xl border shadow-md transition-transform hover:scale-105 shrink-0 ${

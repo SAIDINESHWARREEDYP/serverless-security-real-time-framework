@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "serverless-securityverification",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "serverless-security-d1",
+      "database_id": "703e0f39-d179-43c1-9c95-2ba30aef99c4-d1",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "ZERO_TRUST_ORIGIN": "https://serverless-securityverification.ai.studio"
+  }
+}

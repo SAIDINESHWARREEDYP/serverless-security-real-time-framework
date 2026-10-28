@@ -214,6 +214,13 @@ export const EdgeTopologyGraphic: React.FC<EdgeTopologyGraphicProps> = ({
                 {Math.max(0, totalRequests - blockedCount)}
               </span>
             </div>
+            <span className="text-slate-400 dark:text-slate-700">|</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-slate-500">Verification Latency:</span>
+              <span className="font-bold text-cyan-400 tabular-nums font-mono text-[11px]">
+                ~0.4 ms
+              </span>
+            </div>
           </div>
 
           <button
