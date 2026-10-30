@@ -20,7 +20,8 @@ import {
   Filter,
   Download,
   Smartphone,
-  KeyRound
+  KeyRound,
+  AlertTriangle
 } from 'lucide-react';
 import { User, UserApprovalStatus } from '../types.ts';
 
@@ -63,6 +64,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const [revokingUser, setRevokingUser] = useState<string | null>(null);
   const [revokedUsersList, setRevokedUsersList] = useState<Set<string>>(new Set());
   const [revocationNotice, setRevocationNotice] = useState<string | null>(null);
+  const [confirmRevokeUser, setConfirmRevokeUser] = useState<User | null>(null);
   const [roleFilter, setRoleFilter] = useState<'ALL' | 'Admin' | 'Developer' | 'Guest'>('ALL');
   const [riskFilter, setRiskFilter] = useState<'ALL' | 'CRITICAL' | 'ELEVATED' | 'MODERATE' | 'NOMINAL'>('ALL');
   const [sortBy, setSortBy] = useState<'name' | 'risk_desc' | 'risk_asc' | 'status'>('name');
@@ -703,18 +705,8 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                           type="button"
                           id={`btn-revoke-session-${user.username}`}
                           disabled={revokingUser === user.username}
-                          onClick={async () => {
-                            setRevokingUser(user.username);
-                            try {
-                              await onRevokeSession(user.username);
-                              setRevokedUsersList(prev => new Set(prev).add(user.username));
-                              setRevocationNotice(`Active session for principal [${user.username}] terminated in real-time. Token invalidated.`);
-                              setTimeout(() => setRevocationNotice(null), 5000);
-                            } catch (err: any) {
-                              setRevocationNotice(`Revocation failed: ${err?.message || String(err)}`);
-                            } finally {
-                              setRevokingUser(null);
-                            }
+                          onClick={() => {
+                            setConfirmRevokeUser(user);
                           }}
                           className={`px-2.5 py-1 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
                             revokedUsersList.has(user.username)
@@ -760,6 +752,90 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Small Confirmation Dialog to Prevent Accidental Session Termination */}
+      {confirmRevokeUser && (
+        <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-rose-500/50 rounded-2xl p-5 max-w-md w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Confirm Session Revocation
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Are you sure you want to terminate the active session for principal{' '}
+                  <span className="text-white font-mono font-bold">[{confirmRevokeUser.username}]</span> in Cloudflare D1?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5 text-xs font-mono mb-4">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Principal:</span>
+                <span className="text-white font-bold">{confirmRevokeUser.username}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Assigned Role:</span>
+                <span className="text-purple-400">{confirmRevokeUser.role}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Base Risk:</span>
+                <span className={confirmRevokeUser.base_risk_score >= 50 ? 'text-rose-400' : 'text-emerald-400'}>
+                  {confirmRevokeUser.base_risk_score}%
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Token Status:</span>
+                <span className="text-rose-400 font-bold">WILL BE REVOKED IMMEDIATELY</span>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-slate-300 mb-4 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-lg flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>
+                All subsequent API requests using this user's current Bearer token will immediately fail with HTTP 403 Forbidden.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setConfirmRevokeUser(null)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-revoke-session"
+                disabled={revokingUser === confirmRevokeUser.username}
+                onClick={async () => {
+                  const targetUsername = confirmRevokeUser.username;
+                  setRevokingUser(targetUsername);
+                  try {
+                    await onRevokeSession(targetUsername);
+                    setRevokedUsersList(prev => new Set(prev).add(targetUsername));
+                    setRevocationNotice(`Active session for principal [${targetUsername}] terminated in real-time. Token invalidated.`);
+                    setTimeout(() => setRevocationNotice(null), 5000);
+                  } catch (err: any) {
+                    setRevocationNotice(`Revocation failed: ${err?.message || String(err)}`);
+                  } finally {
+                    setRevokingUser(null);
+                    setConfirmRevokeUser(null);
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white flex items-center gap-1.5 transition-colors shadow-md cursor-pointer disabled:opacity-50"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>{revokingUser === confirmRevokeUser.username ? 'Revoking...' : 'Yes, Revoke Session'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

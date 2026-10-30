@@ -15,10 +15,13 @@ import {
   ChevronDown,
   AlertTriangle,
   Layers,
-  UserCheck
+  UserCheck,
+  Clock,
+  Eye
 } from 'lucide-react';
 import { SecurityAuditLog } from '../types.ts';
 import { useTheme } from '../context/ThemeContext.tsx';
+import { InteractiveSecurityTimeline } from './InteractiveSecurityTimeline.tsx';
 
 interface AuditLogStreamProps {
   logs: SecurityAuditLog[];
@@ -34,6 +37,8 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
   isRefreshing
 }) => {
   const { isLight } = useTheme();
+  const [streamViewMode, setStreamViewMode] = useState<'split' | 'timeline' | 'table'>('split');
+  const [selectedTimelineLogId, setSelectedTimelineLogId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterVerdict, setFilterVerdict] = useState<'ALL' | 'ALLOWED' | 'BLOCKED'>('ALL');
   const [filterSeverity, setFilterSeverity] = useState<RiskSeverityFilter>('ALL');
@@ -210,6 +215,49 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Timeline / Ledger Mode Toggle */}
+          <div className="flex items-center rounded-lg p-0.5 border border-[#223452] bg-[#090d16] text-xs">
+            <button
+              type="button"
+              onClick={() => setStreamViewMode('split')}
+              className={`px-2.5 py-1 rounded transition-colors flex items-center gap-1.5 ${
+                streamViewMode === 'split'
+                  ? 'bg-[#00d2ff] text-black font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Show both interactive timeline and detailed forensic ledger"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Split View</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStreamViewMode('timeline')}
+              className={`px-2.5 py-1 rounded transition-colors flex items-center gap-1.5 ${
+                streamViewMode === 'timeline'
+                  ? 'bg-[#00d2ff] text-black font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Interactive Timeline focused view for attack pattern visualization"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Attack Timeline</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStreamViewMode('table')}
+              className={`px-2.5 py-1 rounded transition-colors flex items-center gap-1.5 ${
+                streamViewMode === 'table'
+                  ? 'bg-[#00d2ff] text-black font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Detailed cryptographic forensic ledger table view"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Forensic Ledger</span>
+            </button>
+          </div>
+
           <button
             id="btn-download-csv"
             onClick={handleDownloadCSV}
@@ -249,8 +297,23 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
         </div>
       </div>
 
-      {/* 2. Summary KPI Cards with Mini Visuals */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
+      {/* Interactive Timeline Component for Attack Pattern Detection */}
+      {(streamViewMode === 'split' || streamViewMode === 'timeline') && (
+        <div className="mb-4">
+          <InteractiveSecurityTimeline
+            logs={logs}
+            selectedLogId={selectedTimelineLogId}
+            onSelectLog={(selectedLog) => {
+              setSelectedTimelineLogId(selectedLog.id);
+            }}
+          />
+        </div>
+      )}
+
+      {/* 2. Forensic Ledger Table & Metrics (Rendered in Split & Table Modes) */}
+      {(streamViewMode === 'split' || streamViewMode === 'table') && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
         <div className="bg-[#090d16] border border-[#223452] p-2.5 rounded-lg">
           <div className="text-[10px] text-[#6b7c96] uppercase flex items-center justify-between">
             <span>Total Streams</span>
@@ -661,10 +724,18 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
                   ? 'MODERATE'
                   : 'NOMINAL';
 
+                const isSelectedInTimeline = selectedTimelineLogId === item.id;
+
                 return (
                   <tr
                     key={item.id}
-                    className="hover:bg-[#1a273f]/60 transition-colors group"
+                    id={`log-row-${item.id}`}
+                    onClick={() => setSelectedTimelineLogId(item.id)}
+                    className={`transition-colors cursor-pointer group ${
+                      isSelectedInTimeline
+                        ? 'bg-cyan-500/20 ring-1 ring-cyan-400'
+                        : 'hover:bg-[#1a273f]/60'
+                    }`}
                   >
                     <td className="p-3 text-[#94a3b8] whitespace-nowrap">{formattedTime}</td>
                     <td className="p-3 font-semibold text-white whitespace-nowrap">
@@ -781,6 +852,8 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
           </tbody>
         </table>
       </div>
+        </>
+      )}
     </div>
   );
 };
