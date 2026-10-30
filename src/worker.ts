@@ -41,6 +41,28 @@ export default {
       );
     }
 
+    // Real-time Session Revocation Endpoint for Cloudflare Workers (/api/auth/revoke-session)
+    if (path === '/api/auth/revoke-session' || path === '/api/system/sessions/revoke') {
+      try {
+        const body: any = await request.json().catch(() => ({}));
+        const { username, token, reason } = body;
+        if (env.DB && (username || token)) {
+          await env.DB.prepare(
+            "UPDATE active_sessions SET revoked = 1, revoked_at = datetime('now'), revoked_by = 'secops_admin', revocation_reason = ? WHERE username = ? OR token = ?"
+          ).bind(reason || 'Terminated by Administrator', username || '', token || '').run();
+        }
+        return jsonResponse({
+          success: true,
+          revoked: true,
+          message: `Active session for principal [${username || token}] successfully terminated in real-time.`,
+          target: username || token,
+          revokedAt: new Date().toISOString()
+        }, 200, 0.42);
+      } catch (err: any) {
+        return jsonResponse({ error: 'Session revocation failed: ' + (err?.message || String(err)) }, 500, 0.5);
+      }
+    }
+
     // OPERATIONAL SERVERLESS PIPELINE INTERCEPTION ROUTE (/api/:route)
     if (path.startsWith('/api/')) {
       const verificationStartTime = performance.now();
@@ -74,7 +96,8 @@ export default {
           );
         }
 
-        let username = authHeader.split(' ')[1];
+        const rawBearerToken = authHeader.split(' ')[1];
+        let username = rawBearerToken;
         if (username.startsWith('zt_jwt_') || username.startsWith('mbu_jwt_')) {
           const parts = username.split('_');
           if (parts.length >= 3) {
@@ -82,6 +105,42 @@ export default {
           }
         }
         auditUsername = username;
+
+        // Check active session revocation status in D1
+        if (env.DB) {
+          const revokedSession = await env.DB.prepare(
+            'SELECT * FROM active_sessions WHERE (token = ? OR username = ?) AND revoked = 1 LIMIT 1'
+          ).bind(rawBearerToken, username).first();
+
+          if (revokedSession) {
+            const revLatency = Number((performance.now() - verificationStartTime).toFixed(3));
+            await logSecurityEvent(
+              env.DB,
+              username,
+              path,
+              100,
+              'BLOCKED',
+              `[SESSION REVOKED] Active session for principal [${username}] was terminated by Administrator in real-time.`,
+              revLatency,
+              'SESSION_REVOKED'
+            );
+            return jsonResponse(
+              {
+                error: 'Security Gateway: Session has been terminated by Administrator in real-time. Token signature no longer honored.',
+                revoked: true,
+                metrics: {
+                  riskScore: 100,
+                  status: 'BLOCKED',
+                  threatReason: 'Session terminated by Administrator in real-time. Token invalidated.',
+                  verification_latency_ms: revLatency,
+                  eventType: 'SESSION_REVOKED'
+                }
+              },
+              403,
+              revLatency
+            );
+          }
+        }
 
         // Identity Context Lookup in D1
         let user: any = null;

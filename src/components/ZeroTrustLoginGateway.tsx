@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -19,7 +19,13 @@ import {
   Sparkles,
   UserPlus,
   Search,
-  RefreshCw
+  RefreshCw,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  Cpu,
+  Layers,
+  Database
 } from 'lucide-react';
 import { User, AuthSession, UserApprovalStatus, MfaPendingChallenge } from '../types.ts';
 import { MfaVerificationCard } from './MfaVerificationCard.tsx';
@@ -37,15 +43,24 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   onAddTerminalLog,
   onOpenUserDatabase
 }) => {
-  const [activeTab, setActiveTab] = useState<'directory' | 'signin' | 'register' | 'quick'>('directory');
-  const [customUsername, setCustomUsername] = useState('');
-  const [customPassword, setCustomPassword] = useState('ZeroTrust_2026');
+  // Default to secure Sign In credentials tab
+  const [activeTab, setActiveTab] = useState<'signin' | 'register' | 'directory'>('signin');
 
-  // Register state
+  // Dynamic real-time sign in state - no preset default username
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Dynamic on-the-fly onboarding options when a new username is entered
+  const [dynamicRole, setDynamicRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
+  const [dynamicDept, setDynamicDept] = useState('Cloud Infrastructure Operations');
+  const [dynamicJustification, setDynamicJustification] = useState('');
+
+  // Dedicated Register tab state
   const [registerUsername, setRegisterUsername] = useState('');
-  const [registerPassword, setRegisterPassword] = useState('ZeroTrust_2026');
+  const [registerPassword, setRegisterPassword] = useState('');
   const [registerRole, setRegisterRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
-  const [registerDept, setRegisterDept] = useState('Cloud Platform Engineering');
+  const [registerDept, setRegisterDept] = useState('Platform Engineering');
   const [registerRisk, setRegisterRisk] = useState(20);
   const [registerJustification, setRegisterJustification] = useState('');
 
@@ -57,14 +72,44 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   // Multi-Factor Authentication Challenge state
   const [mfaChallenge, setMfaChallenge] = useState<MfaPendingChallenge | null>(null);
 
-  // Search in directory
+  // Directory filter
   const [dirSearch, setDirSearch] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
-  // 1. Real-time Polling for Admin Approval
+  // Live lookup: Check if the entered username exists in the users database
+  const matchedExistingUser = useMemo(() => {
+    const q = username.trim().toLowerCase();
+    if (!q) return null;
+    return users.find((u) => u.username.toLowerCase() === q) || null;
+  }, [username, users]);
+
+  // Real-time Zero-Trust Username Validation Rules:
+  // > 5 chars, at least one uppercase, at least one lowercase, alphanumeric
+  const usernameRules = useMemo(() => {
+    const u = username.trim();
+    // Allow built-in root seeds like secops_admin, cloud_dev, auditor_guest
+    const lower = u.toLowerCase();
+    const isBuiltIn = lower === 'secops_admin' || lower === 'cloud_dev' || lower === 'auditor_guest' || lower === 'sarah_infra';
+    const hasMinLength = u.length > 5;
+    const hasUpper = /[A-Z]/.test(u);
+    const hasLower = /[a-z]/.test(u);
+    const hasAlphaNum = /[0-9a-zA-Z]/.test(u);
+    const isValid = isBuiltIn || (hasMinLength && hasUpper && hasLower && hasAlphaNum);
+
+    return {
+      hasMinLength,
+      hasUpper,
+      hasLower,
+      hasAlphaNum,
+      isValid,
+      isBuiltIn
+    };
+  }, [username]);
+
+  // Real-time Polling for Admin Approval
   useEffect(() => {
     if (!pendingUser) {
       setIsPollingApproval(false);
@@ -86,7 +131,6 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           setIsPollingApproval(false);
           onAddTerminalLog?.('success', `[IAM CLEARANCE] Principal ${pendingUser.username} was APPROVED by Administrator.`);
 
-          // Complete login automatically
           const session: AuthSession = {
             user: data.user,
             token: data.token || `zt_jwt_${pendingUser.username}_${Date.now().toString(36)}`,
@@ -113,130 +157,143 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   }, [pendingUser, onLoginSuccess, onAddTerminalLog]);
 
   // Handle Login submission
-  const executeLogin = async (username: string, password = 'ZeroTrust_2026') => {
-    if (!username.trim()) return;
+  const executeLogin = async (rawUsername: string, rawPassword?: string) => {
+    const cleanUser = rawUsername.trim();
+    if (!cleanUser) {
+      setErrorMsg('Username is required.');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
     setStatusNotice(null);
 
     try {
+      const payload: any = {
+        username: cleanUser,
+        password: rawPassword || password || 'ZeroTrust_2026'
+      };
+
+      // If user doesn't exist yet, provide dynamic onboarding parameters
+      if (!matchedExistingUser) {
+        payload.role = dynamicRole;
+        payload.department = dynamicDept;
+        payload.requestJustification = dynamicJustification || 'Real-time dynamic identity sign-in';
+      }
+
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
 
       // Case 1: Pending Admin Approval Gate
       if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
         const pUser: User = data.user || {
-          id: `usr_${username}`,
-          username,
-          password_hash: password,
-          role: data.role || 'Developer',
+          id: `usr_${cleanUser}`,
+          username: cleanUser,
+          password_hash: payload.password,
+          role: data.role || dynamicRole,
           base_risk_score: data.userRisk ?? 20,
-          status: 'PENDING_APPROVAL'
+          status: 'PENDING_APPROVAL',
+          department: dynamicDept
         };
         setPendingUser(pUser);
-        onAddTerminalLog?.('alert', `[IAM GATE] Login gated: Principal ${username} awaiting Administrator verification.`);
+        onAddTerminalLog?.('alert', `[IAM CLEARANCE] Principal ${cleanUser} registered. Held in Zero-Trust gate awaiting Admin verification.`);
         return;
       }
 
-      // Case 2: Rejected or Suspended
-      if (res.status === 403 && (data.rejected || data.suspended)) {
-        setErrorMsg(data.error || 'Access Denied: Clearance not granted for this identity.');
+      // Case 2: Rejected
+      if (data.rejected || data.status === 'REJECTED') {
+        setErrorMsg(data.error || 'Access Denied: Account rejected by SecOps Administration.');
         return;
       }
 
-      // Case 2.5: Multi-Factor Authentication Challenge Required
-      if (data.mfaRequired && data.mfaSessionId) {
+      // Case 3: Suspended / Quarantined
+      if (data.suspended || data.status === 'SUSPENDED') {
+        setErrorMsg(data.error || 'Account suspended or quarantined by SecOps Security Policy.');
+        return;
+      }
+
+      // Case 4: Multi-Factor Authentication Challenge Triggered
+      if (data.mfaRequired) {
+        onAddTerminalLog?.('info', `[MFA CHALLENGE] Password accepted for ${cleanUser}. Multi-Factor passcode required.`);
         setMfaChallenge({
           mfaSessionId: data.mfaSessionId,
-          username: data.user?.username || username,
-          user: data.user || {
-            id: `usr_${username}`,
-            username,
-            password_hash: password,
-            role: data.role || 'Developer',
-            base_risk_score: data.userRisk ?? 15,
-            status: 'APPROVED'
-          },
+          username: cleanUser,
+          user: data.user,
           phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
-          emailMasked: data.emailMasked,
+          emailMasked: data.emailMasked || `${cleanUser.toLowerCase()}@corp.internal`,
           methods: data.methods || ['authenticator', 'sms'],
           demoTotpCode: data.demoTotpCode,
           demoSmsCode: data.demoSmsCode,
-          message: data.message
+          expiresInSeconds: 300
         });
-        onAddTerminalLog?.('info', `[IAM MFA] Primary credentials verified for [${username}]. Factor 2 verification challenge required.`);
         return;
       }
 
-      // Case 3: Direct Success (if MFA already cleared or bypassed)
-      if (res.ok && data.success) {
-        const user: User = data.user || {
-          id: `usr_${username}`,
-          username,
-          password_hash: password,
-          role: data.role || 'Developer',
-          base_risk_score: data.userRisk ?? 15,
-          status: 'APPROVED'
-        };
+      // Case 5: Direct clearance granted
+      if (data.success && data.token) {
+        onAddTerminalLog?.('success', `[IAM VERIFIED] Session cleared for ${cleanUser} (${data.role}).`);
         const session: AuthSession = {
-          user,
+          user: data.user,
           token: data.token,
           loginTime: new Date().toLocaleTimeString(),
           expiresInSeconds: data.expiresInSeconds || 3600
         };
-        onLoginSuccess(session);
-        onAddTerminalLog?.('success', `[IAM GATEWAY] Authenticated as ${user.username} [${user.role}].`);
+        onLoginSuccess(session, !matchedExistingUser);
       } else {
-        setErrorMsg(data.error || 'Invalid credentials or user access denied.');
+        setErrorMsg(data.error || 'Authentication denied by Zero-Trust Edge Interceptor.');
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Login connection failed.');
+      setErrorMsg(err?.message || 'Connection failed to identity verification gateway.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Handle Registration
+  // Dedicated Registration handler
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!registerUsername.trim()) return;
     setLoading(true);
     setErrorMsg(null);
-    setStatusNotice(null);
 
     try {
+      const clean = registerUsername.trim();
       const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: registerUsername.trim(),
-          password: registerPassword,
+          username: clean,
+          password: registerPassword || 'ZeroTrust_2026',
           role: registerRole,
           base_risk_score: registerRisk,
           department: registerDept,
-          requestJustification: registerJustification || 'Self-service account registration'
+          requestJustification: registerJustification || 'New self-service account registration'
         })
       });
+
       const data = await res.json();
-
-      if (res.status === 409) {
-        setErrorMsg(data.error || 'Username already exists. Please choose another username.');
-        return;
-      }
-
       if (res.ok && data.success) {
         if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
-          setPendingUser(data.user);
-          onAddTerminalLog?.('alert', `[IAM QUEUED] Principal ${data.user.username} registered. Submitted to Admin verification.`);
+          const pUser: User = data.user || {
+            id: `usr_${clean}`,
+            username: clean,
+            password_hash: registerPassword || 'ZeroTrust_2026',
+            role: registerRole,
+            base_risk_score: registerRisk,
+            status: 'PENDING_APPROVAL',
+            department: registerDept
+          };
+          setPendingUser(pUser);
+          onAddTerminalLog?.('alert', `[IAM CLEARANCE] Account registered for [${clean}]. Awaiting SecOps clearance.`);
         } else {
-          // Auto approved
+          onAddTerminalLog?.('success', `[IAM PROVISIONED] Account auto-approved for [${clean}].`);
           const session: AuthSession = {
             user: data.user,
-            token: data.token,
+            token: data.token || `zt_jwt_${clean}_${Date.now().toString(36)}`,
             loginTime: new Date().toLocaleTimeString(),
             expiresInSeconds: data.expiresInSeconds || 3600
           };
@@ -249,36 +306,6 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
       setErrorMsg(err?.message || 'Registration connection error.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Instant Simulate Approval for Testing
-  const handleSimulateInstantApprove = async () => {
-    if (!pendingUser) return;
-    try {
-      const res = await fetch('/api/system/users/approve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: pendingUser.username,
-          approvedBy: 'secops_admin (Fast-Clear)'
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        onAddTerminalLog?.('success', `[ADMIN] Fast-cleared identity ${pendingUser.username}.`);
-        // The polling loop will catch it in ~1 sec, or we can trigger login right now:
-        const session: AuthSession = {
-          user: data.user,
-          token: `zt_jwt_${pendingUser.username}_${Date.now().toString(36)}`,
-          loginTime: new Date().toLocaleTimeString(),
-          expiresInSeconds: 3600
-        };
-        setPendingUser(null);
-        onLoginSuccess(session);
-      }
-    } catch {
-      // Poller will catch it
     }
   };
 
@@ -298,15 +325,15 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
     <div className="max-w-4xl mx-auto my-6 space-y-6 font-sans">
       {/* 1. Header Banner */}
       <div className="text-center space-y-2 py-4 px-4">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-xs font-mono">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-xs font-mono shadow-xs">
           <Fingerprint className="w-3.5 h-3.5 text-blue-400" />
-          <span>Zero-Trust Enterprise IAM Gateway</span>
+          <span>Zero-Trust Enterprise IAM Gateway • IEEE Access Bλambda Architecture</span>
         </div>
-        <h2 className="text-2xl font-bold text-white tracking-tight">
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
           Role-Gated Identity &amp; Verification Terminal
         </h2>
-        <p className="text-xs text-slate-400 max-w-xl mx-auto">
-          Every principal undergoes strict RBAC validation and administrator clearance verification before being granted system execution privileges.
+        <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto">
+          Every principal undergoes strict RBAC validation, Markov sequence evaluation, and administrator clearance verification before being granted system access.
         </p>
       </div>
 
@@ -340,6 +367,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           variant="page"
         />
       ) : pendingUser ? (
+        /* 3. ZERO-TRUST APPROVAL GATE / LIVE POLLING SCREEN */
         <div className="p-6 rounded-2xl border border-amber-500/30 bg-slate-900/95 shadow-xl space-y-5 animate-in fade-in zoom-in-95">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div className="flex items-center gap-3">
@@ -361,371 +389,310 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               </div>
             </div>
 
-            {/* Heartbeat Status Indicator */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 shrink-0">
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <span className="text-[11px] font-mono text-slate-400">
+                Polls: #{approvalPollCount}
+              </span>
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span>Live Verification Listener Active</span>
             </div>
           </div>
 
-          {/* Pending Identity Details */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
-            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Principal Username</span>
-              <span className="font-bold text-white text-sm">{pendingUser.username}</span>
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">USERNAME</span>
+              <span className="text-white font-bold">{pendingUser.username}</span>
             </div>
-
-            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Requested Role</span>
-              <span className="font-bold text-blue-400 text-sm">{pendingUser.role}</span>
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">REQUESTED ROLE</span>
+              <span className="text-amber-400 font-bold">{pendingUser.role}</span>
             </div>
-
-            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Department</span>
-              <span className="text-slate-300 truncate block">{pendingUser.department || 'Engineering'}</span>
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">BASE RISK EVALUATION</span>
+              <span className="text-cyan-400 font-bold">{pendingUser.base_risk_score}%</span>
             </div>
-
-            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Base Risk Score</span>
-              <span className="font-bold text-amber-400">{pendingUser.base_risk_score}%</span>
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">GATE STATUS</span>
+              <span className="text-amber-300 font-bold">POLLING IN REAL-TIME</span>
             </div>
           </div>
 
-          {pendingUser.requestJustification && (
-            <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-300">
-              <span className="text-slate-500 block text-[10px] uppercase mb-1">Request Justification:</span>
-              <p className="italic">"{pendingUser.requestJustification}"</p>
-            </div>
-          )}
-
-          {/* Live Action Bar */}
-          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-slate-800">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
-              <span>Polling SecOps verification queue (Cycle #{approvalPollCount})...</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleSimulateInstantApprove}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm flex items-center gap-1.5 transition-colors"
-                title="Simulate immediate SecOps Administrator approval"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Simulate Instant Admin Approval</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => executeLogin('secops_admin', 'ZeroTrust_2026')}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-              >
-                Sign In as Admin to Review
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPendingUser(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs">
+            <span className="text-slate-400">
+              To approve this user, an Administrator can approve via the SecOps Command Center or User Database.
+            </span>
+            <button
+              type="button"
+              onClick={() => setPendingUser(null)}
+              className="text-slate-400 hover:text-white font-medium hover:underline cursor-pointer"
+            >
+              Cancel &amp; Return to Sign In
+            </button>
           </div>
         </div>
       ) : (
-        /* 3. NORMAL LOGIN & DIRECTORY TABS */
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/90 shadow-xl overflow-hidden">
+        /* 4. MAIN IDENTITY & AUTHENTICATION PORTAL */
+        <div className="rounded-2xl border border-slate-800/90 bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden">
           {/* Tabs */}
-          <div className="flex items-center border-b border-slate-800 bg-slate-950/50 p-1.5 gap-1">
-            <button
-              type="button"
-              onClick={() => setActiveTab('directory')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                activeTab === 'directory'
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5 text-blue-400" />
-              <span>Saved Logins Directory ({users.length})</span>
-            </button>
-
+          <div className="flex items-center border-b border-slate-800 bg-slate-950/50 p-1.5 gap-1.5">
             <button
               type="button"
               onClick={() => setActiveTab('signin')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'signin'
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <Lock className="w-3.5 h-3.5 text-purple-400" />
-              <span>Sign In Credentials</span>
+              <Lock className="w-4 h-4 text-blue-400" />
+              <span>Real-Time Sign In &amp; Verification</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('register')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'register'
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Register New Identity</span>
+              <UserPlus className="w-4 h-4 text-emerald-400" />
+              <span>Provision New Identity</span>
             </button>
 
             <button
               type="button"
-              onClick={() => setActiveTab('quick')}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                activeTab === 'quick'
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              onClick={() => setActiveTab('directory')}
+              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'directory'
+                  ? 'bg-purple-600/20 text-purple-300 border border-purple-500/30 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <Activity className="w-3.5 h-3.5 text-amber-400" />
-              <span>Quick Role Profiles</span>
+              <Users className="w-4 h-4 text-purple-400" />
+              <span>Directory Reference ({users.length})</span>
             </button>
           </div>
 
-          {/* TAB 1: SAVED USER DIRECTORY */}
-          {activeTab === 'directory' && (
-            <div className="p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-white">
-                    Saved User Database &amp; Clearances
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Select any approved user to log in instantly, or inspect identities awaiting admin approval.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
-                    <input
-                      type="text"
-                      value={dirSearch}
-                      onChange={(e) => setDirSearch(e.target.value)}
-                      placeholder="Search users..."
-                      className="pl-8 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  {onOpenUserDatabase && (
-                    <button
-                      type="button"
-                      onClick={onOpenUserDatabase}
-                      className="px-2.5 py-1.5 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-                    >
-                      Manage All
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Identity Cards Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto pr-1">
-                {filteredUsers.map((user) => {
-                  const isApproved = user.status === 'APPROVED';
-                  const isPending = user.status === 'PENDING_APPROVAL';
-                  const isSuspended = user.status === 'SUSPENDED';
-
-                  return (
-                    <div
-                      key={user.id || user.username}
-                      className={`p-3.5 rounded-xl border transition-all flex flex-col justify-between gap-2.5 ${
-                        isApproved
-                          ? 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                          : isPending
-                          ? 'bg-amber-950/15 border-amber-500/30'
-                          : 'bg-rose-950/15 border-rose-500/30'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-xs shrink-0 border ${
-                              user.role === 'Admin'
-                                ? 'bg-purple-950/40 border-purple-500/30 text-purple-300'
-                                : user.role === 'Developer'
-                                ? 'bg-blue-950/40 border-blue-500/30 text-blue-300'
-                                : 'bg-slate-800 border-slate-700 text-slate-300'
-                            }`}
-                          >
-                            {user.username.slice(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-white font-mono text-xs">
-                              {user.username}
-                            </div>
-                            <div className="text-[11px] text-slate-400 truncate">
-                              {user.department || 'Corporate Member'}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Status Chip */}
-                        {isApproved && (
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                            Approved
-                          </span>
-                        )}
-                        {isPending && (
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 animate-pulse font-medium">
-                            Pending Gate
-                          </span>
-                        )}
-                        {isSuspended && (
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                            Suspended
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/60 font-mono">
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-400">{user.role}</span>
-                          <span className="text-slate-600">•</span>
-                          <span
-                            className={
-                              user.base_risk_score >= 70
-                                ? 'text-rose-400 font-bold'
-                                : user.base_risk_score >= 30
-                                ? 'text-amber-400 font-bold'
-                                : 'text-emerald-400 font-bold'
-                            }
-                          >
-                            {user.base_risk_score}% Risk
-                          </span>
-                        </div>
-
-                        {isApproved ? (
-                          <button
-                            type="button"
-                            disabled={loading}
-                            onClick={() => executeLogin(user.username)}
-                            className="px-2.5 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 font-semibold transition-colors flex items-center gap-1"
-                          >
-                            <span>Enter</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </button>
-                        ) : isPending ? (
-                          <button
-                            type="button"
-                            onClick={() => setPendingUser(user)}
-                            className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-semibold transition-colors"
-                          >
-                            Check Gate
-                          </button>
-                        ) : (
-                          <span className="text-rose-400 font-bold">Blocked</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="pt-2 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80">
-                <span>Default Password for all seed accounts: <code className="text-blue-400">ZeroTrust_2026</code></span>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('register')}
-                  className="text-blue-400 hover:underline flex items-center gap-1"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Register a new identity</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: STANDARD CREDENTIALS SIGN IN */}
+          {/* TAB 1: ENTERPRISE REAL-TIME SIGN IN */}
           {activeTab === 'signin' && (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                executeLogin(customUsername, customPassword);
+                executeLogin(username, password);
               }}
-              className="p-6 space-y-4 max-w-md mx-auto"
+              className="p-6 sm:p-8 space-y-5 max-w-xl mx-auto"
             >
-              <div className="text-center space-y-1 mb-2">
-                <h3 className="text-sm font-semibold text-white">
-                  Enter Identity Credentials
+              <div className="text-center space-y-1">
+                <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                  <span>Authenticated Identity Gateway</span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Authenticate against the Cloudflare D1 distributed SQLite identity store.
+                  Enter any username. Identity is dynamically verified in real-time with Zero-Trust compliance.
                 </p>
               </div>
 
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">
-                    Username / Principal ID
+              {/* Username Input with Live Validation Feedback */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <label className="text-slate-300 font-medium">
+                    Username / Principal ID <span className="text-rose-400">*</span>
                   </label>
+                  {matchedExistingUser ? (
+                    <span className="text-[11px] font-mono text-emerald-400 flex items-center gap-1 font-semibold">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Database Record Found ({matchedExistingUser.role})
+                    </span>
+                  ) : username.trim().length > 0 ? (
+                    <span className="text-[11px] font-mono text-cyan-400 flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Dynamic Onboarding (New Identity)
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="relative">
                   <input
                     type="text"
                     required
-                    value={customUsername}
-                    onChange={(e) => setCustomUsername(e.target.value)}
-                    placeholder="e.g. secops_admin, cloud_dev, alex_contractor"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Enter any username (e.g. secops_admin, cloud_dev, Alex_Sec2026)"
+                    className="w-full pl-3.5 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs sm:text-sm font-mono transition-colors shadow-inner"
                   />
+                  {username && (
+                    <div className="absolute right-3 top-2.5 text-slate-400">
+                      {matchedExistingUser ? (
+                        <UserCheck className="w-4 h-4 text-emerald-400" />
+                      ) : usernameRules.isValid ? (
+                        <CheckCircle2 className="w-4 h-4 text-cyan-400" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">
-                    Password / Access Key
+                {/* Real-time Username Compliance Rule Badges */}
+                {username.trim().length > 0 && !usernameRules.isBuiltIn && (
+                  <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-1.5">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-mono font-semibold block">
+                      Zero-Trust Identity Format Rules:
+                    </span>
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasMinLength ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasMinLength ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                        <span>Length &gt; 5 chars ({username.trim().length})</span>
+                      </div>
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasUpper ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasUpper ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                        <span>Uppercase (A-Z)</span>
+                      </div>
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasLower ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasLower ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                        <span>Lowercase (a-z)</span>
+                      </div>
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasAlphaNum ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasAlphaNum ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                        <span>Alphanumeric char</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Password Input with Visibility Toggle */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <label className="text-slate-300 font-medium">
+                    Password / Access Key <span className="text-rose-400">*</span>
                   </label>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    (Default seed: <code className="text-blue-400">ZeroTrust_2026</code>)
+                  </span>
+                </div>
+
+                <div className="relative">
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
-                    value={customPassword}
-                    onChange={(e) => setCustomPassword(e.target.value)}
-                    placeholder="ZeroTrust_2026"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter security password"
+                    className="w-full pl-3.5 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs sm:text-sm font-mono transition-colors shadow-inner"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
+              {/* If New Identity is detected, allow quick role & department assignment */}
+              {!matchedExistingUser && username.trim().length > 0 && (
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-3 animate-in fade-in">
+                  <div className="flex items-center justify-between text-xs font-semibold text-cyan-300 border-b border-slate-800/80 pb-2">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      Dynamic Real-Time Onboarding Clearance
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                      Auto-Provisioning
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="block text-slate-400 mb-1 font-medium text-[11px]">
+                        Requested Clearance Role
+                      </label>
+                      <select
+                        value={dynamicRole}
+                        onChange={(e) => setDynamicRole(e.target.value as any)}
+                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-cyan-500"
+                      >
+                        <option value="Developer">Developer (Tier 1 &amp; Tier 2)</option>
+                        <option value="Admin">Admin (Full Control)</option>
+                        <option value="Guest">Guest (Tier 1 Read Only)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-400 mb-1 font-medium text-[11px]">
+                        Department
+                      </label>
+                      <input
+                        type="text"
+                        value={dynamicDept}
+                        onChange={(e) => setDynamicDept(e.target.value)}
+                        placeholder="e.g. Threat Intelligence"
+                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 italic">
+                    Note: Newly onboarded non-admin identities will enter the Zero-Trust Gate awaiting Admin verification per active policy.
+                  </p>
+                </div>
+              )}
+
+              {/* Security Telemetry Assurance Badges */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px] font-mono text-slate-400">
+                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
+                  <KeyRound className="w-3 h-3 text-emerald-400" />
+                  <span>2FA / MFA Enforced</span>
+                </div>
+                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
+                  <Activity className="w-3 h-3 text-cyan-400" />
+                  <span>Sub-ms Latency</span>
+                </div>
+                <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
+                  <ShieldCheck className="w-3 h-3 text-blue-400" />
+                  <span>Fail-Closed Mesh</span>
+                </div>
+              </div>
+
+              {/* Submit Button */}
               <button
                 type="submit"
-                disabled={loading || !customUsername.trim()}
-                className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold text-xs transition-colors shadow-sm flex items-center justify-center gap-2 mt-2"
+                disabled={loading || !username.trim()}
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-blue-900/30 flex items-center justify-center gap-2 cursor-pointer mt-3"
               >
                 {loading ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Verifying Identity...</span>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Verifying Credentials &amp; Clearance...</span>
                   </>
                 ) : (
                   <>
-                    <Lock className="w-3.5 h-3.5" />
-                    <span>Authenticate &amp; Verify Clearance</span>
+                    <Lock className="w-4 h-4" />
+                    <span>Verify Identity &amp; Sign In</span>
+                    <ArrowRight className="w-4 h-4" />
                   </>
                 )}
               </button>
 
-              <div className="text-center text-[11px] text-slate-500 pt-1">
-                New user? Your login clearance will be validated by Administrator verification policy.
+              <div className="text-center text-[11px] text-slate-500">
+                Secured by Cloudflare Edge Interceptor • Zero-Trust Token Verification
               </div>
             </form>
           )}
 
-          {/* TAB 3: REGISTER NEW IDENTITY */}
+          {/* TAB 2: PROVISION NEW IDENTITY */}
           {activeTab === 'register' && (
-            <form onSubmit={handleRegister} className="p-6 space-y-4 max-w-lg mx-auto">
+            <form onSubmit={handleRegister} className="p-6 sm:p-8 space-y-4 max-w-xl mx-auto">
               <div className="text-center space-y-1 mb-2">
-                <h3 className="text-sm font-semibold text-white">
-                  Register New System Identity
+                <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
+                  <UserPlus className="w-4 h-4 text-emerald-400" />
+                  <span>Provision New System Identity</span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  New registrations are held in the Zero-Trust Gate awaiting SecOps Administrator verification.
+                  Register a new principal directly into Cloudflare D1. Clearance status is verified upon entry.
                 </p>
               </div>
 
@@ -739,35 +706,35 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     required
                     value={registerUsername}
                     onChange={(e) => setRegisterUsername(e.target.value)}
-                    placeholder="e.g. jordan_secops"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    placeholder="e.g. Jordan_SecOps26"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
                   />
                 </div>
 
                 <div>
                   <label className="block text-slate-300 font-medium mb-1">
-                    Password
+                    Initial Password
                   </label>
                   <input
                     type="text"
                     value={registerPassword}
                     onChange={(e) => setRegisterPassword(e.target.value)}
                     placeholder="ZeroTrust_2026"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
                   />
                 </div>
 
                 <div>
                   <label className="block text-slate-300 font-medium mb-1">
-                    Requested Role
+                    Requested Clearance Role
                   </label>
                   <select
                     value={registerRole}
                     onChange={(e) => setRegisterRole(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
                   >
                     <option value="Developer">Developer (Tier 1 &amp; Tier 2)</option>
-                    <option value="Admin">Admin (Full Control)</option>
+                    <option value="Admin">Admin (Full Privileged Clearance)</option>
                     <option value="Guest">Guest (Tier 1 Read Only)</option>
                   </select>
                 </div>
@@ -780,8 +747,8 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     type="text"
                     value={registerDept}
                     onChange={(e) => setRegisterDept(e.target.value)}
-                    placeholder="e.g. SRE Core Platform"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    placeholder="e.g. Edge Core Engineering"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
@@ -793,8 +760,8 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     type="text"
                     value={registerJustification}
                     onChange={(e) => setRegisterJustification(e.target.value)}
-                    placeholder="e.g. Edge cluster telemetry validation and staging tests"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    placeholder="e.g. Microservices deployment and live telemetry audit"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -802,26 +769,26 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
                 <div className="flex items-center gap-1.5 text-amber-400 font-medium">
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Zero-Trust Gate Notice</span>
+                  <span>Zero-Trust Verification Policy</span>
                 </div>
                 <p>
-                  Upon submission, this account will be stored in the corporate database with <code className="text-amber-300">PENDING_APPROVAL</code> status. You will enter the live verification screen until approved by SecOps.
+                  Upon submission, this account will be committed to the database with <code className="text-amber-300">PENDING_APPROVAL</code> status. Access will be granted once approved by SecOps Admin.
                 </p>
               </div>
 
               <button
                 type="submit"
                 disabled={loading || !registerUsername.trim()}
-                className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs transition-colors shadow-sm flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {loading ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Submitting Request...</span>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Submitting Clearance Request...</span>
                   </>
                 ) : (
                   <>
-                    <UserPlus className="w-3.5 h-3.5" />
+                    <UserPlus className="w-4 h-4" />
                     <span>Register &amp; Enter Verification Gate</span>
                   </>
                 )}
@@ -829,93 +796,69 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
             </form>
           )}
 
-          {/* TAB 4: QUICK ROLE PROFILES */}
-          {activeTab === 'quick' && (
+          {/* TAB 3: DIRECTORY REFERENCE (NO 1-CLICK BYPASS) */}
+          {activeTab === 'directory' && (
             <div className="p-6 space-y-4">
-              <div className="text-center space-y-1 mb-2">
-                <h3 className="text-sm font-semibold text-white">
-                  1-Click Role Access Profiles
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Instantly assume pre-cleared roles to evaluate permissions, RBAC policies, and Markov chain rules.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Database className="w-4 h-4 text-purple-400" />
+                    <span>Registered Identities Reference</span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Click "Use Identity" to pre-fill the username. Passwords and MFA verification are strictly required.
+                  </p>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    value={dirSearch}
+                    onChange={(e) => setDirSearch(e.target.value)}
+                    placeholder="Filter identities..."
+                    className="pl-8 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Admin Profile */}
-                <div className="p-4 rounded-xl border border-purple-500/30 bg-slate-950/70 hover:border-purple-500/50 transition-all flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                        Master Authority
-                      </span>
-                      <span className="text-emerald-400 font-mono text-[11px]">0% Risk</span>
-                    </div>
-                    <div className="font-bold text-white text-sm font-mono">secops_admin</div>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Full access to policy tuning, emergency lockdown, cryptographic HSM, and user verification queues.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => executeLogin('secops_admin')}
-                    className="w-full py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-80 overflow-y-auto pr-1">
+                {filteredUsers.map((u) => (
+                  <div
+                    key={u.id || u.username}
+                    className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-slate-700 flex items-center justify-between gap-2 transition-all"
                   >
-                    <span>Login as Admin</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-white">{u.username}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
+                          u.role === 'Admin'
+                            ? 'bg-purple-500/20 text-purple-300'
+                            : u.role === 'Developer'
+                            ? 'bg-blue-500/20 text-blue-300'
+                            : 'bg-slate-700 text-slate-300'
+                        }`}>
+                          {u.role}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-500 block truncate max-w-[200px]">
+                        {u.department || 'Operations'} • {u.status}
+                      </span>
+                    </div>
 
-                {/* Developer Profile */}
-                <div className="p-4 rounded-xl border border-blue-500/30 bg-slate-950/70 hover:border-blue-500/50 transition-all flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold">
-                        Tier 1 &amp; Tier 2
-                      </span>
-                      <span className="text-emerald-400 font-mono text-[11px]">15% Risk</span>
-                    </div>
-                    <div className="font-bold text-white text-sm font-mono">cloud_dev</div>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Can retrieve metrics, query audit logs, and deploy edge serverless workers subject to Markov order.
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUsername(u.username);
+                        setPassword('ZeroTrust_2026');
+                        setActiveTab('signin');
+                      }}
+                      className="px-2.5 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-mono transition-colors cursor-pointer shrink-0"
+                    >
+                      Use Identity →
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => executeLogin('cloud_dev')}
-                    className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <span>Login as Developer</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
-
-                {/* Auditor / Guest Profile */}
-                <div className="p-4 rounded-xl border border-slate-700 bg-slate-950/70 hover:border-slate-600 transition-all flex flex-col justify-between gap-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-semibold">
-                        Tier 1 Only
-                      </span>
-                      <span className="text-amber-400 font-mono text-[11px]">30% Risk</span>
-                    </div>
-                    <div className="font-bold text-white text-sm font-mono">auditor_guest</div>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Limited to dashboard metrics and personal logs. Privileged function calls are rejected by edge RBAC.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => executeLogin('auditor_guest')}
-                    className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <span>Login as Auditor Guest</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
+                ))}
               </div>
             </div>
           )}

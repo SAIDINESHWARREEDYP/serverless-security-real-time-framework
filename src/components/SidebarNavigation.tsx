@@ -142,12 +142,12 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
         },
         {
           id: 'architecture' as FeatureTabId,
-          label: 'Policy Architecture',
-          subtitle: 'Markov transition state machine & D1 SQL schema rules',
+          label: 'Policy Architecture & Blueprint',
+          subtitle: 'Markov transition state machine & D1 SQL schema rules (SecOps Admin Only)',
           icon: Cpu,
-          badge: 'D1 + Markov',
-          tier: 'Tier 2+ Dev',
-          allowedRoles: ['Admin', 'Developer']
+          badge: 'Admin Only',
+          tier: 'Tier 3 Admin',
+          allowedRoles: ['Admin']
         }
       ]
     },
@@ -509,39 +509,42 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
               Engineering Blueprints &amp; Export
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onOpenCloudGuide();
-                }}
-                className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2 transition-all ${
-                  isLight
-                    ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-xs'
-                    : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <Cloud className="w-4 h-4 text-blue-400" />
-                <span className="truncate">Cloud Blueprint</span>
-              </button>
+            {/* Admin-Only Cloud Blueprint & Schema Inspection Access */}
+            {currentRole === 'Admin' && (
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenCloudGuide();
+                  }}
+                  className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2 transition-all ${
+                    isLight
+                      ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-xs'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <Cloud className="w-4 h-4 text-blue-400" />
+                  <span className="truncate">Cloud Blueprint</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onOpenDbModal();
-                }}
-                className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2 transition-all ${
-                  isLight
-                    ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-xs'
-                    : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <Database className="w-4 h-4 text-slate-400" />
-                <span className="truncate">Schema Matrix</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenDbModal();
+                  }}
+                  className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2 transition-all ${
+                    isLight
+                      ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-xs'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <Database className="w-4 h-4 text-slate-400" />
+                  <span className="truncate">Schema Matrix</span>
+                </button>
+              </div>
+            )}
 
             {onOpenSecurityReport && (
               <button

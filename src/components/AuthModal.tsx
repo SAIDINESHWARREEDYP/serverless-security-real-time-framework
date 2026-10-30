@@ -60,11 +60,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onLoginSuccess,
   onLogout
 }) => {
-  // Input states
+  // Input states - no preset hardcoded bypasses
   const [usernameInput, setUsernameInput] = useState(
-    currentSession?.user.role === 'Admin' ? 'Secops_Admin' : 'Secops_Admin'
+    currentSession?.user.username || ''
   );
-  const [password, setPassword] = useState('ZeroTrust_2026');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [activeTab, setActiveTab] = useState<'login' | 'register' | 'principals' | 'token'>('login');
   const [loading, setLoading] = useState(false);

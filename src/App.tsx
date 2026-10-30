@@ -90,13 +90,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<FeatureTabId>('admin');
   const currentSectionMeta = useMemo(() => getSectionMetaForTab(activeTab), [activeTab]);
 
-  // Authenticated session state
-  const [currentSession, setCurrentSession] = useState<AuthSession | null>({
-    user: { id: 'usr_secops_admin', username: 'secops_admin', password_hash: 'ZeroTrust_2026', role: 'Admin', base_risk_score: 0 },
-    token: 'zt_jwt_secops_admin_k7x9',
-    loginTime: 'System Initialization',
-    expiresInSeconds: 3600
-  });
+  // Authenticated session state - initialized to null so Zero-Trust Login Gateway is displayed first
+  const [currentSession, setCurrentSession] = useState<AuthSession | null>(null);
 
   // Dynamic policy configuration
   const [policyConfig, setPolicyConfig] = useState<SecurityPolicyConfig>({
@@ -626,25 +621,36 @@ export default function App() {
     }
   };
 
-  const handleQuickSwitchRole = async (targetRole: 'Admin' | 'Developer' | 'Guest') => {
-    let candidate = users.find(u => u.role === targetRole);
-    if (!candidate) {
-      if (targetRole === 'Guest') {
-        candidate = { id: 'usr_alice_guest', username: 'alice_guest', password_hash: 'ZeroTrust_2026', role: 'Guest', base_risk_score: 20 };
-      } else if (targetRole === 'Developer') {
-        candidate = { id: 'usr_bob_developer', username: 'bob_developer', password_hash: 'ZeroTrust_2026', role: 'Developer', base_risk_score: 10 };
-      } else {
-        candidate = { id: 'usr_secops_admin', username: 'secops_admin', password_hash: 'ZeroTrust_2026', role: 'Admin', base_risk_score: 0 };
+  // Real-time Session Revocation Endpoint Call (Admin Only)
+  const handleRevokeSession = async (username: string) => {
+    try {
+      addTerminalLog('post', `[IAM REVOCATION] Requesting real-time session termination for principal [${username}]...`);
+      const res = await fetch('/api/auth/revoke-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentSession?.token || 'zt_jwt_secops_admin_k7x9'}`
+        },
+        body: JSON.stringify({
+          username,
+          reason: 'Terminated in real-time by SecOps Administrator via User Database'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to revoke session');
       }
-      setUsers(prev => [...prev, candidate!]);
-    }
-    await handleQuickSwitchUser(candidate);
-    if (targetRole === 'Guest') {
-      setActiveTab('guest');
-    } else if (targetRole === 'Developer') {
-      setActiveTab('developer');
-    } else {
-      setActiveTab('admin');
+      addTerminalLog('alert', `[IAM REVOCATION] 🚫 Administrator revoked active session for [${username}]. Token invalidated in real-time.`);
+      await fetchOverview();
+
+      // If the administrator revoked their own session or active session matches target, terminate locally
+      if (currentSession?.user?.username.toLowerCase() === username.toLowerCase()) {
+        addTerminalLog('error', `[IAM SESSION TERMINATED] Active principal session has been revoked. Console locked.`);
+        setCurrentSession(null);
+      }
+    } catch (err: any) {
+      addTerminalLog('error', `[IAM REVOCATION FAILED] ${err?.message || String(err)}`);
+      throw err;
     }
   };
 
@@ -772,7 +778,6 @@ export default function App() {
           usersCount={users.length}
           blockedCount={blockedCount}
           connectionStatus={connectionStatus}
-          onQuickSwitchRole={handleQuickSwitchRole}
           onLogout={handleLogout}
           onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
           pendingApprovalCount={pendingApprovalCount}
@@ -908,7 +913,7 @@ export default function App() {
                   requiredRole="Admin"
                   currentSession={currentSession}
                   onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               )
             )}
@@ -920,7 +925,7 @@ export default function App() {
                   requiredRole="Developer"
                   currentSession={currentSession}
                   onNavigateToPermitted={() => setActiveTab('guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               ) : (
                 <DeveloperWorkbench
@@ -929,7 +934,6 @@ export default function App() {
                   logs={logs}
                   onFireFunction={handleDirectInvokeFromAdmin}
                   isFiring={isFiring}
-                  onOpenArchitecture={() => setIsCloudGuideOpen(true)}
                 />
               )
             )}
@@ -959,7 +963,7 @@ export default function App() {
                   requiredRole="Admin"
                   currentSession={currentSession}
                   onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               ) : (
                 <div className="space-y-6">
@@ -981,7 +985,7 @@ export default function App() {
                   requiredRole="Admin"
                   currentSession={currentSession}
                   onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               ) : (
                 <div className="space-y-6">
@@ -1084,7 +1088,7 @@ export default function App() {
                   requiredRole="Admin"
                   currentSession={currentSession}
                   onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'interceptor' : 'guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               ) : (
                 <div className="space-y-6 font-mono">
@@ -1260,14 +1264,14 @@ export default function App() {
               )
             )}
 
-            {/* FEATURE VIEW 5: CLOUD ARCHITECTURE & D1 SCHEMA */}
+            {/* FEATURE VIEW 5: CLOUD ARCHITECTURE & D1 SCHEMA (ADMIN ONLY) */}
             {activeTab === 'architecture' && (
-              currentSession.user.role === 'Guest' ? (
+              currentSession.user.role !== 'Admin' ? (
                 <AccessRestrictedCard
-                  requiredRole="Developer"
+                  requiredRole="Admin"
                   currentSession={currentSession}
-                  onNavigateToPermitted={() => setActiveTab('guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'developer' : 'guest')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               ) : (
                 <div className="space-y-6 font-mono text-xs">
@@ -1412,7 +1416,7 @@ export default function App() {
                   requiredRole="Admin"
                   currentSession={currentSession}
                   onNavigateToPermitted={() => setActiveTab(currentSession.user.role === 'Developer' ? 'interceptor' : 'guest')}
-                  onSwitchToAdmin={() => handleQuickSwitchRole('Admin')}
+                  onReauthenticate={() => setIsAuthModalOpen(true)}
                 />
               ) : (
                 <div className="space-y-8">
@@ -1584,7 +1588,8 @@ export default function App() {
         onRejectUser={handleRejectUser}
         onAddUser={handleAddUser}
         onDeleteUser={handleDeleteUser}
-        onBatchSeedUsers={handleBatchSeedUsers}
+        onBatchSeed={handleBatchSeedUsers}
+        onRevokeSession={handleRevokeSession}
       />
     </div>
   );

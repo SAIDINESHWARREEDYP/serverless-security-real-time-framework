@@ -94,6 +94,24 @@ CREATE TABLE IF NOT EXISTS policies (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 6. Active Session and Token Revocation Registry (Real-time Session Revocation)
+CREATE TABLE IF NOT EXISTS active_sessions (
+  id TEXT PRIMARY KEY,
+  token TEXT UNIQUE NOT NULL,
+  username TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('Admin', 'Developer', 'Guest')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  revoked_at TEXT,
+  revoked_by TEXT,
+  revocation_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_token ON active_sessions(token);
+CREATE INDEX IF NOT EXISTS idx_sessions_username ON active_sessions(username);
+CREATE INDEX IF NOT EXISTS idx_sessions_revoked ON active_sessions(revoked);
+
 -- Seed Initial Security Principals
 INSERT OR IGNORE INTO users (id, username, password_hash, role, base_risk_score, status, department, email)
 VALUES

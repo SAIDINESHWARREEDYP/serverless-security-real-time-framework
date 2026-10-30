@@ -6,14 +6,14 @@ interface AccessRestrictedCardProps {
   requiredRole: 'Admin' | 'Developer';
   currentSession: AuthSession | null;
   onNavigateToPermitted: () => void;
-  onSwitchToAdmin?: () => void;
+  onReauthenticate?: () => void;
 }
 
 export const AccessRestrictedCard: React.FC<AccessRestrictedCardProps> = ({
   requiredRole,
   currentSession,
   onNavigateToPermitted,
-  onSwitchToAdmin
+  onReauthenticate
 }) => {
   return (
     <div className="max-w-2xl mx-auto my-12 p-8 rounded-xl border border-rose-500/40 bg-slate-900/90 shadow-2xl backdrop-blur-md text-center space-y-5 font-mono">
@@ -63,14 +63,14 @@ export const AccessRestrictedCard: React.FC<AccessRestrictedCardProps> = ({
           <span>Return to Permitted Workspace</span>
         </button>
 
-        {onSwitchToAdmin && (
+        {onReauthenticate && (
           <button
             type="button"
-            onClick={onSwitchToAdmin}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-colors font-sans shadow-md"
+            onClick={onReauthenticate}
+            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-colors font-sans shadow-md cursor-pointer"
           >
             <Lock className="w-4 h-4" />
-            <span>Switch Identity to Admin (secops_admin)</span>
+            <span>Sign In with Privileged Credentials</span>
           </button>
         )}
       </div>

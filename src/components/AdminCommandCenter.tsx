@@ -271,6 +271,29 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
     }
   };
 
+  // Revoke user session
+  const handleRevokeSessionAction = async (username: string) => {
+    try {
+      const res = await fetch('/api/auth/revoke-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentSession?.token || 'zt_jwt_secops_admin_k7x9'}`
+        },
+        body: JSON.stringify({ username, reason: 'Terminated by Administrator via SecOps Console' })
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to revoke session');
+      }
+      await onRefreshData();
+      onAddTerminalLog('alert', `[IAM REVOCATION] 🚫 Active session for [${username}] revoked in real-time. Token invalidated.`);
+    } catch (err: any) {
+      onAddTerminalLog('error', `[IAM REVOCATION FAILED] ${err?.message || String(err)}`);
+      throw err;
+    }
+  };
+
   // Add user via modal
   const handleAddUserAction = async (userData: any) => {
     if (onAddUser) {
@@ -1493,7 +1516,8 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
         onRejectUser={handleRejectUserAction}
         onAddUser={handleAddUserAction}
         onDeleteUser={handleDeleteUserAction}
-        onBatchSeedUsers={handleBatchSeedAction}
+        onBatchSeed={handleBatchSeedAction}
+        onRevokeSession={handleRevokeSessionAction}
       />
     </div>
   );

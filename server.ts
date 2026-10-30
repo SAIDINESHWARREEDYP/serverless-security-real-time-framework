@@ -379,6 +379,84 @@ app.patch('/api/system/users/:username', (req, res) => {
   }
 });
 
+// Real-time Session Revocation Endpoint: Terminate an active user's session record in the database
+app.post(['/api/auth/revoke-session', '/api/system/sessions/revoke'], async (req: Request, res: Response) => {
+  const timerStart = performance.now();
+  try {
+    const authHeader = req.headers['authorization'];
+    let callerUsername = 'secops_admin';
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      let rawToken = authHeader.split(' ')[1];
+      if (rawToken.startsWith('zt_jwt_') || rawToken.startsWith('mbu_jwt_')) {
+        const parts = rawToken.split('_');
+        if (parts.length >= 3) {
+          rawToken = parts.slice(2, -1).join('_');
+        }
+      }
+      callerUsername = rawToken;
+    }
+
+    const callerUser = db.getUser(callerUsername);
+    if (!callerUser || callerUser.role !== 'Admin') {
+      const latencyMs = Number((performance.now() - timerStart).toFixed(3));
+      setVerificationResponseHeaders(res, latencyMs, 'Unauthorized Session Revocation');
+      await recordAuditEvent(
+        callerUsername,
+        '/api/auth/revoke-session',
+        95,
+        'BLOCKED',
+        '[RBAC BREACH] Non-administrator attempted to invoke session revocation endpoint.',
+        latencyMs,
+        'RBAC_VIOLATION'
+      );
+      return res.status(403).json({
+        error: 'Access Denied: Only SecOps Administrators are authorized to revoke active user sessions.',
+        status: 'BLOCKED'
+      });
+    }
+
+    const { username, token, reason } = req.body;
+    if (!username && !token) {
+      return res.status(400).json({ error: 'Either username or token is required for session revocation.' });
+    }
+
+    const revocationResult = db.revokeSession({
+      username,
+      token,
+      revokedBy: callerUser.username,
+      reason: reason || 'Session terminated in real-time by Administrator via SecOps Console'
+    });
+
+    const latencyMs = Number((performance.now() - timerStart).toFixed(3));
+    setVerificationResponseHeaders(res, latencyMs, 'Session Revocation');
+
+    const auditReason = `[SESSION TERMINATED] Administrator [${callerUser.username}] revoked active session for target: ${username || token}. Token invalidated. ${reason ? 'Reason: ' + reason : ''}`;
+    await recordAuditEvent(
+      username || callerUser.username,
+      '/api/auth/revoke-session',
+      0,
+      'ALLOWED',
+      auditReason,
+      latencyMs,
+      'SESSION_REVOCATION_EXECUTED'
+    );
+
+    return res.json({
+      success: true,
+      revoked: true,
+      message: `Active session for principal [${username || token}] successfully terminated in real-time. Token is no longer honored.`,
+      target: username || token,
+      revokedBy: callerUser.username,
+      revokedAt: new Date().toISOString(),
+      affectedUsers: revocationResult.revokedUsers,
+      verification_latency_ms: latencyMs
+    });
+  } catch (err: any) {
+    const latencyMs = Number((performance.now() - timerStart).toFixed(3));
+    return res.status(500).json({ error: 'Session revocation failed: ' + (err?.message || String(err)), latencyMs });
+  }
+});
+
 app.post('/api/system/reset', (req, res) => {
   db.reset();
   policyConfig = {
@@ -753,6 +831,15 @@ app.post('/api/register', async (req: Request, res: Response) => {
     const isPending = newUser.status === 'PENDING_APPROVAL';
     const token = `zt_jwt_${newUser.username}_${Date.now().toString(36)}`;
 
+    if (!isPending) {
+      db.createSession({
+        token,
+        username: newUser.username,
+        role: newUser.role,
+        expiresInSeconds: 3600
+      });
+    }
+
     // Log registration
     await db.prepare('INSERT INTO security_audit_logs (username, requested_function, calculated_risk, status, reason) VALUES (?, ?, ?, ?, ?)')
       .bind(
@@ -984,6 +1071,12 @@ app.post('/api/login', async (req: Request, res: Response) => {
     // Clearance granted (only if MFA bypassed or explicitly disabled)
     user.lastLoginAt = new Date().toISOString();
     const token = `zt_jwt_${user.username}_${Date.now().toString(36)}`;
+    db.createSession({
+      token,
+      username: user.username,
+      role: user.role,
+      expiresInSeconds: 3600
+    });
     return res.json({
       success: true,
       user: {
@@ -1119,6 +1212,12 @@ app.post('/api/auth/mfa/verify', async (req: Request, res: Response) => {
     mfaSessions.delete(mfaSessionId);
     user.lastLoginAt = new Date().toISOString();
     const token = `zt_jwt_${user.username}_${Date.now().toString(36)}`;
+    db.createSession({
+      token,
+      username: user.username,
+      role: user.role,
+      expiresInSeconds: 3600
+    });
 
     // Log successful multi-factor authentication
     await db.prepare('INSERT INTO security_audit_logs (username, requested_function, calculated_risk, status, reason) VALUES (?, ?, ?, ?, ?)')
@@ -1246,7 +1345,8 @@ app.all('/api/:route', async (req: Request, res: Response) => {
       });
     }
 
-    let username = authHeader.split(' ')[1];
+    const rawBearerToken = authHeader.split(' ')[1];
+    let username = rawBearerToken;
     // Support both raw username tokens and formatted zt_jwt_ / mbu_jwt_ tokens
     if (username.startsWith('zt_jwt_') || username.startsWith('mbu_jwt_')) {
       const parts = username.split('_');
@@ -1256,6 +1356,35 @@ app.all('/api/:route', async (req: Request, res: Response) => {
       }
     }
     auditUsername = username;
+
+    // 0. Real-time Session Revocation Verification Check
+    if (db.isSessionRevoked(rawBearerToken, username)) {
+      const revokedLatencyMs = Number((performance.now() - verificationStartTime).toFixed(3));
+      setVerificationResponseHeaders(res, revokedLatencyMs, 'Revoked Session Block');
+
+      const revokedReason = `[SESSION REVOKED] Active session for principal [${username}] was terminated by Administrator in real-time. Token signature invalidated.`;
+      await recordAuditEvent(
+        username,
+        path,
+        100,
+        'BLOCKED',
+        revokedReason,
+        revokedLatencyMs,
+        'SESSION_REVOKED'
+      );
+
+      return res.status(403).json({
+        error: 'Security Gateway: Session has been terminated by Administrator in real-time. Token signature no longer honored.',
+        revoked: true,
+        metrics: {
+          riskScore: 100,
+          status: 'BLOCKED',
+          threatReason: revokedReason,
+          verification_latency_ms: revokedLatencyMs,
+          eventType: 'SESSION_REVOKED'
+        }
+      });
+    }
 
     // 1. Identity Context Lookup
     const user = await db.prepare('SELECT * FROM users WHERE username = ?').bind(username).first();

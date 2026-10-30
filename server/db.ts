@@ -43,6 +43,19 @@ export interface SecurityAuditLog {
 
 export type SecurityEvent = SecurityAuditLog;
 
+export interface ActiveSession {
+  id: string;
+  token: string;
+  username: string;
+  role: 'Admin' | 'Developer' | 'Guest';
+  createdAt: string;
+  expiresAt: string;
+  revoked: boolean;
+  revokedAt?: string;
+  revokedBy?: string;
+  revocationReason?: string;
+}
+
 const INITIAL_USERS: User[] = [
   {
     id: 'usr_secops_admin',
@@ -147,6 +160,9 @@ class SecurityDatabase {
   private rules: FunctionRule[] = [];
   private logs: SecurityAuditLog[] = [];
   private auditEvents: SecurityAuditLog[] = [];
+  private sessions: ActiveSession[] = [];
+  private revokedTokens: Set<string> = new Set();
+  private revokedUsernames: Set<string> = new Set();
   private ruleIdCounter = 1;
   private logIdCounter = 1;
   private userIdCounter = 100;
@@ -160,13 +176,111 @@ class SecurityDatabase {
     this.rules = INITIAL_RULES.map((r, i) => ({ id: i + 1, ...r }));
     this.logs = [];
     this.auditEvents = [];
+    this.sessions = [];
+    this.revokedTokens.clear();
+    this.revokedUsernames.clear();
     this.ruleIdCounter = this.rules.length + 1;
     this.logIdCounter = 1;
+
+    // Seed default baseline active session for secops_admin
+    this.createSession({
+      token: 'zt_jwt_secops_admin_k7x9',
+      username: 'secops_admin',
+      role: 'Admin',
+      expiresInSeconds: 86400
+    });
   }
 
   public clearLogs() {
     this.logs = [];
     this.auditEvents = [];
+  }
+
+  public createSession(data: {
+    token: string;
+    username: string;
+    role: 'Admin' | 'Developer' | 'Guest';
+    expiresInSeconds?: number;
+  }): ActiveSession {
+    const cleanUser = data.username.trim().toLowerCase();
+    // Clear any prior username-level revocation block on freshly authenticated credentials
+    this.revokedUsernames.delete(cleanUser);
+    this.revokedTokens.delete(data.token);
+
+    const expiresAt = new Date(Date.now() + (data.expiresInSeconds || 3600) * 1000).toISOString();
+    const session: ActiveSession = {
+      id: `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
+      token: data.token,
+      username: data.username.trim(),
+      role: data.role,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      revoked: false
+    };
+
+    this.sessions.push(session);
+    return session;
+  }
+
+  public revokeSession(target: {
+    username?: string;
+    token?: string;
+    revokedBy?: string;
+    reason?: string;
+  }): { success: boolean; revokedCount: number; revokedUsers: string[] } {
+    const revokedBy = target.revokedBy || 'secops_admin';
+    const reason = target.reason || 'Terminated by Administrator via SecOps Console';
+    let revokedCount = 0;
+    const affectedUsers = new Set<string>();
+
+    if (target.token) {
+      this.revokedTokens.add(target.token);
+      for (const s of this.sessions) {
+        if (s.token === target.token && !s.revoked) {
+          s.revoked = true;
+          s.revokedAt = new Date().toISOString();
+          s.revokedBy = revokedBy;
+          s.revocationReason = reason;
+          revokedCount++;
+          affectedUsers.add(s.username);
+        }
+      }
+    }
+
+    if (target.username) {
+      const q = target.username.toLowerCase().trim();
+      this.revokedUsernames.add(q);
+      for (const s of this.sessions) {
+        if (s.username.toLowerCase() === q && !s.revoked) {
+          s.revoked = true;
+          s.revokedAt = new Date().toISOString();
+          s.revokedBy = revokedBy;
+          s.revocationReason = reason;
+          this.revokedTokens.add(s.token);
+          revokedCount++;
+          affectedUsers.add(s.username);
+        }
+      }
+      affectedUsers.add(target.username);
+    }
+
+    return {
+      success: true,
+      revokedCount: Math.max(revokedCount, target.username ? 1 : 0),
+      revokedUsers: Array.from(affectedUsers)
+    };
+  }
+
+  public isSessionRevoked(token: string, username?: string): boolean {
+    if (this.revokedTokens.has(token)) return true;
+    if (username && this.revokedUsernames.has(username.toLowerCase().trim())) return true;
+    const s = this.sessions.find(sess => sess.token === token);
+    if (s && s.revoked) return true;
+    return false;
+  }
+
+  public getSessions(): ActiveSession[] {
+    return [...this.sessions];
   }
 
   public getUsers(): User[] {
@@ -384,10 +498,21 @@ class SecurityDatabase {
           const [current, next] = boundParams;
           return self.rules.find(r => r.current_function === current && r.allowed_next_function === next) || null;
         }
+        if (trimmed.includes('FROM active_sessions WHERE token = ?')) {
+          const token = boundParams[0];
+          return self.sessions.find(s => s.token === token) || null;
+        }
+        if (trimmed.includes('FROM active_sessions WHERE username = ?')) {
+          const username = boundParams[0];
+          return self.sessions.find(s => s.username.toLowerCase() === (username || '').toLowerCase() && !s.revoked) || null;
+        }
         return null;
       },
       async all(): Promise<{ results: any[] }> {
         const trimmed = sql.trim();
+        if (trimmed.includes('FROM active_sessions')) {
+          return { results: [...self.sessions] };
+        }
         if (trimmed.includes('FROM audit_events')) {
           const limitMatch = trimmed.match(/LIMIT\s+(\d+)/i);
           const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
@@ -432,6 +557,16 @@ class SecurityDatabase {
           self.logs.push(newLog);
           self.auditEvents.push(newLog);
           return { success: true, id: newLog.id };
+        }
+        if (trimmed.startsWith('INSERT INTO active_sessions')) {
+          const [id, token, username, role, expires_at] = boundParams;
+          self.createSession({ token, username, role });
+          return { success: true };
+        }
+        if (trimmed.startsWith('UPDATE active_sessions SET revoked = 1')) {
+          const [revokedBy, reason, target] = boundParams;
+          self.revokeSession({ username: target, token: target, revokedBy, reason });
+          return { success: true };
         }
         return { success: true };
       }

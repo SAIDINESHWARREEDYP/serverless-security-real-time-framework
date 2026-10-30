@@ -41,6 +41,7 @@ interface UserDatabaseModalProps {
   onRejectUser: (username: string, reason?: string) => Promise<void>;
   onDeleteUser: (username: string) => Promise<void>;
   onBatchSeed: () => Promise<void>;
+  onRevokeSession?: (username: string) => Promise<void>;
   onSelectUserForLogin?: (user: User) => void;
 }
 
@@ -53,11 +54,15 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   onRejectUser,
   onDeleteUser,
   onBatchSeed,
+  onRevokeSession,
   onSelectUserForLogin
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | UserApprovalStatus>('ALL');
+  const [revokingUser, setRevokingUser] = useState<string | null>(null);
+  const [revokedUsersList, setRevokedUsersList] = useState<Set<string>>(new Set());
+  const [revocationNotice, setRevocationNotice] = useState<string | null>(null);
   const [roleFilter, setRoleFilter] = useState<'ALL' | 'Admin' | 'Developer' | 'Guest'>('ALL');
   const [riskFilter, setRiskFilter] = useState<'ALL' | 'CRITICAL' | 'ELEVATED' | 'MODERATE' | 'NOMINAL'>('ALL');
   const [sortBy, setSortBy] = useState<'name' | 'risk_desc' | 'risk_asc' | 'status'>('name');
@@ -177,6 +182,23 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Real-time Session Revocation Feedback Notice */}
+        {revocationNotice && (
+          <div className="px-5 py-2.5 bg-rose-500/15 border-b border-rose-500/30 text-rose-300 text-xs font-mono flex items-center justify-between animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{revocationNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRevocationNotice(null)}
+              className="text-slate-400 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Action Toolbar */}
         <div className="p-4 border-b border-slate-800/80 bg-slate-900/40 flex flex-col gap-3">
@@ -675,18 +697,34 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         </>
                       )}
 
-                      {isApproved && onSelectUserForLogin && (
+                      {/* Real-time Session Revocation Action (Admin Trigger) - Available next to each listed user */}
+                      {onRevokeSession && (
                         <button
                           type="button"
-                          onClick={() => {
-                            onSelectUserForLogin(user);
-                            onClose();
+                          id={`btn-revoke-session-${user.username}`}
+                          disabled={revokingUser === user.username}
+                          onClick={async () => {
+                            setRevokingUser(user.username);
+                            try {
+                              await onRevokeSession(user.username);
+                              setRevokedUsersList(prev => new Set(prev).add(user.username));
+                              setRevocationNotice(`Active session for principal [${user.username}] terminated in real-time. Token invalidated.`);
+                              setTimeout(() => setRevocationNotice(null), 5000);
+                            } catch (err: any) {
+                              setRevocationNotice(`Revocation failed: ${err?.message || String(err)}`);
+                            } finally {
+                              setRevokingUser(null);
+                            }
                           }}
-                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 flex items-center gap-1 transition-colors"
-                          title="Log in directly as this approved user"
+                          className={`px-2.5 py-1 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                            revokedUsersList.has(user.username)
+                              ? 'bg-rose-500/30 text-rose-300 border border-rose-500/60'
+                              : 'bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 hover:border-rose-500'
+                          }`}
+                          title={`Terminate ${user.username}'s active session record in the database, ensuring their token is no longer honored.`}
                         >
-                          <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-                          <span>Login As</span>
+                          <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                          <span>{revokingUser === user.username ? 'Revoking...' : revokedUsersList.has(user.username) ? 'Session Terminated' : 'Revoke Session'}</span>
                         </button>
                       )}
 

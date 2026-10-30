@@ -44,7 +44,6 @@ interface HeaderProps {
   usersCount?: number;
   blockedCount?: number;
   connectionStatus?: 'connected' | 'syncing' | 'reconnecting';
-  onQuickSwitchRole?: (role: 'Admin' | 'Developer' | 'Guest') => void;
   onLogout?: () => void;
   onOpenSecurityReport?: () => void;
   pendingApprovalCount?: number;
@@ -245,35 +244,39 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* Cloud Blueprint Specs */}
-          <button
-            id="btn-open-cloud-guide"
-            onClick={onOpenCloudGuide}
-            className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-mono font-medium transition-colors shadow-xs ${
-              isLight
-                ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
-                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
-            }`}
-            title="Open Cloud Deployment Blueprint & Architecture Manual"
-          >
-            <Cloud className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">Cloud Blueprint</span>
-          </button>
+          {/* Cloud Blueprint Specs - Restricted to Authenticated Admin Only */}
+          {currentSession && currentRole === 'Admin' && (
+            <button
+              id="btn-open-cloud-guide"
+              onClick={onOpenCloudGuide}
+              className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-mono font-medium transition-colors shadow-xs ${
+                isLight
+                  ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                  : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+              }`}
+              title="Open Cloud Deployment Blueprint & Architecture Manual (Admin Only)"
+            >
+              <Cloud className="w-3.5 h-3.5 text-blue-400" />
+              <span className="hidden sm:inline">Cloud Blueprint</span>
+            </button>
+          )}
 
-          {/* Schema & Rules */}
-          <button
-            id="btn-inspect-db"
-            onClick={onOpenDbModal}
-            className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-mono transition-colors border shadow-xs ${
-              isLight
-                ? 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-300'
-                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700'
-            }`}
-            title="Inspect Database Schema & Markov Rules Matrix"
-          >
-            <Database className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">Schema Matrix</span>
-          </button>
+          {/* Schema & Rules - Restricted to Authenticated Admin Only */}
+          {currentSession && currentRole === 'Admin' && (
+            <button
+              id="btn-inspect-db"
+              onClick={onOpenDbModal}
+              className={`glossy-btn flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-mono transition-colors border shadow-xs ${
+                isLight
+                  ? 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-300'
+                  : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700'
+              }`}
+              title="Inspect Database Schema & Markov Rules Matrix (Admin Only)"
+            >
+              <Database className="w-3.5 h-3.5 text-slate-400" />
+              <span className="hidden sm:inline">Schema Matrix</span>
+            </button>
+          )}
 
           {/* Pending Approval Badge Notification */}
           {currentRole === 'Admin' && pendingApprovalCount > 0 && (
