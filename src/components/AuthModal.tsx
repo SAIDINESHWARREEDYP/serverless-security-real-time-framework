@@ -66,19 +66,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   );
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState<'login' | 'register' | 'principals' | 'token'>('login');
+  const [activeTab, setActiveTab] = useState<'account' | 'login' | 'register' | 'principals' | 'token'>(currentSession ? 'account' : 'login');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
   const [mfaChallenge, setMfaChallenge] = useState<MfaPendingChallenge | null>(null);
 
+  // Password Change Form State
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwChangeLoading, setPwChangeLoading] = useState(false);
+  const [pwChangeSuccess, setPwChangeSuccess] = useState<string | null>(null);
+  const [pwChangeError, setPwChangeError] = useState<string | null>(null);
+
   // New user registration / real-time identity state
   const [regUsername, setRegUsername] = useState('');
   const [regRole, setRegRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
   const [regRisk, setRegRisk] = useState<number>(20);
   const [regDept, setRegDept] = useState('Cloud Platform Engineering');
-  const [regPassword, setRegPassword] = useState('ZeroTrust_2026');
+  const [regPassword, setRegPassword] = useState('');
   const [regJustification, setRegJustification] = useState('Self-service zero-trust identity onboarding');
 
   // Pending Admin Approval State
@@ -439,8 +447,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </button>
         </div>
 
-        {/* Navigation Tabs - Saved Logins only visible if user is Admin */}
+        {/* Navigation Tabs */}
         <div className="flex border-b border-slate-800 bg-slate-950 px-4 gap-2 pt-2 overflow-x-auto">
+          {currentSession && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('account');
+                setPendingApprovalUser(null);
+              }}
+              className={`px-3.5 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 border-b-2 whitespace-nowrap cursor-pointer ${
+                activeTab === 'account'
+                  ? 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              <UserIcon className="w-3.5 h-3.5 text-blue-400" />
+              Account Profile
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -651,6 +677,140 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <LogOut className="w-3 h-3" />
                     Sign Out
                   </button>
+                </div>
+              )}
+
+              {/* TAB 0: ACCOUNT PROFILE & SECURE PASSWORD CHANGE FLOW */}
+              {activeTab === 'account' && currentSession && (
+                <div className="space-y-5">
+                  <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <UserIcon className="w-4 h-4 text-blue-400" />
+                      Account Clearance Profile
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <span className="text-slate-400">Username:</span>
+                        <div className="font-bold text-white">{currentSession.user.username}</div>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Assigned Role:</span>
+                        <div className="font-bold text-blue-400">{currentSession.user.role}</div>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Base Risk Profile:</span>
+                        <div className="font-bold text-emerald-400">{currentSession.user.base_risk_score}%</div>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Clearance Status:</span>
+                        <div className="font-bold text-emerald-400">APPROVED (Zero-Trust Active)</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Password Change Form */}
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!oldPassword) {
+                      setPwChangeError('Please enter your current password.');
+                      return;
+                    }
+                    if (newPassword.length < 8) {
+                      setPwChangeError('New password must be at least 8 characters.');
+                      return;
+                    }
+                    if (newPassword !== confirmPassword) {
+                      setPwChangeError('New password and confirmation do not match.');
+                      return;
+                    }
+                    setPwChangeLoading(true);
+                    setPwChangeError(null);
+                    setPwChangeSuccess(null);
+                    try {
+                      const res = await fetch('/api/v1/auth/change-password', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${currentSession.token}`
+                        },
+                        body: JSON.stringify({ oldPassword, newPassword })
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setPwChangeSuccess('Password successfully updated! Existing sessions invalidated.');
+                        setOldPassword('');
+                        setNewPassword('');
+                        setConfirmPassword('');
+                      } else {
+                        setPwChangeError(data.detail || data.error || 'Failed to update password.');
+                      }
+                    } catch (err: any) {
+                      setPwChangeError(err?.message || 'Network exception.');
+                    } finally {
+                      setPwChangeLoading(false);
+                    }
+                  }} className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-emerald-400" />
+                      Update Password (PBKDF2 SHA-512)
+                    </h3>
+
+                    {pwChangeError && (
+                      <div className="p-2.5 rounded bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs">
+                        {pwChangeError}
+                      </div>
+                    )}
+                    {pwChangeSuccess && (
+                      <div className="p-2.5 rounded bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-xs">
+                        {pwChangeSuccess}
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-slate-400 text-xs mb-1">Current Password</label>
+                      <input
+                        type="password"
+                        value={oldPassword}
+                        onChange={(e) => setOldPassword(e.target.value)}
+                        className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs font-mono"
+                        placeholder="Enter current password"
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-slate-400 text-xs mb-1">New Password (Min 8 chars)</label>
+                        <input
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs font-mono"
+                          placeholder="Min 8 characters"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 text-xs mb-1">Confirm New Password</label>
+                        <input
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs font-mono"
+                          placeholder="Repeat new password"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={pwChangeLoading}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      {pwChangeLoading ? 'Hashing with PBKDF2...' : 'Update Password & Re-key'}
+                    </button>
+                  </form>
                 </div>
               )}
 
@@ -908,13 +1068,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                     <div>
                       <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-                        Password (Optional)
+                        Password (Min 8 Characters)
                       </label>
                       <input
                         type="password"
                         value={regPassword}
                         onChange={(e) => setRegPassword(e.target.value)}
-                        placeholder="Defaults to ZeroTrust_2026"
+                        placeholder="Enter secure password"
+                        required
+                        minLength={8}
                         className="w-full p-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono"
                       />
                     </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldAlert,
   Shield,
@@ -19,12 +19,35 @@ import {
   LogOut,
   AlertTriangle,
   FileDown,
-  Search
+  Search,
+  Clock,
+  Timer,
+  KeyRound,
+  ShieldCheck,
+  Layers,
+  Sliders
 } from 'lucide-react';
 import { FeatureTabId } from './Header.tsx';
 import { AuthSession } from '../types.ts';
 import { useTheme } from '../context/ThemeContext.tsx';
 import { SECTIONS_CONFIG, SectionMeta } from '../utils/sectionThemes.ts';
+
+// Helper to decode JWT exp claim
+const decodeJwtExp = (token?: string): number | null => {
+  if (!token) return null;
+  try {
+    const parts = token.split('.');
+    if (parts.length >= 2) {
+      const payload = JSON.parse(atob(parts[1]));
+      if (typeof payload.exp === 'number') {
+        return payload.exp * 1000;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
 
 interface SidebarNavigationProps {
   isOpen: boolean;
@@ -40,6 +63,7 @@ interface SidebarNavigationProps {
   onOpenDbModal: () => void;
   onOpenAuthModal: () => void;
   onOpenSecurityReport?: () => void;
+  onOpenRbacModal?: () => void;
   onLogout?: () => void;
   onRunCredentialStuffing?: () => void;
   onRunLateralMovementDrill?: () => void;
@@ -61,6 +85,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
   onOpenDbModal,
   onOpenAuthModal,
   onOpenSecurityReport,
+  onOpenRbacModal,
   onLogout,
   onRunCredentialStuffing,
   onRunLateralMovementDrill,
@@ -70,6 +95,46 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
   const { isLight } = useTheme();
   const [filterQuery, setFilterQuery] = useState('');
   const currentRole = currentSession?.user.role || 'Guest';
+
+  // JWT Session countdown tracking
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(() => {
+    if (!currentSession) return 0;
+    const jwtExp = decodeJwtExp(currentSession.token);
+    const totalDurationMs = (currentSession.expiresInSeconds || 3600) * 1000;
+    const loginMs = currentSession.loginTime ? new Date(currentSession.loginTime).getTime() : Date.now();
+    const expiryMs = jwtExp || (loginMs + totalDurationMs);
+    return Math.max(0, Math.floor((expiryMs - Date.now()) / 1000));
+  });
+
+  useEffect(() => {
+    if (!currentSession) return;
+    const update = () => {
+      const jwtExp = decodeJwtExp(currentSession.token);
+      const totalDurationMs = (currentSession.expiresInSeconds || 3600) * 1000;
+      const loginMs = currentSession.loginTime ? new Date(currentSession.loginTime).getTime() : Date.now();
+      const expiryMs = jwtExp || (loginMs + totalDurationMs);
+      const diff = Math.max(0, Math.floor((expiryMs - Date.now()) / 1000));
+      setRemainingSeconds(diff);
+    };
+
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [currentSession]);
+
+  const totalSessionSeconds = currentSession?.expiresInSeconds || 3600;
+  const isExpiringSoon = remainingSeconds > 0 && remainingSeconds <= 300; // <= 5 minutes
+  const isSessionExpired = remainingSeconds <= 0;
+
+  const formatCountdown = (totalSec: number) => {
+    const hours = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    if (hours > 0) {
+      return `${hours}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+    }
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   // Navigation items grouped by 4 disciplined sections with dedicated section colors
   const navSections = [
@@ -83,7 +148,25 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: ShieldAlert,
           badge: 'Executive',
           tier: 'Tier 3 Admin',
-          allowedRoles: ['Admin']
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator']
+        },
+        {
+          id: 'functions' as FeatureTabId,
+          label: 'Function Inventory & Invocations',
+          subtitle: 'Serverless catalog, runtimes & 15-step verification explorer',
+          icon: Layers,
+          badge: '15-Step',
+          tier: 'Tier 2+ Dev',
+          allowedRoles: ['Admin', 'Developer', 'Super Administrator', 'Security Administrator']
+        },
+        {
+          id: 'incidents' as FeatureTabId,
+          label: 'Incident Response & Containment',
+          subtitle: 'Triage critical alerts, assign containment & log mitigation',
+          icon: AlertTriangle,
+          badge: 'Live Triage',
+          tier: 'Tier 3 Admin',
+          allowedRoles: ['Admin', 'Security Administrator', 'Super Administrator', 'Security Analyst']
         },
         {
           id: 'interceptor' as FeatureTabId,
@@ -92,7 +175,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: Shield,
           badge: 'Live Sim',
           tier: 'Tier 3 Admin',
-          allowedRoles: ['Admin']
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator']
         },
         {
           id: 'ai-threats' as FeatureTabId,
@@ -101,7 +184,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: Bot,
           badge: 'Autonomous',
           tier: 'Tier 2+ Dev',
-          allowedRoles: ['Admin', 'Developer']
+          allowedRoles: ['Admin', 'Developer', 'Super Administrator', 'Security Administrator', 'Security Analyst']
         }
       ]
     },
@@ -115,7 +198,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: BarChart3,
           badge: blockedCount > 0 ? `${blockedCount} Blocked` : 'Nominal',
           tier: 'Tier 3 Admin',
-          allowedRoles: ['Admin']
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator', 'Security Analyst']
         },
         {
           id: 'audit' as FeatureTabId,
@@ -124,7 +207,16 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: FileText,
           badge: `${logsCount} Events`,
           tier: 'Public / All',
-          allowedRoles: ['Admin', 'Developer', 'Guest']
+          allowedRoles: ['Admin', 'Developer', 'Guest', 'Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor', 'Viewer']
+        },
+        {
+          id: 'docs' as FeatureTabId,
+          label: 'Help & Technical Documentation',
+          subtitle: 'Theory, risk formula, 15-step pipeline & viva defense Q&A',
+          icon: FileText,
+          badge: 'Engineering',
+          tier: 'Public / All',
+          allowedRoles: ['Admin', 'Developer', 'Guest', 'Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor', 'Viewer']
         }
       ]
     },
@@ -138,7 +230,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: Users,
           badge: `${usersCount} Principals`,
           tier: 'Tier 3 Admin',
-          allowedRoles: ['Admin']
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator']
         },
         {
           id: 'architecture' as FeatureTabId,
@@ -147,7 +239,16 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: Cpu,
           badge: 'Admin Only',
           tier: 'Tier 3 Admin',
-          allowedRoles: ['Admin']
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator']
+        },
+        {
+          id: 'settings' as FeatureTabId,
+          label: 'Policy Engine Settings',
+          subtitle: 'Risk cutoffs, sequence penalties & fail-closed guarantee',
+          icon: Sliders,
+          badge: 'Policy',
+          tier: 'Tier 3 Admin',
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator']
         }
       ]
     },
@@ -155,13 +256,22 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
       meta: SECTIONS_CONFIG.workbenches,
       items: [
         {
+          id: 'api-testing' as FeatureTabId,
+          label: 'API Testing Console & Fuzzer',
+          subtitle: 'Interactive live payload probe with security header inspection',
+          icon: Code,
+          badge: 'Live Probe',
+          tier: 'Tier 2+ Dev',
+          allowedRoles: ['Developer', 'Admin', 'Super Administrator', 'Security Administrator']
+        },
+        {
           id: 'developer' as FeatureTabId,
           label: 'Developer Console',
           subtitle: 'Cloud & edge mesh function testbed & payload sandbox',
           icon: Code,
           badge: 'Tier 2 Mesh',
           tier: 'Tier 2+ Dev',
-          allowedRoles: ['Developer', 'Admin']
+          allowedRoles: ['Developer', 'Admin', 'Super Administrator', 'Security Administrator']
         },
         {
           id: 'guest' as FeatureTabId,
@@ -170,7 +280,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: UserCheck,
           badge: 'Public Tier 1',
           tier: 'Public / All',
-          allowedRoles: ['Guest', 'Admin', 'Developer']
+          allowedRoles: ['Guest', 'Admin', 'Developer', 'Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor', 'Viewer']
         },
         {
           id: 'overview' as FeatureTabId,
@@ -179,7 +289,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           icon: LayoutGrid,
           badge: 'Synthesis',
           tier: 'Tier 3 Admin',
-          allowedRoles: ['Admin']
+          allowedRoles: ['Admin', 'Super Administrator', 'Security Administrator']
         }
       ]
     }
@@ -271,6 +381,72 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
             >
               Switch Role
             </button>
+          </div>
+
+          {/* Real-time JWT Session Countdown Timer & Visual Expiration Alerts */}
+          <div className={`mt-2.5 pt-2 border-t flex flex-col gap-1.5 ${
+            isLight ? 'border-slate-200/80' : 'border-slate-800/60'
+          }`}>
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                <Clock className={`w-3.5 h-3.5 ${
+                  isSessionExpired
+                    ? 'text-rose-500 animate-pulse'
+                    : isExpiringSoon
+                    ? 'text-amber-500 animate-pulse'
+                    : 'text-blue-400'
+                }`} />
+                <span>JWT Session:</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <span className={`font-bold px-2 py-0.5 rounded text-[11px] ${
+                  isSessionExpired
+                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse'
+                    : isExpiringSoon
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse'
+                    : isLight
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'bg-slate-800 text-slate-200'
+                }`}>
+                  {isSessionExpired ? 'EXPIRED' : formatCountdown(remainingSeconds)}
+                </span>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                  isSessionExpired
+                    ? 'bg-rose-950 text-rose-300'
+                    : isExpiringSoon
+                    ? 'bg-amber-950 text-amber-300'
+                    : 'bg-emerald-500/10 text-emerald-400'
+                }`}>
+                  {isSessionExpired ? '0%' : `${Math.round((remainingSeconds / totalSessionSeconds) * 100)}%`}
+                </span>
+              </div>
+            </div>
+
+            {/* Visual Alert Banner for Session Expiring Within 5 Minutes */}
+            {isExpiringSoon && (
+              <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/50 text-amber-300 dark:text-amber-200 flex items-start gap-2 text-[11px] animate-pulse">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="leading-tight">
+                  <div className="font-bold text-amber-400">⚠️ Session Expiring Soon</div>
+                  <div className="text-[10px] text-amber-200/90 mt-0.5">
+                    Less than 5 minutes remaining ({formatCountdown(remainingSeconds)}). Re-authenticate to avoid automatic termination.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Visual Alert Banner for Expired Session */}
+            {isSessionExpired && (
+              <div className="p-2 rounded-xl bg-rose-500/20 border border-rose-500/60 text-rose-300 flex items-start gap-2 text-[11px] animate-pulse">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="leading-tight">
+                  <div className="font-bold text-rose-400">🚨 Session Terminated</div>
+                  <div className="text-[10px] text-rose-200/90 mt-0.5">
+                    Cryptographic JWT token expired. Please sign in again.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -543,6 +719,29 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                   <Database className="w-4 h-4 text-slate-400" />
                   <span className="truncate">Schema Matrix</span>
                 </button>
+
+                {onOpenRbacModal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenRbacModal();
+                    }}
+                    className={`col-span-2 p-3 rounded-xl border text-xs font-mono flex items-center justify-between transition-all ${
+                      isLight
+                        ? 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200 shadow-xs'
+                        : 'bg-purple-950/20 hover:bg-purple-900/40 text-purple-300 border-purple-800/40'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-purple-400" />
+                      <span className="font-semibold">RBAC Governance &amp; Permissions Matrix</span>
+                    </div>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      6×21 Matrix
+                    </span>
+                  </button>
+                )}
               </div>
             )}
 

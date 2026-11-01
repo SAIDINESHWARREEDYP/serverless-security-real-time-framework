@@ -18,6 +18,13 @@ import { DeveloperWorkbench } from './components/DeveloperWorkbench.tsx';
 import { AICloudThreatShield } from './components/AICloudThreatShield.tsx';
 import { EdgeTopologyGraphic } from './components/EdgeTopologyGraphic.tsx';
 import { SidebarNavigation } from './components/SidebarNavigation.tsx';
+import { RbacManagementModal } from './components/RbacManagementModal.tsx';
+import { FunctionInventoryExplorer } from './components/FunctionInventoryExplorer.tsx';
+import { IncidentManagementConsole } from './components/IncidentManagementConsole.tsx';
+import { ApiTestingConsole } from './components/ApiTestingConsole.tsx';
+import { SystemConfigSettingsModal } from './components/SystemConfigSettingsModal.tsx';
+import { HelpTechnicalDocsModal } from './components/HelpTechnicalDocsModal.tsx';
+import { useRealtimeMonitor } from './hooks/useRealtimeMonitor.ts';
 import { useTheme } from './context/ThemeContext.tsx';
 import { getSectionMetaForTab } from './utils/sectionThemes.ts';
 import {
@@ -78,6 +85,9 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isSecurityReportOpen, setIsSecurityReportOpen] = useState<boolean>(false);
   const [isUserDbModalOpen, setIsUserDbModalOpen] = useState<boolean>(false);
+  const [isRbacModalOpen, setIsRbacModalOpen] = useState<boolean>(false);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState<boolean>(false);
+  const [isDocsModalOpen, setIsDocsModalOpen] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [terminalLogs, setTerminalLogs] = useState<TerminalLogEntry[]>([]);
 
@@ -93,11 +103,52 @@ export default function App() {
   // Authenticated session state - initialized to null so Zero-Trust Login Gateway is displayed first
   const [currentSession, setCurrentSession] = useState<AuthSession | null>(null);
 
+  // Granular logging & state transition monitor for authentication lifecycle
+  useEffect(() => {
+    if (currentSession) {
+      console.log('%c[AUTH_STATE_TRANSITION] ✅ Authenticated Session Active', 'color: #10b981; font-weight: bold;', {
+        username: currentSession.user.username,
+        role: currentSession.user.role,
+        status: currentSession.user.status,
+        loginTime: currentSession.loginTime,
+        mfaMethod: currentSession.mfaMethod || 'authenticator',
+        tokenPreview: currentSession.token ? `${currentSession.token.slice(0, 18)}...` : 'NONE',
+        expiresInSeconds: currentSession.expiresInSeconds,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      console.log('%c[AUTH_STATE_TRANSITION] 🔒 Unauthenticated State (Zero-Trust Gateway Gate Active)', 'color: #f59e0b; font-weight: bold;', {
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [currentSession]);
+
   // Dynamic policy configuration
   const [policyConfig, setPolicyConfig] = useState<SecurityPolicyConfig>({
     maxRiskThreshold: 75,
     sequenceViolationPenalty: 40,
     enforceStrictSequence: true
+  });
+
+  // Real-time SSE streaming monitor with fallback
+  const handleRealtimeNewLog = useCallback((newLog: SecurityAuditLog) => {
+    setLogs(prev => {
+      if (prev.some(l => l.id === newLog.id)) return prev;
+      return [newLog, ...prev].slice(0, 500);
+    });
+    setTerminalLogs(prev => [
+      ...prev,
+      {
+        id: Math.random().toString(36).substring(2, 9),
+        timestamp: new Date().toLocaleTimeString(),
+        type: newLog.status === 'ALLOWED' ? 'success' : 'alert',
+        text: `[SSE LIVE] ${newLog.status}: ${newLog.username} -> ${newLog.requested_function} (Risk: ${newLog.calculated_risk}%)`
+      }
+    ]);
+  }, []);
+
+  const realtime = useRealtimeMonitor({
+    onNewLog: handleRealtimeNewLog
   });
 
   // IAM inline form state for real-time any user
@@ -111,8 +162,12 @@ export default function App() {
   const [newRuleCurrent, setNewRuleCurrent] = useState('login');
   const [newRuleNext, setNewRuleNext] = useState('getDashboardMetrics');
 
-  // Network connectivity status
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'syncing' | 'reconnecting'>('syncing');
+  // Network connectivity status derived from SSE monitor
+  const connectionStatus = useMemo<'connected' | 'syncing' | 'reconnecting'>(() => {
+    if (realtime.connectionStatus === 'LIVE_STREAMING') return 'connected';
+    if (realtime.connectionStatus === 'POLLING_FALLBACK') return 'syncing';
+    return 'reconnecting';
+  }, [realtime.connectionStatus]);
 
   // Real-time Anomaly Alert State
   const [acknowledgedAlertIds, setAcknowledgedAlertIds] = useState<Set<string>>(new Set());
@@ -314,13 +369,9 @@ export default function App() {
           setLogs(data.logs);
         }
         if (data && data.policyConfig) setPolicyConfig(data.policyConfig);
-        setConnectionStatus('connected');
-      } else {
-        setConnectionStatus('reconnecting');
       }
     } catch {
       // Non-blocking connection retry (e.g. during server reload or brief offline pause)
-      setConnectionStatus('reconnecting');
     } finally {
       setIsRefreshing(false);
     }
@@ -374,26 +425,49 @@ export default function App() {
     addTerminalLog('info', `[INFO] Request initiated for principal [${user}] via edge security interceptor...`);
 
     try {
-      addTerminalLog('post', `[POST] Verifying credentials and acquiring Bearer token for [${user}]...`);
+      addTerminalLog('post', `[POST] Acquiring verified Bearer token for principal [${user}]...`);
 
-      const authResponse = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: user, password: 'ZeroTrust_2026' })
-      });
+      let bearerToken = currentSession && currentSession.user.username === user ? currentSession.token : null;
 
-      const authData = await authResponse.json();
+      if (!bearerToken) {
+        const authResponse = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: user, password: 'ZeroTrust_2026' })
+        });
 
-      if (!authData.success) {
-        addTerminalLog('error', `[ERROR] Identity token signature rejected: ${authData.error}`);
-        setIsFiring(false);
-        fetchOverview();
-        return;
+        const authData = await authResponse.json();
+
+        if (authData.mfaRequired && authData.mfaSessionId && authData.demoTotpCode) {
+          const mfaRes = await fetch('/api/auth/mfa/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mfaSessionId: authData.mfaSessionId,
+              mfaChallengeId: authData.mfaSessionId,
+              code: authData.demoTotpCode,
+              method: 'authenticator'
+            })
+          });
+          const mfaData = await mfaRes.json();
+          if (mfaData.success && mfaData.token) {
+            bearerToken = mfaData.token;
+          }
+        } else if (authData.success && authData.token) {
+          bearerToken = authData.token;
+        }
+
+        if (!bearerToken) {
+          addTerminalLog('error', `[ERROR] Identity token signature rejected: ${authData.error || 'Access Denied'}`);
+          setIsFiring(false);
+          fetchOverview();
+          return;
+        }
       }
 
       addTerminalLog(
         'success',
-        `[SUCCESS] Bearer token verified for [${authData.role}] (Base Risk: ${authData.userRisk}%). Signature: ${authData.token.substring(0, 20)}...`
+        `[SUCCESS] Bearer token verified for [${user}]. Signature: ${bearerToken.substring(0, 20)}...`
       );
       addTerminalLog(
         'get',
@@ -403,7 +477,7 @@ export default function App() {
       const pipelineResponse = await fetch(`/api/${route}`, {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${authData.token}`
+          Authorization: `Bearer ${bearerToken}`
         }
       });
 
@@ -437,11 +511,22 @@ export default function App() {
         addTerminalLog('metric', `[METRIC] Security Clearance: STATUS 200 (OK - ALLOWED).`);
         addTerminalLog('success', `[RESPONSE DATA]: ${JSON.stringify(pipelineData, null, 2)}`);
       } else {
+        if (pipelineResponse.status === 401) {
+          const isExplicitRevocation = String(pipelineData.error || pipelineData.detail || '').toLowerCase().includes('revoked');
+          if (isExplicitRevocation) {
+            addTerminalLog('alert', '[SESSION REVOKED] Token invalidated at database level by Administrator. Session terminated.');
+            if (currentSession && currentSession.user.username === user) {
+              setCurrentSession(null);
+            }
+          } else {
+            addTerminalLog('alert', `[UNAUTHORIZED 401] Access rejected by edge authorizer: ${pipelineData.error || pipelineData.detail || 'Invalid clearance'}`);
+          }
+        }
         addTerminalLog(
           'alert',
           `[ALERT] Security Firewall Intercept: STATUS ${pipelineResponse.status} (BLOCKED).`
         );
-        addTerminalLog('error', `[THREAT REASON]: ${pipelineData.error}`);
+        addTerminalLog('error', `[THREAT REASON]: ${pipelineData.error || pipelineData.detail || 'Access Suspended'}`);
         if (pipelineData.metrics) {
           addTerminalLog(
             'metric',
@@ -660,14 +745,32 @@ export default function App() {
   };
 
   const handleGatewayLogin = (session: AuthSession, isNewUser?: boolean) => {
+    console.log('%c[AUTH_FLOW] 🚀 handleGatewayLogin invoked:', 'color: #3b82f6; font-weight: bold;', {
+      user: session?.user?.username,
+      role: session?.user?.role,
+      hasToken: Boolean(session?.token),
+      isNewUser: Boolean(isNewUser),
+      timestamp: new Date().toISOString()
+    });
+
+    if (!session || !session.token || !session.user) {
+      console.error('[AUTH_FLOW] ❌ Aborting login transition: Session token or user payload missing:', session);
+      addTerminalLog('error', '[IAM GATEWAY ERROR] Incomplete session token provided.');
+      return;
+    }
+
+    // Atomically transition session state in React
     setCurrentSession(session);
     setSelectedUser(session.user.username);
+
     if (isNewUser) {
       setUsers(prev => {
         if (prev.some(u => u.username === session.user.username)) return prev;
         return [...prev, session.user];
       });
     }
+
+    // Role-guided navigation routing
     if (session.user.role === 'Guest') {
       setActiveTab('guest');
     } else if (session.user.role === 'Developer') {
@@ -675,7 +778,9 @@ export default function App() {
     } else {
       setActiveTab('admin');
     }
+
     addTerminalLog('success', `[IAM GATEWAY] Authenticated as ${session.user.username} with role '${session.user.role}'.`);
+    addTerminalLog('info', `[ZERO-TRUST SESSION] Cryptographic JWT issued. High-assurance clearance granted.`);
   };
 
   const handleDirectInvokeFromAdmin = async (endpoint: string) => {
@@ -806,6 +911,7 @@ export default function App() {
           onOpenDbModal={() => setIsDbModalOpen(true)}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
+          onOpenRbacModal={() => setIsRbacModalOpen(true)}
           onLogout={handleLogout}
           onRunCredentialStuffing={handleRunCredentialStuffing}
           onRunLateralMovementDrill={handleRunLateralMovementDrill}
@@ -1513,6 +1619,59 @@ export default function App() {
                 </div>
               )
             )}
+
+            {/* FEATURE VIEW 7: SERVERLESS FUNCTION INVENTORY & INVOCATION EXPLORER */}
+            {activeTab === 'functions' && (
+              <FunctionInventoryExplorer
+                logs={logs}
+                onFireFunction={async (slug: string) => {
+                  await handleFirePipeline(selectedUser, slug);
+                }}
+                isFiring={isFiring}
+              />
+            )}
+
+            {/* FEATURE VIEW 8: INCIDENT RESPONSE & CONTAINMENT */}
+            {activeTab === 'incidents' && (
+              <IncidentManagementConsole
+                currentUsername={currentSession?.user.username || 'secops_admin'}
+              />
+            )}
+
+            {/* FEATURE VIEW 9: ZERO-TRUST API TESTING CONSOLE */}
+            {activeTab === 'api-testing' && (
+              <ApiTestingConsole />
+            )}
+
+            {/* FEATURE VIEW 10: CONFIGURATION & POLICY SETTINGS */}
+            {activeTab === 'settings' && (
+              <SystemConfigSettingsModal
+                isOpen={true}
+                isInline={true}
+                onClose={() => setActiveTab('admin')}
+                policyConfig={policyConfig}
+                onUpdatePolicy={async (cfg) => {
+                  await handleUpdatePolicyConfig({ ...policyConfig, ...cfg });
+                }}
+                onResetPolicy={async () => {
+                  await handleUpdatePolicyConfig({
+                    maxRiskThreshold: 75,
+                    sequenceViolationPenalty: 40,
+                    enforceStrictSequence: true,
+                    globalLockdown: false
+                  });
+                }}
+              />
+            )}
+
+            {/* FEATURE VIEW 11: TECHNICAL DOCUMENTATION & VIVA DEFENSE GUIDE */}
+            {activeTab === 'docs' && (
+              <HelpTechnicalDocsModal
+                isOpen={true}
+                isInline={true}
+                onClose={() => setActiveTab('admin')}
+              />
+            )}
             </main>
           </>
         )}
@@ -1590,6 +1749,39 @@ export default function App() {
         onDeleteUser={handleDeleteUser}
         onBatchSeed={handleBatchSeedUsers}
         onRevokeSession={handleRevokeSession}
+      />
+
+      <RbacManagementModal
+        isOpen={isRbacModalOpen}
+        onClose={() => setIsRbacModalOpen(false)}
+        currentUserRole={currentSession?.user.role || 'Guest'}
+        currentUsername={currentSession?.user.username || ''}
+        users={users}
+        onRoleAssigned={async () => {
+          await fetchOverview();
+        }}
+      />
+
+      <SystemConfigSettingsModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+        policyConfig={policyConfig}
+        onUpdatePolicy={async (cfg) => {
+          await handleUpdatePolicyConfig({ ...policyConfig, ...cfg });
+        }}
+        onResetPolicy={async () => {
+          await handleUpdatePolicyConfig({
+            maxRiskThreshold: 75,
+            sequenceViolationPenalty: 40,
+            enforceStrictSequence: true,
+            globalLockdown: false
+          });
+        }}
+      />
+
+      <HelpTechnicalDocsModal
+        isOpen={isDocsModalOpen}
+        onClose={() => setIsDocsModalOpen(false)}
       />
     </div>
   );

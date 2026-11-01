@@ -228,6 +228,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           methods: data.methods || ['authenticator', 'sms'],
           demoTotpCode: data.demoTotpCode,
           demoSmsCode: data.demoSmsCode,
+          attemptsLeft: data.attemptsLeft ?? 5,
           expiresInSeconds: 300
         });
         return;
@@ -359,10 +360,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         <MfaVerificationCard
           challenge={mfaChallenge}
           onVerifySuccess={(session) => {
+            console.log('[GATEWAY] MFA Verification Succeeded for', session.user.username, '-> transitioning to active session');
             setMfaChallenge(null);
+            setErrorMsg(null);
+            setStatusNotice(null);
             onLoginSuccess(session);
           }}
-          onCancel={() => setMfaChallenge(null)}
+          onCancel={() => {
+            setMfaChallenge(null);
+            setErrorMsg(null);
+          }}
           onAddTerminalLog={onAddTerminalLog}
           variant="page"
         />

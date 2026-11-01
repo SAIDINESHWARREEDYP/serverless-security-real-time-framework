@@ -39,7 +39,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [attemptsLeft, setAttemptsLeft] = useState<number>(5);
+  const [attemptsLeft, setAttemptsLeft] = useState<number>(challenge.attemptsLeft ?? 5);
   const [copiedCode, setCopiedCode] = useState(false);
   const [resendCooldown, setResendCooldown] = useState<number>(0);
   const [smsNotification, setSmsNotification] = useState<{
@@ -49,6 +49,13 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     code: challenge.demoSmsCode || '847291',
     timestamp: 'Just now'
   });
+
+  // Keep attemptsLeft synchronized with backend challenge state
+  useEffect(() => {
+    if (challenge.attemptsLeft !== undefined) {
+      setAttemptsLeft(challenge.attemptsLeft);
+    }
+  }, [challenge.attemptsLeft]);
 
   // Dynamic TOTP countdown calculation (30 second period)
   const [totpSecondsLeft, setTotpSecondsLeft] = useState<number>(() => {
@@ -61,6 +68,9 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
 
   // 1. Ticking TOTP Timer
   useEffect(() => {
+    if (challenge.demoTotpCode) {
+      setCurrentTotpCode(challenge.demoTotpCode);
+    }
     const timer = setInterval(() => {
       const remaining = 30 - (Math.floor(Date.now() / 1000) % 30);
       setTotpSecondsLeft(remaining);
@@ -80,7 +90,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [challenge.username]);
+  }, [challenge.username, challenge.demoTotpCode]);
 
   // 2. Resend SMS Cooldown Timer
   useEffect(() => {
@@ -158,8 +168,9 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
 
   // Submit verification code to API
   const submitVerification = async (codeToVerify?: string) => {
-    const code = (codeToVerify || digits.join('')).trim();
-    if (code.length !== 6) {
+    const raw = (codeToVerify || digits.join('')).trim();
+    const cleanCode = raw.replace(/[\s\-]/g, '');
+    if (cleanCode.length < 6) {
       setErrorMsg('Please enter a complete 6-digit verification code.');
       return;
     }
@@ -174,7 +185,8 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mfaSessionId: challenge.mfaSessionId,
-          code,
+          mfaChallengeId: challenge.mfaSessionId,
+          code: cleanCode,
           method
         })
       });
@@ -182,14 +194,13 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        setErrorMsg(data.error || 'Invalid verification code. Please check your code and try again.');
-        if (data.attemptsLeft !== undefined) {
-          setAttemptsLeft(data.attemptsLeft);
-        }
-        if (data.locked) {
-          onAddTerminalLog?.('error', `[MFA LOCKED] Challenge invalidated due to repeated failed entries.`);
+        const remaining = data.attemptsLeft !== undefined ? data.attemptsLeft : Math.max(0, attemptsLeft - 1);
+        setAttemptsLeft(remaining);
+        setErrorMsg(data.error || `Invalid verification code. ${remaining} attempts remaining.`);
+        if (data.locked || remaining <= 0) {
+          onAddTerminalLog?.('error', `[MFA LOCKED] Challenge invalidated due to repeated failed entries. Please re-authenticate.`);
         } else {
-          onAddTerminalLog?.('alert', `[MFA MISMATCH] Incorrect 6-digit code entered for ${challenge.username}.`);
+          onAddTerminalLog?.('alert', `[MFA MISMATCH] Incorrect 6-digit code entered for ${challenge.username}. ${remaining} attempts remaining.`);
         }
         setDigits(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
@@ -197,8 +208,11 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
         return;
       }
 
-      // MFA SUCCESS
+      // MFA SUCCESS - Guaranteed clean state transition
+      setErrorMsg(null);
       onAddTerminalLog?.('success', `[MFA VERIFIED] Factor 2 verified via ${method.toUpperCase()}. High-assurance session established.`);
+      console.log('[MFA_SUCCESS] Session credentials confirmed for:', data.user?.username);
+
       const session: AuthSession = {
         user: data.user,
         token: data.token,
@@ -496,7 +510,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           </div>
 
           <p className="text-center text-[11px] text-slate-500">
-            Paste or type code • Universal demo bypass: <code className="text-slate-400">123456</code>
+            Paste or type the 6-digit code from your authenticator app
           </p>
         </div>
 

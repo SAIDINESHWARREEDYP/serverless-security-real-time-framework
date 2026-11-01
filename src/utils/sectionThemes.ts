@@ -156,6 +156,31 @@ export const TAB_TO_SECTION_MAP: Record<FeatureTabId, {
     sectionId: 'workbenches',
     tabName: 'Consolidated Matrix',
     tabRoleTier: 'Tier 3 Admin'
+  },
+  functions: {
+    sectionId: 'operations',
+    tabName: 'Function Inventory',
+    tabRoleTier: 'Tier 2+ Dev'
+  },
+  incidents: {
+    sectionId: 'operations',
+    tabName: 'Incident Management',
+    tabRoleTier: 'Tier 3 Admin'
+  },
+  'api-testing': {
+    sectionId: 'workbenches',
+    tabName: 'API Console',
+    tabRoleTier: 'Tier 2+ Dev'
+  },
+  settings: {
+    sectionId: 'policies',
+    tabName: 'Policy Settings',
+    tabRoleTier: 'Tier 3 Admin'
+  },
+  docs: {
+    sectionId: 'telemetry',
+    tabName: 'Help & Technical Docs',
+    tabRoleTier: 'Public / All'
   }
 };
 

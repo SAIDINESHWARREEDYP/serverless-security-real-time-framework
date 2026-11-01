@@ -1,10 +1,20 @@
 export type UserApprovalStatus = 'APPROVED' | 'PENDING_APPROVAL' | 'REJECTED' | 'SUSPENDED';
 
+export type CanonicalRole =
+  | 'Super Administrator'
+  | 'Security Administrator'
+  | 'Security Analyst'
+  | 'Developer'
+  | 'Auditor'
+  | 'Viewer';
+
+export type UserRole = CanonicalRole | 'Admin' | 'Developer' | 'Guest' | string;
+
 export interface User {
   id: string;
   username: string;
   password_hash: string;
-  role: 'Admin' | 'Developer' | 'Guest';
+  role: UserRole;
   base_risk_score: number;
   status?: UserApprovalStatus;
   department?: string;
@@ -28,6 +38,7 @@ export interface MfaPendingChallenge {
   demoTotpCode: string;
   demoSmsCode: string;
   message?: string;
+  attemptsLeft?: number;
 }
 
 export interface AuthSession {

@@ -27,7 +27,12 @@ export type FeatureTabId =
   | 'audit'
   | 'iam'
   | 'architecture'
-  | 'overview';
+  | 'overview'
+  | 'functions'
+  | 'incidents'
+  | 'api-testing'
+  | 'settings'
+  | 'docs';
 
 interface HeaderProps {
   onReset: () => void;

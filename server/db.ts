@@ -1,6 +1,9 @@
 /**
  * Database Engine mimicking Cloudflare D1 / SQLite for the Serverless Security Framework.
- * Implements the users, function_rules, and security_audit_logs tables and seed data.
+ * Implements the normalized 3NF schema tables: users, roles, permissions, user_roles,
+ * role_permissions, functions, invocation_history, verification_results, security_alerts,
+ * incidents, audit_events, sessions, and system_configuration.
+ * Preserves backwards compatibility for existing controllers and frontends.
  */
 
 export type UserApprovalStatus = 'APPROVED' | 'PENDING_APPROVAL' | 'REJECTED' | 'SUSPENDED';
@@ -21,6 +24,120 @@ export interface User {
   approvedBy?: string;
   lastLoginAt?: string;
   requestJustification?: string;
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string;
+  is_system_role: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Permission {
+  id: string;
+  name: string;
+  resource: string;
+  action: string;
+  description: string;
+  created_at: string;
+}
+
+export interface RolePermission {
+  role_id: string;
+  permission_id: string;
+  assigned_at: string;
+  assigned_by: string;
+}
+
+export interface UserRole {
+  user_id: string;
+  role_id: string;
+  assigned_at: string;
+  assigned_by: string;
+}
+
+export interface FunctionEntity {
+  id: string;
+  name: string;
+  slug: string;
+  service_name: string;
+  runtime: string;
+  max_memory_mb: number;
+  timeout_seconds: number;
+  is_active: boolean;
+  required_permission_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvocationHistoryRecord {
+  id: string;
+  trace_id: string;
+  parent_trace_id?: string;
+  user_id?: string;
+  function_id: string;
+  source_ip: string;
+  http_method: string;
+  payload_size_bytes: number;
+  payload_sha256: string;
+  invoked_at: string;
+}
+
+export interface VerificationResultRecord {
+  id: string;
+  invocation_id: string;
+  verdict: 'ALLOW' | 'DENY' | 'QUARANTINE';
+  risk_score: number;
+  verification_latency_ms: number;
+  imds_probe_detected: boolean;
+  prompt_injection_detected: boolean;
+  sequence_deviation_detected: boolean;
+  shell_injection_detected: boolean;
+  token_signature_valid: boolean;
+  session_active: boolean;
+  rbac_granted: boolean;
+  fail_closed_triggered: boolean;
+  decision_reason: string;
+  verified_at: string;
+}
+
+export interface SecurityAlertRecord {
+  id: string;
+  invocation_id?: string;
+  alert_type: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  threat_vector: string;
+  details_json: string;
+  ip_address: string;
+  user_id?: string;
+  acknowledged_at?: string;
+  acknowledged_by?: string;
+  created_at: string;
+}
+
+export interface IncidentRecord {
+  id: string;
+  title: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  status: 'OPEN' | 'INVESTIGATING' | 'CONTAINED' | 'RESOLVED' | 'FALSE_POSITIVE';
+  root_cause?: string;
+  mitigation_steps?: string;
+  assigned_to?: string;
+  created_at: string;
+  resolved_at?: string;
+  resolved_by?: string;
+}
+
+export interface SystemConfigRecord {
+  config_key: string;
+  config_value: string;
+  description: string;
+  data_type: 'string' | 'number' | 'boolean' | 'json';
+  is_runtime_tunable: boolean;
+  updated_at: string;
+  updated_by: string;
 }
 
 export interface FunctionRule {
@@ -55,6 +172,77 @@ export interface ActiveSession {
   revokedBy?: string;
   revocationReason?: string;
 }
+
+const INITIAL_ROLES: Role[] = [
+  {
+    id: 'role_admin',
+    name: 'Administrator',
+    description: 'Full system access, policy mutation, user management, and session revocation.',
+    is_system_role: true,
+    created_at: '2026-09-01T08:00:00.000Z',
+    updated_at: '2026-09-01T08:00:00.000Z'
+  },
+  {
+    id: 'role_dev',
+    name: 'Developer',
+    description: 'Read and execute serverless functions, inspect telemetry and invocation baselines.',
+    is_system_role: true,
+    created_at: '2026-09-01T08:00:00.000Z',
+    updated_at: '2026-09-01T08:00:00.000Z'
+  },
+  {
+    id: 'role_guest',
+    name: 'Guest',
+    description: 'Restricted evaluation role with read-only access to compliance reports.',
+    is_system_role: true,
+    created_at: '2026-09-01T08:00:00.000Z',
+    updated_at: '2026-09-01T08:00:00.000Z'
+  }
+];
+
+const INITIAL_PERMISSIONS: Permission[] = [
+  { id: 'perm_fn_invoke', name: 'function:invoke', resource: 'function', action: 'invoke', description: 'Execute serverless function through verification gateway', created_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'perm_fn_read', name: 'function:read', resource: 'function', action: 'read', description: 'Inspect function configuration and schema specifications', created_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'perm_policy_write', name: 'policy:write', resource: 'policy', action: 'write', description: 'Mutate security policies, thresholds, and sequence rules', created_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'perm_session_revoke', name: 'session:revoke', resource: 'session', action: 'revoke', description: 'Revoke active user sessions in real-time D1 registry', created_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'perm_user_approve', name: 'user:approve', resource: 'user', action: 'approve', description: 'Approve or reject pending registration requests', created_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'perm_audit_read', name: 'audit:read', resource: 'audit', action: 'read', description: 'Query and export cryptographic audit log streams', created_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'perm_matrix_view', name: 'security_matrix:view', resource: 'security_matrix', action: 'read', description: 'View enterprise cloud blueprint and schema matrix', created_at: '2026-09-01T08:00:00.000Z' }
+];
+
+const INITIAL_ROLE_PERMISSIONS: RolePermission[] = [
+  { role_id: 'role_admin', permission_id: 'perm_fn_invoke', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_admin', permission_id: 'perm_fn_read', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_admin', permission_id: 'perm_policy_write', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_admin', permission_id: 'perm_session_revoke', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_admin', permission_id: 'perm_user_approve', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_admin', permission_id: 'perm_audit_read', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_admin', permission_id: 'perm_matrix_view', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_dev', permission_id: 'perm_fn_invoke', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_dev', permission_id: 'perm_fn_read', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_dev', permission_id: 'perm_audit_read', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_guest', permission_id: 'perm_fn_read', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+  { role_id: 'role_guest', permission_id: 'perm_audit_read', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' }
+];
+
+const INITIAL_FUNCTIONS: FunctionEntity[] = [
+  { id: 'fn_login', name: 'Identity Login Handler', slug: 'login', service_name: 'auth-service', runtime: 'nodejs20.x', max_memory_mb: 128, timeout_seconds: 3, is_active: true, created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'fn_dashboard', name: 'Dashboard Metrics Aggregator', slug: 'getDashboardMetrics', service_name: 'telemetry-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 3, is_active: true, required_permission_id: 'perm_fn_invoke', created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'fn_audit_logs', name: 'Security Logs Query Engine', slug: 'viewSecurityLogs', service_name: 'audit-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 5, is_active: true, required_permission_id: 'perm_audit_read', created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'fn_deploy_worker', name: 'Cloudflare Worker Deployment', slug: 'deployWorkerCode', service_name: 'pipeline-service', runtime: 'nodejs20.x', max_memory_mb: 512, timeout_seconds: 10, is_active: true, required_permission_id: 'perm_fn_invoke', created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'fn_update_policy', name: 'Security Policy Mutation Engine', slug: 'updateSystemPolicy', service_name: 'policy-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 5, is_active: true, required_permission_id: 'perm_policy_write', created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'fn_rotate_keys', name: 'KMS Key Rotation Worker', slug: 'rotateEncryptionKeys', service_name: 'kms-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 5, is_active: true, required_permission_id: 'perm_policy_write', created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' },
+  { id: 'fn_purge_backups', name: 'Cold Storage Backup Purge', slug: 'purgeColdStorageBackups', service_name: 'backup-service', runtime: 'nodejs20.x', max_memory_mb: 512, timeout_seconds: 15, is_active: true, required_permission_id: 'perm_policy_write', created_at: '2026-09-01T08:00:00.000Z', updated_at: '2026-09-01T08:00:00.000Z' }
+];
+
+const INITIAL_CONFIG: SystemConfigRecord[] = [
+  { config_key: 'verification.max_risk_threshold', config_value: '75', description: 'Maximum composite risk score before invocation is blocked', data_type: 'number', is_runtime_tunable: true, updated_at: '2026-09-01T08:00:00.000Z', updated_by: 'SYSTEM' },
+  { config_key: 'verification.imds_strict_block', config_value: 'true', description: 'Instantly block cloud metadata IP (169.254.169.254) probes', data_type: 'boolean', is_runtime_tunable: true, updated_at: '2026-09-01T08:00:00.000Z', updated_by: 'SYSTEM' },
+  { config_key: 'verification.sequence_penalty', config_value: '40', description: 'Penalty added to risk score on Markov sequence violation', data_type: 'number', is_runtime_tunable: true, updated_at: '2026-09-01T08:00:00.000Z', updated_by: 'SYSTEM' },
+  { config_key: 'verification.fail_closed_active', config_value: 'true', description: 'Enforce fail-closed architecture on unhandled exceptions', data_type: 'boolean', is_runtime_tunable: false, updated_at: '2026-09-01T08:00:00.000Z', updated_by: 'SYSTEM' },
+  { config_key: 'audit.retention_days', config_value: '90', description: 'Automated data retention period for audit logs', data_type: 'number', is_runtime_tunable: true, updated_at: '2026-09-01T08:00:00.000Z', updated_by: 'SYSTEM' },
+  { config_key: 'rate_limit.max_requests_per_minute', config_value: '120', description: 'Per-user request threshold for burst rate limiting', data_type: 'number', is_runtime_tunable: true, updated_at: '2026-09-01T08:00:00.000Z', updated_by: 'SYSTEM' }
+];
 
 const INITIAL_USERS: User[] = [
   {
@@ -157,6 +345,17 @@ const INITIAL_RULES: Omit<FunctionRule, 'id'>[] = [
 
 class SecurityDatabase {
   private users: User[] = [];
+  private roles: Role[] = [];
+  private permissions: Permission[] = [];
+  private rolePermissions: RolePermission[] = [];
+  private userRoles: UserRole[] = [];
+  private functions: FunctionEntity[] = [];
+  private invocationHistory: InvocationHistoryRecord[] = [];
+  private verificationResults: VerificationResultRecord[] = [];
+  private securityAlerts: SecurityAlertRecord[] = [];
+  private incidents: IncidentRecord[] = [];
+  private systemConfigs: SystemConfigRecord[] = [];
+
   private rules: FunctionRule[] = [];
   private logs: SecurityAuditLog[] = [];
   private auditEvents: SecurityAuditLog[] = [];
@@ -173,10 +372,26 @@ class SecurityDatabase {
 
   public reset() {
     this.users = JSON.parse(JSON.stringify(INITIAL_USERS));
+    this.roles = JSON.parse(JSON.stringify(INITIAL_ROLES));
+    this.permissions = JSON.parse(JSON.stringify(INITIAL_PERMISSIONS));
+    this.rolePermissions = JSON.parse(JSON.stringify(INITIAL_ROLE_PERMISSIONS));
+    this.functions = JSON.parse(JSON.stringify(INITIAL_FUNCTIONS));
+    this.systemConfigs = JSON.parse(JSON.stringify(INITIAL_CONFIG));
+    this.userRoles = [
+      { user_id: 'usr_secops_admin', role_id: 'role_admin', assigned_at: '2026-09-01T08:00:00.000Z', assigned_by: 'SYSTEM' },
+      { user_id: 'usr_cloud_dev', role_id: 'role_dev', assigned_at: '2026-09-02T10:00:00.000Z', assigned_by: 'SYSTEM' },
+      { user_id: 'usr_auditor_guest', role_id: 'role_guest', assigned_at: '2026-09-05T14:30:00.000Z', assigned_by: 'SYSTEM' },
+      { user_id: 'usr_sarah_infra', role_id: 'role_dev', assigned_at: '2026-09-08T09:00:00.000Z', assigned_by: 'SYSTEM' }
+    ];
+
     this.rules = INITIAL_RULES.map((r, i) => ({ id: i + 1, ...r }));
     this.logs = [];
     this.auditEvents = [];
     this.sessions = [];
+    this.invocationHistory = [];
+    this.verificationResults = [];
+    this.securityAlerts = [];
+    this.incidents = [];
     this.revokedTokens.clear();
     this.revokedUsernames.clear();
     this.ruleIdCounter = this.rules.length + 1;
@@ -194,6 +409,9 @@ class SecurityDatabase {
   public clearLogs() {
     this.logs = [];
     this.auditEvents = [];
+    this.invocationHistory = [];
+    this.verificationResults = [];
+    this.securityAlerts = [];
   }
 
   public createSession(data: {
@@ -203,7 +421,6 @@ class SecurityDatabase {
     expiresInSeconds?: number;
   }): ActiveSession {
     const cleanUser = data.username.trim().toLowerCase();
-    // Clear any prior username-level revocation block on freshly authenticated credentials
     this.revokedUsernames.delete(cleanUser);
     this.revokedTokens.delete(data.token);
 
@@ -285,6 +502,47 @@ class SecurityDatabase {
 
   public getUsers(): User[] {
     return [...this.users];
+  }
+
+  public getRoles(): Role[] {
+    return [...this.roles];
+  }
+
+  public getPermissions(): Permission[] {
+    return [...this.permissions];
+  }
+
+  public getFunctions(): FunctionEntity[] {
+    return [...this.functions];
+  }
+
+  public getSecurityAlerts(): SecurityAlertRecord[] {
+    return [...this.securityAlerts];
+  }
+
+  public getSystemConfigs(): SystemConfigRecord[] {
+    return [...this.systemConfigs];
+  }
+
+  public getUserPermissions(userIdOrUsername: string): string[] {
+    const user = this.getUser(userIdOrUsername);
+    if (!user) return [];
+    
+    // Check direct role string mapping
+    const roleMap: Record<string, string> = {
+      Admin: 'role_admin',
+      Developer: 'role_dev',
+      Guest: 'role_guest'
+    };
+    const roleId = roleMap[user.role] || 'role_guest';
+
+    const permIds = this.rolePermissions
+      .filter(rp => rp.role_id === roleId)
+      .map(rp => rp.permission_id);
+
+    return this.permissions
+      .filter(p => permIds.includes(p.id))
+      .map(p => p.name);
   }
 
   public getUser(usernameOrId: string): User | undefined {
@@ -448,9 +706,6 @@ class SecurityDatabase {
     return (this.auditEvents.length > 0 ? this.auditEvents : this.logs).slice().sort((a, b) => b.id - a.id);
   }
 
-  /**
-   * Rate limiting query: Count requests executed by username within windowMs (default 60s)
-   */
   public getRecentRequestCount(username: string, windowMs = 60000): number {
     const cutoff = Date.now() - windowMs;
     return this.logs.filter(
@@ -492,25 +747,33 @@ class SecurityDatabase {
           const username = boundParams[0];
           const userLogs = self.logs.filter(l => l.username.toLowerCase() === (username || '').toLowerCase());
           if (userLogs.length === 0) return null;
-          return userLogs[userLogs.length - 1]; // last log
+          return userLogs[userLogs.length - 1];
         }
         if (trimmed.includes('FROM function_rules WHERE current_function = ? AND allowed_next_function = ?')) {
           const [current, next] = boundParams;
           return self.rules.find(r => r.current_function === current && r.allowed_next_function === next) || null;
         }
-        if (trimmed.includes('FROM active_sessions WHERE token = ?')) {
+        if (trimmed.includes('FROM active_sessions WHERE token = ?') || trimmed.includes('FROM sessions WHERE session_token = ?')) {
           const token = boundParams[0];
           return self.sessions.find(s => s.token === token) || null;
         }
-        if (trimmed.includes('FROM active_sessions WHERE username = ?')) {
+        if (trimmed.includes('FROM active_sessions WHERE username = ?') || trimmed.includes('FROM sessions WHERE username = ?')) {
           const username = boundParams[0];
           return self.sessions.find(s => s.username.toLowerCase() === (username || '').toLowerCase() && !s.revoked) || null;
+        }
+        if (trimmed.includes('FROM functions WHERE slug = ?')) {
+          const slug = boundParams[0];
+          return self.functions.find(f => f.slug === slug) || null;
+        }
+        if (trimmed.includes('FROM system_configuration WHERE config_key = ?')) {
+          const key = boundParams[0];
+          return self.systemConfigs.find(c => c.config_key === key) || null;
         }
         return null;
       },
       async all(): Promise<{ results: any[] }> {
         const trimmed = sql.trim();
-        if (trimmed.includes('FROM active_sessions')) {
+        if (trimmed.includes('FROM active_sessions') || trimmed.includes('FROM sessions')) {
           return { results: [...self.sessions] };
         }
         if (trimmed.includes('FROM audit_events')) {
@@ -528,6 +791,24 @@ class SecurityDatabase {
         }
         if (trimmed.includes('FROM users')) {
           return { results: [...self.users] };
+        }
+        if (trimmed.includes('FROM roles')) {
+          return { results: [...self.roles] };
+        }
+        if (trimmed.includes('FROM permissions')) {
+          return { results: [...self.permissions] };
+        }
+        if (trimmed.includes('FROM functions')) {
+          return { results: [...self.functions] };
+        }
+        if (trimmed.includes('FROM security_alerts')) {
+          return { results: [...self.securityAlerts] };
+        }
+        if (trimmed.includes('FROM incidents')) {
+          return { results: [...self.incidents] };
+        }
+        if (trimmed.includes('FROM system_configuration')) {
+          return { results: [...self.systemConfigs] };
         }
         if (trimmed.includes('FROM function_rules')) {
           return { results: [...self.rules] };
@@ -558,14 +839,30 @@ class SecurityDatabase {
           self.auditEvents.push(newLog);
           return { success: true, id: newLog.id };
         }
-        if (trimmed.startsWith('INSERT INTO active_sessions')) {
+        if (trimmed.startsWith('INSERT INTO active_sessions') || trimmed.startsWith('INSERT INTO sessions')) {
           const [id, token, username, role, expires_at] = boundParams;
           self.createSession({ token, username, role });
           return { success: true };
         }
-        if (trimmed.startsWith('UPDATE active_sessions SET revoked = 1')) {
+        if (trimmed.startsWith('UPDATE active_sessions SET revoked = 1') || trimmed.startsWith('UPDATE sessions SET status = \'revoked\'')) {
           const [revokedBy, reason, target] = boundParams;
           self.revokeSession({ username: target, token: target, revokedBy, reason });
+          return { success: true };
+        }
+        if (trimmed.startsWith('INSERT INTO security_alerts')) {
+          const [id, invocation_id, alert_type, severity, threat_vector, details_json, ip_address, user_id] = boundParams;
+          const newAlert: SecurityAlertRecord = {
+            id: id || `alt_${Date.now().toString(36)}`,
+            invocation_id,
+            alert_type: alert_type || 'SECURITY_THREAT',
+            severity: severity || 'MEDIUM',
+            threat_vector: threat_vector || 'UNKNOWN',
+            details_json: typeof details_json === 'string' ? details_json : JSON.stringify(details_json || {}),
+            ip_address: ip_address || '127.0.0.1',
+            user_id,
+            created_at: new Date().toISOString()
+          };
+          self.securityAlerts.push(newAlert);
           return { success: true };
         }
         return { success: true };
