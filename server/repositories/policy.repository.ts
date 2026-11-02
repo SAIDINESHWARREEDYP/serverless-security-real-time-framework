@@ -1,3 +1,5 @@
+import { db } from '../db.ts';
+
 export interface PolicyConfig {
   maxRiskThreshold: number;
   sequenceViolationPenalty: number;
@@ -20,82 +22,107 @@ const DEFAULT_POLICY: PolicyConfig = {
   requireAdminApprovalForNewLogins: true
 };
 
-const INITIAL_RULES: MarkovRule[] = [
-  { id: 1, current_function: 'login', allowed_next_function: 'getDashboardMetrics' },
-  { id: 2, current_function: 'getDashboardMetrics', allowed_next_function: 'viewSecurityLogs' },
-  { id: 3, current_function: 'viewSecurityLogs', allowed_next_function: 'deployWorkerCode' },
-  { id: 4, current_function: 'deployWorkerCode', allowed_next_function: 'updateSystemPolicy' },
-  { id: 5, current_function: 'viewSecurityLogs', allowed_next_function: 'rotateEncryptionKeys' },
-  { id: 6, current_function: 'rotateEncryptionKeys', allowed_next_function: 'purgeColdStorageBackups' },
-  { id: 7, current_function: 'auth/mfa/verify', allowed_next_function: 'getDashboardMetrics' },
-  { id: 8, current_function: 'v1/auth/mfa/verify', allowed_next_function: 'getDashboardMetrics' }
-];
-
 class PolicyRepository {
-  private policy: PolicyConfig = { ...DEFAULT_POLICY };
-  private rules: MarkovRule[] = [...INITIAL_RULES];
-  private ruleCounter = 9;
-
   public getPolicy(): PolicyConfig {
-    return { ...this.policy };
+    const row = db.prepare('SELECT * FROM policies WHERE id = ? LIMIT 1').bind('current_policy').first<any>();
+    if (!row) return { ...DEFAULT_POLICY };
+    return {
+      maxRiskThreshold: row.max_risk_threshold ?? DEFAULT_POLICY.maxRiskThreshold,
+      sequenceViolationPenalty: row.sequence_violation_penalty ?? DEFAULT_POLICY.sequenceViolationPenalty,
+      enforceStrictSequence: Boolean(row.enforce_strict_sequence),
+      globalLockdown: Boolean(row.global_lockdown),
+      requireAdminApprovalForNewLogins: Boolean(row.require_admin_approval)
+    };
   }
 
   public updatePolicy(updates: Partial<PolicyConfig>): PolicyConfig {
-    if (typeof updates.maxRiskThreshold === 'number') {
-      this.policy.maxRiskThreshold = Math.max(10, Math.min(100, updates.maxRiskThreshold));
-    }
-    if (typeof updates.sequenceViolationPenalty === 'number') {
-      this.policy.sequenceViolationPenalty = Math.max(0, Math.min(80, updates.sequenceViolationPenalty));
-    }
-    if (typeof updates.enforceStrictSequence === 'boolean') {
-      this.policy.enforceStrictSequence = updates.enforceStrictSequence;
-    }
-    if (typeof updates.globalLockdown === 'boolean') {
-      this.policy.globalLockdown = updates.globalLockdown;
-    }
-    if (typeof updates.requireAdminApprovalForNewLogins === 'boolean') {
-      this.policy.requireAdminApprovalForNewLogins = updates.requireAdminApprovalForNewLogins;
-    }
-    return { ...this.policy };
+    const current = this.getPolicy();
+    const next: PolicyConfig = {
+      maxRiskThreshold: typeof updates.maxRiskThreshold === 'number'
+        ? Math.max(10, Math.min(100, updates.maxRiskThreshold))
+        : current.maxRiskThreshold,
+      sequenceViolationPenalty: typeof updates.sequenceViolationPenalty === 'number'
+        ? Math.max(0, Math.min(80, updates.sequenceViolationPenalty))
+        : current.sequenceViolationPenalty,
+      enforceStrictSequence: typeof updates.enforceStrictSequence === 'boolean'
+        ? updates.enforceStrictSequence
+        : current.enforceStrictSequence,
+      globalLockdown: typeof updates.globalLockdown === 'boolean'
+        ? updates.globalLockdown
+        : current.globalLockdown,
+      requireAdminApprovalForNewLogins: typeof updates.requireAdminApprovalForNewLogins === 'boolean'
+        ? updates.requireAdminApprovalForNewLogins
+        : current.requireAdminApprovalForNewLogins
+    };
+
+    db.prepare(
+      `UPDATE policies SET
+        max_risk_threshold = ?,
+        sequence_violation_penalty = ?,
+        enforce_strict_sequence = ?,
+        global_lockdown = ?,
+        require_admin_approval = ?,
+        updated_at = datetime('now')
+      WHERE id = 'current_policy'`
+    ).bind(
+      next.maxRiskThreshold,
+      next.sequenceViolationPenalty,
+      next.enforceStrictSequence ? 1 : 0,
+      next.globalLockdown ? 1 : 0,
+      next.requireAdminApprovalForNewLogins ? 1 : 0
+    ).run();
+
+    return next;
   }
 
   public getRules(): MarkovRule[] {
-    return [...this.rules];
+    const rows = db.prepare('SELECT id, current_function, allowed_next_function FROM function_rules ORDER BY id ASC').all<any>();
+    return (rows.results || []).map((r) => ({
+      id: r.id,
+      current_function: r.current_function,
+      allowed_next_function: r.allowed_next_function
+    }));
   }
 
   public addRule(currentFunction: string, allowedNextFunction: string): MarkovRule {
-    const existing = this.rules.find(
-      r => r.current_function === currentFunction && r.allowed_next_function === allowedNextFunction
-    );
-    if (existing) return existing;
+    const existing = db.prepare(
+      'SELECT id, current_function, allowed_next_function FROM function_rules WHERE current_function = ? AND allowed_next_function = ? LIMIT 1'
+    ).bind(currentFunction, allowedNextFunction).first<any>();
 
-    const newRule: MarkovRule = {
-      id: this.ruleCounter++,
+    if (existing) {
+      return {
+        id: existing.id,
+        current_function: existing.current_function,
+        allowed_next_function: existing.allowed_next_function
+      };
+    }
+
+    const runRes = db.prepare(
+      'INSERT INTO function_rules (current_function, allowed_next_function) VALUES (?, ?)'
+    ).bind(currentFunction, allowedNextFunction).run();
+
+    return {
+      id: Number(runRes.lastRowId || 999),
       current_function: currentFunction,
       allowed_next_function: allowedNextFunction
     };
-    this.rules.push(newRule);
-    return newRule;
   }
 
   public deleteRule(id: number): boolean {
-    const idx = this.rules.findIndex(r => r.id === id);
-    if (idx !== -1) {
-      this.rules.splice(idx, 1);
-      return true;
-    }
-    return false;
+    const res = db.prepare('DELETE FROM function_rules WHERE id = ?').bind(id).run();
+    return (res.changes || 0) > 0;
   }
 
   public isTransitionAllowed(currentFunction: string, nextFunction: string): boolean {
-    return this.rules.some(
-      r => r.current_function === currentFunction && r.allowed_next_function === nextFunction
-    );
+    const match = db.prepare(
+      'SELECT id FROM function_rules WHERE current_function = ? AND allowed_next_function = ? LIMIT 1'
+    ).bind(currentFunction, nextFunction).first<any>();
+
+    return Boolean(match);
   }
 
   public reset() {
-    this.policy = { ...DEFAULT_POLICY };
-    this.rules = [...INITIAL_RULES];
+    this.updatePolicy(DEFAULT_POLICY);
   }
 }
 

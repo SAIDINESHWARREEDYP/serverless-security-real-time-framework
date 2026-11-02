@@ -180,9 +180,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         status: 'APPROVED'
       };
 
+      if (!data.token) {
+        setErrorMsg(data.error || 'Authentication denied: No verification token returned.');
+        setLoading(false);
+        return;
+      }
+
       const newSession: AuthSession = {
         user,
-        token: data.token || `zt_jwt_${user.username}_${Date.now().toString(36)}`,
+        token: data.token,
         loginTime: new Date().toLocaleTimeString(),
         expiresInSeconds: data.expiresInSeconds || 3600
       };
@@ -263,19 +269,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         status: data.user?.status || 'APPROVED'
       };
 
-      const newSession: AuthSession = {
-        user,
-        token: data.token || `zt_jwt_${cleanName}_${Date.now().toString(36)}`,
-        loginTime: new Date().toLocaleTimeString(),
-        expiresInSeconds: data.expiresInSeconds || 3600
-      };
+      if (data.token) {
+        const newSession: AuthSession = {
+          user,
+          token: data.token,
+          loginTime: new Date().toLocaleTimeString(),
+          expiresInSeconds: data.expiresInSeconds || 3600
+        };
 
-      onLoginSuccess(newSession, true);
-      setSuccessMsg(`Identity verified & session activated: ${cleanName} (${regRole})`);
-      setTimeout(() => {
-        setSuccessMsg(null);
-        onClose();
-      }, 1500);
+        onLoginSuccess(newSession, true);
+        setSuccessMsg(`Identity verified & session activated: ${cleanName} (${regRole})`);
+        setTimeout(() => {
+          setSuccessMsg(null);
+          onClose();
+        }, 1500);
+      }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to initialize identity registration.');
     } finally {
@@ -301,16 +309,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             base_risk_score: data.userRisk ?? 20,
             status: 'APPROVED'
           };
-          const newSession: AuthSession = {
-            user,
-            token: data.token || `zt_jwt_${username}_${Date.now().toString(36)}`,
-            loginTime: new Date().toLocaleTimeString(),
-            expiresInSeconds: 3600
-          };
-          setTimeout(() => {
-            onLoginSuccess(newSession);
-            onClose();
-          }, 1200);
+          if (data.token) {
+            const newSession: AuthSession = {
+              user,
+              token: data.token,
+              loginTime: new Date().toLocaleTimeString(),
+              expiresInSeconds: 3600
+            };
+            setTimeout(() => {
+              onLoginSuccess(newSession);
+              onClose();
+            }, 1200);
+          }
         } else if (data.status === 'REJECTED') {
           setApprovalFeedback(`Clearance Denied: Administrator rejected access for [${username}].`);
         } else {
@@ -383,10 +393,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      if (res.ok && data.success) {
+      if (res.ok && data.success && data.token) {
         const newSession: AuthSession = {
           user: targetUser,
-          token: data.token || `zt_jwt_${targetUser.username}_${Date.now().toString(36)}`,
+          token: data.token,
           loginTime: new Date().toLocaleTimeString(),
           expiresInSeconds: data.expiresInSeconds || 3600
         };

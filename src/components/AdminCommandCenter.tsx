@@ -274,11 +274,14 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
   // Revoke user session
   const handleRevokeSessionAction = async (username: string) => {
     try {
+      if (!currentSession?.token) {
+        throw new Error('Active administrator session required to revoke credentials.');
+      }
       const res = await fetch('/api/auth/revoke-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${currentSession?.token || 'zt_jwt_secops_admin_k7x9'}`
+          Authorization: `Bearer ${currentSession.token}`
         },
         body: JSON.stringify({ username, reason: 'Terminated by Administrator via SecOps Console' })
       });

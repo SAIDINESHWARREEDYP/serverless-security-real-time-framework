@@ -117,7 +117,10 @@ INSERT OR IGNORE INTO users (id, username, password_hash, role, base_risk_score,
 VALUES
   ('usr_secops_admin', 'secops_admin', 'ZeroTrust_2026', 'Admin', 0, 'APPROVED', 'SecOps Core Operations', 'secops_admin@corp.internal'),
   ('usr_cloud_dev', 'cloud_dev', 'ZeroTrust_2026', 'Developer', 15, 'APPROVED', 'Cloud Platform Engineering', 'cloud_dev@corp.internal'),
-  ('usr_auditor_guest', 'auditor_guest', 'ZeroTrust_2026', 'Guest', 30, 'APPROVED', 'Third-Party Compliance & SOC-2', 'auditor_guest@compliance-partner.com');
+  ('usr_auditor_guest', 'auditor_guest', 'ZeroTrust_2026', 'Guest', 30, 'APPROVED', 'Third-Party Compliance & SOC-2', 'auditor_guest@compliance-partner.com'),
+  ('usr_sarah_infra', 'sarah_infra', 'ZeroTrust_2026', 'Developer', 10, 'APPROVED', 'Infrastructure & Edge Reliability', 'sarah_infra@corp.internal'),
+  ('usr_alex_contractor', 'alex_contractor', 'ZeroTrust_2026', 'Developer', 25, 'PENDING_APPROVAL', 'Edge Pipeline Contractors', 'alex_contractor@contractor.internal'),
+  ('usr_threat_actor', 'threat_actor', 'ZeroTrust_2026', 'Guest', 70, 'SUSPENDED', 'Untrusted Public Origin', 'threat_actor@darknet-proxy.io');
 
 -- Seed Initial Markov Chain Sequences
 INSERT OR IGNORE INTO function_rules (current_function, allowed_next_function)

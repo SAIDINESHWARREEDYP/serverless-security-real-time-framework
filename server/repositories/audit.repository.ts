@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { db } from '../db.ts';
 
 export interface AuditRecord {
   id: number;
@@ -35,63 +36,51 @@ export interface IncidentCase {
   root_cause?: string;
   mitigation_steps?: string;
   assigned_to?: string;
+  resolved_at?: string;
+  resolved_by?: string;
 }
 
 class AuditRepository {
-  private events: AuditRecord[] = [];
-  private alerts: SecurityAlert[] = [];
-  private incidents: IncidentCase[] = [];
-  private idCounter = 1;
   private lastHash = '0000000000000000000000000000000000000000000000000000000000000000';
+  private subscribers: Set<(event: { type: string; data: any; timestamp: string }) => void> = new Set();
 
   constructor() {
     this.seedBaseline();
   }
 
   private seedBaseline() {
-    this.record({
-      username: 'SYSTEM_BOOT',
-      requested_function: '/api/v1/system/init',
-      calculated_risk: 0,
-      status: 'ALLOWED',
-      reason: 'Serverless Security Verification Framework initialized with Zero-Trust baseline.',
-      verification_latency_ms: 0.12,
-      event_type: 'SYSTEM_INIT'
-    });
-
-    // Seed baseline operational incidents
-    this.incidents = [
-      {
-        id: 'INC-2026-101',
-        title: 'Cloud Metadata IMDS SSRF Probe Intercepted',
-        severity: 'CRITICAL',
-        status: 'CONTAINED',
-        created_at: new Date(Date.now() - 7200000).toISOString(),
-        root_cause: 'Malicious probe targeting 169.254.169.254 AWS/GCP metadata service credentials.',
-        mitigation_steps: 'Link-local IP egress filtered at edge. Token quarantined.',
-        assigned_to: 'secops_admin'
-      },
-      {
-        id: 'INC-2026-094',
-        title: 'Markov State Transition Drift Detected',
-        severity: 'HIGH',
-        status: 'INVESTIGATING',
-        created_at: new Date(Date.now() - 14400000).toISOString(),
-        root_cause: 'Lateral out-of-order jump: deployWorkerCode attempted before required telemetry inspection.',
-        mitigation_steps: 'Assigned +40% sequence violation penalty. Investigating caller credentials.',
-        assigned_to: 'secops_admin'
-      },
-      {
-        id: 'INC-2026-088',
-        title: 'Abnormal Request Rate Burst Exceeded Safe Boundary',
-        severity: 'MEDIUM',
-        status: 'RESOLVED',
-        created_at: new Date(Date.now() - 28800000).toISOString(),
-        root_cause: 'Scripted burst invocation exceeding 10 req/60s rate limit window.',
-        mitigation_steps: 'Applied dynamic +20% threat penalty. Caller rate normalized.',
-        assigned_to: 'secops_admin'
+    // Check if initial baseline incident exists in D1
+    try {
+      const existing = db.prepare('SELECT COUNT(*) as count FROM incidents').first();
+      if (!existing || existing.count === 0) {
+        this.createIncident({
+          title: 'Cloud Metadata IMDS SSRF Probe Intercepted',
+          severity: 'CRITICAL',
+          status: 'CONTAINED',
+          root_cause: 'Malicious probe targeting 169.254.169.254 AWS/GCP metadata service credentials.',
+          mitigation_steps: 'Link-local IP egress filtered at edge. Token quarantined.',
+          assigned_to: 'secops_admin'
+        });
+        this.createIncident({
+          title: 'Markov State Transition Drift Detected',
+          severity: 'HIGH',
+          status: 'INVESTIGATING',
+          root_cause: 'Lateral out-of-order jump: deployWorkerCode attempted before required telemetry inspection.',
+          mitigation_steps: 'Assigned +40% sequence violation penalty. Investigating caller credentials.',
+          assigned_to: 'secops_admin'
+        });
+        this.createIncident({
+          title: 'Abnormal Request Rate Burst Exceeded Safe Boundary',
+          severity: 'MEDIUM',
+          status: 'RESOLVED',
+          root_cause: 'Scripted burst invocation exceeding 10 req/60s rate limit window.',
+          mitigation_steps: 'Applied dynamic +20% threat penalty. Caller rate normalized.',
+          assigned_to: 'secops_admin'
+        });
       }
-    ];
+    } catch {
+      // ignore
+    }
   }
 
   public record(data: {
@@ -103,13 +92,62 @@ class AuditRepository {
     verification_latency_ms: number;
     event_type?: string;
   }): AuditRecord {
-    const id = this.idCounter++;
     const timestamp = new Date().toISOString();
     const eventType = data.event_type || 'STANDARD_VERIFICATION';
+
+    // Retrieve previous hash from last recorded audit event if available
+    try {
+      const lastRow = db.prepare('SELECT integrity_hash FROM audit_events ORDER BY id DESC LIMIT 1').first();
+      if (lastRow && lastRow.integrity_hash) {
+        this.lastHash = lastRow.integrity_hash;
+      }
+    } catch {
+      // fallback to current in-memory lastHash
+    }
+
+    // Insert into persistent D1 SQLite audit_events
+    const runResult = db.prepare(
+      `INSERT INTO audit_events (
+        username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      data.username,
+      data.requested_function,
+      data.calculated_risk,
+      data.status,
+      data.reason,
+      data.verification_latency_ms,
+      eventType,
+      timestamp
+    ).run();
+
+    const id = Number(runResult.lastRowId || Date.now());
 
     // Cryptographic SHA-256 Hash Chaining
     const payloadToHash = `${id}|${timestamp}|${data.username}|${data.requested_function}|${data.calculated_risk}|${data.status}|${data.reason}|${this.lastHash}`;
     const hash = crypto.createHash('sha256').update(payloadToHash).digest('hex');
+    this.lastHash = hash;
+
+    // Insert into security_audit_logs for audit compatibility
+    try {
+      db.prepare(
+        `INSERT INTO security_audit_logs (
+          id, timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        id,
+        timestamp,
+        data.username,
+        data.requested_function,
+        data.calculated_risk,
+        data.status,
+        data.reason,
+        data.verification_latency_ms,
+        eventType
+      ).run();
+    } catch {
+      // ignore duplicate id on compatibility table
+    }
 
     const record: AuditRecord = {
       id,
@@ -125,17 +163,15 @@ class AuditRepository {
       prev_hash: this.lastHash
     };
 
-    this.lastHash = hash;
-    this.events.unshift(record); // newest first
-
     // Real-time broadcast for SSE subscribers
     this.broadcast({ type: 'NEW_INVOCATION', data: record, timestamp });
 
     // Auto-create security alert if critical risk or blocked threat
     if (data.status === 'BLOCKED' || data.calculated_risk >= 75) {
       const severity = data.calculated_risk >= 90 ? 'CRITICAL' : data.calculated_risk >= 75 ? 'HIGH' : 'MEDIUM';
+      const alertId = `alt_${id}_${Date.now().toString(36)}`;
       const alert: SecurityAlert = {
-        id: `alt_${id}_${Date.now().toString(36)}`,
+        id: alertId,
         timestamp,
         alert_type: eventType,
         severity,
@@ -145,7 +181,27 @@ class AuditRepository {
         username: data.username,
         acknowledged: false
       };
-      this.alerts.unshift(alert);
+
+      try {
+        db.prepare(
+          `INSERT INTO security_alerts (
+            id, invocation_id, alert_type, severity, threat_vector, details_json, ip_address, user_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          alertId,
+          String(id),
+          eventType,
+          severity,
+          data.requested_function,
+          JSON.stringify({ reason: data.reason, risk: data.calculated_risk }),
+          '127.0.0.1',
+          data.username,
+          timestamp
+        ).run();
+      } catch {
+        // ignore
+      }
+
       this.broadcast({ type: 'THREAT_ALERT', data: alert, timestamp });
     }
 
@@ -153,39 +209,87 @@ class AuditRepository {
   }
 
   public getEvents(limit = 50, offset = 0): AuditRecord[] {
-    return this.events.slice(offset, offset + limit);
+    const rows = db.prepare(
+      'SELECT * FROM audit_events ORDER BY id DESC LIMIT ? OFFSET ?'
+    ).bind(limit, offset).all<any>();
+
+    return (rows.results || []).map((r) => ({
+      id: r.id,
+      timestamp: r.timestamp || r.created_at,
+      username: r.username,
+      requested_function: r.requested_function,
+      calculated_risk: r.calculated_risk,
+      status: r.status as 'ALLOWED' | 'BLOCKED',
+      reason: r.reason,
+      verification_latency_ms: r.verification_latency_ms || 0.28,
+      event_type: r.event_type || 'STANDARD_VERIFICATION',
+      integrity_hash: r.integrity_hash || this.lastHash,
+      prev_hash: r.prev_hash || '0000000000000000000000000000000000000000000000000000000000000000'
+    }));
   }
 
   public getTotalCount(): number {
-    return this.events.length;
+    const row = db.prepare('SELECT COUNT(*) as count FROM audit_events').first<any>();
+    return row?.count || 0;
   }
 
   public getRecentUserRequestCount(username: string, windowMs = 60000): number {
-    const cutoff = Date.now() - windowMs;
-    return this.events.filter(
-      e => e.username.toLowerCase() === username.toLowerCase() && new Date(e.timestamp).getTime() >= cutoff
-    ).length;
+    return db.getRecentRequestCount(username, windowMs);
   }
 
   public getAlerts(): SecurityAlert[] {
-    return [...this.alerts];
+    const rows = db.prepare('SELECT * FROM security_alerts ORDER BY created_at DESC LIMIT 100').all<any>();
+    return (rows.results || []).map((r) => ({
+      id: r.id,
+      timestamp: r.created_at,
+      alert_type: r.alert_type,
+      severity: r.severity as any,
+      threat_vector: r.threat_vector,
+      details: r.details_json,
+      ip_address: r.ip_address,
+      username: r.user_id || 'anonymous',
+      acknowledged: Boolean(r.acknowledged_at)
+    }));
   }
 
   public acknowledgeAlert(id: string): boolean {
-    const a = this.alerts.find(al => al.id === id);
-    if (a) {
-      a.acknowledged = true;
-      return true;
-    }
-    return false;
+    const res = db.prepare(
+      "UPDATE security_alerts SET acknowledged_at = datetime('now', 'utc'), acknowledged_by = 'secops_admin' WHERE id = ?"
+    ).bind(id).run();
+    return (res.changes || 0) > 0;
   }
 
   public getIncidents(): IncidentCase[] {
-    return [...this.incidents];
+    const rows = db.prepare('SELECT * FROM incidents ORDER BY created_at DESC').all<any>();
+    return (rows.results || []).map((r) => ({
+      id: r.id,
+      title: r.title,
+      severity: r.severity as any,
+      status: r.status as any,
+      created_at: r.created_at,
+      root_cause: r.root_cause,
+      mitigation_steps: r.mitigation_steps,
+      assigned_to: r.assigned_to,
+      resolved_at: r.resolved_at,
+      resolved_by: r.resolved_by
+    }));
   }
 
   public getIncidentById(id: string): IncidentCase | null {
-    return this.incidents.find(i => i.id === id) || null;
+    const r = db.prepare('SELECT * FROM incidents WHERE id = ? LIMIT 1').bind(id).first<any>();
+    if (!r) return null;
+    return {
+      id: r.id,
+      title: r.title,
+      severity: r.severity as any,
+      status: r.status as any,
+      created_at: r.created_at,
+      root_cause: r.root_cause,
+      mitigation_steps: r.mitigation_steps,
+      assigned_to: r.assigned_to,
+      resolved_at: r.resolved_at,
+      resolved_by: r.resolved_by
+    };
   }
 
   public createIncident(data: {
@@ -197,32 +301,78 @@ class AuditRepository {
     assigned_to?: string;
   }): IncidentCase {
     const id = `INC-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    const nowIso = new Date().toISOString();
+    const status = data.status || 'OPEN';
+
+    // Persist to D1 SQLite incidents table
+    db.prepare(
+      `INSERT INTO incidents (
+        id, title, severity, status, root_cause, mitigation_steps, assigned_to, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id,
+      data.title,
+      data.severity,
+      status,
+      data.root_cause || 'Under investigation by SecOps team',
+      data.mitigation_steps || 'Automated perimeter quarantine applied',
+      data.assigned_to || 'secops_admin',
+      nowIso
+    ).run();
+
     const incident: IncidentCase = {
       id,
       title: data.title,
       severity: data.severity,
-      status: data.status || 'OPEN',
-      created_at: new Date().toISOString(),
+      status,
+      created_at: nowIso,
       root_cause: data.root_cause || 'Under investigation by SecOps team',
       mitigation_steps: data.mitigation_steps || 'Automated perimeter quarantine applied',
       assigned_to: data.assigned_to || 'secops_admin'
     };
-    this.incidents.unshift(incident);
-    this.broadcast({ type: 'INCIDENT_CREATED', data: incident, timestamp: new Date().toISOString() });
+
+    this.broadcast({ type: 'INCIDENT_CREATED', data: incident, timestamp: nowIso });
     return incident;
   }
 
   public updateIncident(id: string, updates: Partial<IncidentCase>): IncidentCase | null {
-    const inc = this.incidents.find(i => i.id === id);
+    const inc = this.getIncidentById(id);
     if (!inc) return null;
-    Object.assign(inc, updates);
-    this.broadcast({ type: 'INCIDENT_UPDATED', data: inc, timestamp: new Date().toISOString() });
-    return inc;
+
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (updates.status) {
+      fields.push('status = ?');
+      values.push(updates.status);
+      if (updates.status === 'RESOLVED') {
+        fields.push("resolved_at = datetime('now', 'utc')");
+      }
+    }
+    if (updates.mitigation_steps) {
+      fields.push('mitigation_steps = ?');
+      values.push(updates.mitigation_steps);
+    }
+    if (updates.root_cause) {
+      fields.push('root_cause = ?');
+      values.push(updates.root_cause);
+    }
+    if (updates.assigned_to) {
+      fields.push('assigned_to = ?');
+      values.push(updates.assigned_to);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      db.prepare(`UPDATE incidents SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
+    }
+
+    const updated = this.getIncidentById(id);
+    this.broadcast({ type: 'INCIDENT_UPDATED', data: updated, timestamp: new Date().toISOString() });
+    return updated;
   }
 
   // Real-time Event Bus for SSE & WebSockets
-  private subscribers: Set<(event: { type: string; data: any; timestamp: string }) => void> = new Set();
-
   public subscribe(listener: (event: { type: string; data: any; timestamp: string }) => void): () => void {
     this.subscribers.add(listener);
     return () => {
@@ -241,10 +391,7 @@ class AuditRepository {
   }
 
   public clear() {
-    this.events = [];
-    this.alerts = [];
-    this.incidents = [];
-    this.idCounter = 1;
+    db.clearLogs();
     this.lastHash = '0000000000000000000000000000000000000000000000000000000000000000';
     this.seedBaseline();
   }

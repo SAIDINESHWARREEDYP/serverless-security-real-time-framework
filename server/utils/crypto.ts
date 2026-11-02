@@ -5,8 +5,12 @@ import { JwtClaims } from '../types/index.ts';
 /**
  * Base64URL Encoding & Decoding helpers (RFC 7515)
  */
-export function base64UrlEncode(input: Buffer | string): string {
-  const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf-8');
+export function base64UrlEncode(input: Buffer | Uint8Array | string): string {
+  const buf = Buffer.isBuffer(input)
+    ? input
+    : input instanceof Uint8Array
+    ? Buffer.from(input)
+    : Buffer.from(input, 'utf-8');
   return buf.toString('base64')
     .replace(/=/g, '')
     .replace(/\+/g, '-')
@@ -39,6 +43,10 @@ export function hashPassword(password: string, providedSalt?: string): { salt: s
   };
 }
 
+/**
+ * Secure Constant-Time Password Verification
+ * Strictly rejects empty credentials and mismatched hashes. Never accepts universal passwords.
+ */
 export function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
   if (!password || !salt || !expectedHash) return false;
   try {
@@ -102,6 +110,11 @@ export function verifyJwt(token: string): { valid: boolean; claims?: JwtClaims; 
     return { valid: false, error: 'TOKEN_MISSING' };
   }
 
+  // Reject fake unverified token formats
+  if (token.startsWith('zt_jwt_') || token.startsWith('mbu_jwt_')) {
+    return { valid: false, error: 'TOKEN_INVALID_FORMAT_FAKE_JWT' };
+  }
+
   const parts = token.trim().split('.');
   if (parts.length !== 3) {
     return { valid: false, error: 'TOKEN_MALFORMED' };
@@ -113,14 +126,14 @@ export function verifyJwt(token: string): { valid: boolean; claims?: JwtClaims; 
   let header: { alg?: string; typ?: string };
   try {
     header = JSON.parse(base64UrlDecode(encodedHeader).toString('utf-8'));
-    if (header.alg !== 'HS256') {
+    if (!header || typeof header !== 'object' || header.alg !== 'HS256') {
       return { valid: false, error: 'UNSUPPORTED_ALGORITHM' };
     }
   } catch {
     return { valid: false, error: 'HEADER_DECODE_FAILED' };
   }
 
-  // 2. Cryptographic Signature Verification
+  // 2. Cryptographic Signature Verification (Constant-Time)
   const signingInput = `${encodedHeader}.${encodedPayload}`;
   const expectedSignature = crypto
     .createHmac('sha256', CONFIG.JWT_SECRET)
@@ -141,6 +154,11 @@ export function verifyJwt(token: string): { valid: boolean; claims?: JwtClaims; 
     claims = JSON.parse(base64UrlDecode(encodedPayload).toString('utf-8'));
   } catch {
     return { valid: false, error: 'PAYLOAD_DECODE_FAILED' };
+  }
+
+  // Mandatory Claims Presence Check
+  if (!claims.sub || !claims.username || !claims.role || !claims.jti) {
+    return { valid: false, error: 'MISSING_REQUIRED_CLAIMS' };
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -187,7 +205,7 @@ export function generateTotpSecret(byteLength = 20): string {
   return secret;
 }
 
-function base32ToBuffer(base32: string): Buffer {
+export function base32ToBuffer(base32: string): Buffer {
   const clean = base32.toUpperCase().replace(/[^A-Z2-7]/g, '');
   let bits = '';
   for (let i = 0; i < clean.length; i++) {
@@ -202,9 +220,13 @@ function base32ToBuffer(base32: string): Buffer {
   return Buffer.from(bytes);
 }
 
+export function getCurrentTimeStep(): number {
+  return Math.floor(Date.now() / 1000 / CONFIG.MFA_STEP_SECONDS);
+}
+
 export function computeTotp(secretBase32: string, stepOffset = 0): string {
   const key = base32ToBuffer(secretBase32);
-  const timeStep = Math.floor(Date.now() / 1000 / CONFIG.MFA_STEP_SECONDS) + stepOffset;
+  const timeStep = getCurrentTimeStep() + stepOffset;
 
   const counterBuf = Buffer.alloc(8);
   counterBuf.writeBigInt64BE(BigInt(timeStep));
@@ -221,30 +243,73 @@ export function computeTotp(secretBase32: string, stepOffset = 0): string {
   return otp;
 }
 
-export function verifyTotp(token: string, secretBase32: string, window = CONFIG.MFA_WINDOW): boolean {
-  if (!token || !secretBase32) return false;
+/**
+ * Strict RFC 6238 TOTP Verification with Time-Step Replay Prevention
+ */
+export function verifyTotp(
+  token: string,
+  secretBase32: string,
+  window = CONFIG.MFA_WINDOW,
+  lastAcceptedStep?: number
+): { valid: boolean; matchedStep?: number; reason?: string } {
+  if (!token || !secretBase32) return { valid: false, reason: 'MISSING_PARAMETERS' };
   const cleanToken = token.trim().replace(/\s+/g, '');
-  if (cleanToken.length !== 6 || !/^\d{6}$/.test(cleanToken)) return false;
+  if (cleanToken.length !== 6 || !/^\d{6}$/.test(cleanToken)) {
+    return { valid: false, reason: 'INVALID_FORMAT' };
+  }
+
+  const currentStep = getCurrentTimeStep();
 
   for (let offset = -window; offset <= window; offset++) {
+    const step = currentStep + offset;
     const expected = computeTotp(secretBase32, offset);
     if (crypto.timingSafeEqual(Buffer.from(cleanToken), Buffer.from(expected))) {
-      return true;
+      // Replay prevention check: if this time-step was already accepted, reject it
+      if (typeof lastAcceptedStep === 'number' && step <= lastAcceptedStep) {
+        return { valid: false, reason: 'REPLAYED_TIME_STEP' };
+      }
+      return { valid: true, matchedStep: step };
     }
   }
-  return false;
+
+  return { valid: false, reason: 'INVALID_CODE' };
 }
 
 /**
- * Secure Backup Codes Generator
+ * Secure Backup Codes Generator & Verifier
+ * Generates 8-character single-use alphanumeric backup codes and stores only SHA-256 hashes.
  */
-export function generateBackupCodes(count = 8): string[] {
-  const codes: string[] = [];
+export function generateBackupCodes(count = 8): { plaintextCodes: string[]; hashedCodes: string[] } {
+  const plaintextCodes: string[] = [];
+  const hashedCodes: string[] = [];
+
   for (let i = 0; i < count; i++) {
     const raw = crypto.randomBytes(4).toString('hex').toUpperCase();
-    codes.push(`${raw.slice(0, 4)}-${raw.slice(4)}`);
+    const formatted = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+    plaintextCodes.push(formatted);
+    const hash = crypto.createHash('sha256').update(formatted).digest('hex');
+    hashedCodes.push(hash);
   }
-  return codes;
+
+  return { plaintextCodes, hashedCodes };
+}
+
+export function verifyBackupCode(
+  candidateCode: string,
+  hashedCodes: string[]
+): { valid: boolean; matchedHash?: string } {
+  if (!candidateCode || !Array.isArray(hashedCodes) || hashedCodes.length === 0) {
+    return { valid: false };
+  }
+  const clean = candidateCode.trim().toUpperCase();
+  const candidateHash = crypto.createHash('sha256').update(clean).digest('hex');
+
+  for (const storedHash of hashedCodes) {
+    if (crypto.timingSafeEqual(Buffer.from(candidateHash), Buffer.from(storedHash))) {
+      return { valid: true, matchedHash: storedHash };
+    }
+  }
+  return { valid: false };
 }
 
 /**

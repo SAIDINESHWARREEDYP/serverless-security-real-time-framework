@@ -131,14 +131,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           setIsPollingApproval(false);
           onAddTerminalLog?.('success', `[IAM CLEARANCE] Principal ${pendingUser.username} was APPROVED by Administrator.`);
 
-          const session: AuthSession = {
-            user: data.user,
-            token: data.token || `zt_jwt_${pendingUser.username}_${Date.now().toString(36)}`,
-            loginTime: new Date().toLocaleTimeString(),
-            expiresInSeconds: 3600
-          };
-          setPendingUser(null);
-          onLoginSuccess(session);
+          if (data.token) {
+            const session: AuthSession = {
+              user: data.user,
+              token: data.token,
+              loginTime: new Date().toLocaleTimeString(),
+              expiresInSeconds: data.expiresInSeconds || 3600
+            };
+            setPendingUser(null);
+            onLoginSuccess(session);
+          }
         } else if (data.status === 'REJECTED' && !isCancelled) {
           clearInterval(interval);
           setIsPollingApproval(false);
@@ -290,11 +292,11 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           };
           setPendingUser(pUser);
           onAddTerminalLog?.('alert', `[IAM CLEARANCE] Account registered for [${clean}]. Awaiting SecOps clearance.`);
-        } else {
+        } else if (data.token) {
           onAddTerminalLog?.('success', `[IAM PROVISIONED] Account auto-approved for [${clean}].`);
           const session: AuthSession = {
             user: data.user,
-            token: data.token || `zt_jwt_${clean}_${Date.now().toString(36)}`,
+            token: data.token,
             loginTime: new Date().toLocaleTimeString(),
             expiresInSeconds: data.expiresInSeconds || 3600
           };

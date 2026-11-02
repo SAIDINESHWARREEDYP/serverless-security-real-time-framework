@@ -248,7 +248,7 @@ rootRouter.patch('/system/users/:username', (req, res) => {
 });
 
 // 7. Session Revocation Routes
-rootRouter.post(['/auth/revoke-session', '/system/sessions/revoke'], authenticateMiddleware, requireRole('Admin'), authController.revokeSession);
+rootRouter.post(['/auth/revoke-session', '/system/sessions/revoke'], authenticateMiddleware, authController.revokeSession);
 
 // 8. System Reset & Clear
 rootRouter.post('/system/reset', (req, res) => {

@@ -27,6 +27,7 @@ export interface UserRecord {
   mfa_enabled: boolean;
   mfa_secret?: string; // Stored securely, never returned in API responses
   mfa_backup_codes?: string[]; // Hashed or securely kept
+  last_totp_step?: number;
   created_at: string;
   approved_at?: string;
   approved_by?: string;

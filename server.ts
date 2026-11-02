@@ -15,12 +15,36 @@ const PORT = CONFIG.PORT;
 app.use(express.json({ limit: CONFIG.MAX_PAYLOAD_BYTES }));
 app.use(express.urlencoded({ extended: true, limit: CONFIG.MAX_PAYLOAD_BYTES }));
 
-// CORS headers
+// Strict CORS & Origin Defense
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin as string;
+  const host = req.headers.host;
+  const isTrusted = origin && (
+    CONFIG.TRUSTED_ORIGINS.some(to => to.toLowerCase() === origin.toLowerCase()) ||
+    (host && origin.includes(host)) ||
+    origin.endsWith('.run.app') ||
+    origin.endsWith('.google.com') ||
+    origin.endsWith('.googleusercontent.com') ||
+    origin.endsWith('.aistudio.google.com') ||
+    origin.includes('localhost') ||
+    origin.includes('127.0.0.1')
+  );
+
+  if (isTrusted) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
+  } else if (!origin) {
+    // Local / CLI non-browser direct calls or same-origin requests
+    res.header('Vary', 'Origin');
+  }
+
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, X-Simulate-Fault');
   res.header('Access-Control-Expose-Headers', 'X-Verification-Latency-MS, X-Security-Verification-Duration-MS, Server-Timing, X-Verification-Decision, X-Verification-Risk-Score, X-Request-ID, X-Verification-Trace-ID');
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'SAMEORIGIN');
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }

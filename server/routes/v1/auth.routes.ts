@@ -10,8 +10,7 @@ router.post('/login', loginRateLimitMiddleware, authController.login);
 router.post('/mfa/verify', authController.verifyMfa);
 router.post('/mfa/setup', authenticateMiddleware, authController.setupMfa);
 router.post('/register', authController.register);
-router.post('/logout', authenticateMiddleware, authController.logout);
-router.post('/revoke-session', authenticateMiddleware, requireRole('Admin'), authController.revokeSession);
+router.post('/revoke-session', authenticateMiddleware, authController.revokeSession);
 router.post('/change-password', authenticateMiddleware, authController.changePassword);
 router.get('/me', authenticateMiddleware, authController.getMe);
 

@@ -86,8 +86,6 @@ export const authController = {
         phoneMasked: result.phoneMasked,
         emailMasked: result.emailMasked,
         methods: result.methods,
-        demoTotpCode: result.demoTotpCode,
-        demoSmsCode: result.demoSmsCode,
         attemptsLeft: result.attemptsLeft,
         user: result.user,
         message: 'Password verified. Enter 6-digit TOTP code.'
@@ -160,7 +158,6 @@ export const authController = {
 
   async register(req: Request, res: Response) {
     const { username, password, role, department, requestJustification } = req.body;
-
     const userCheck = validateUsername(username);
     if (!userCheck.valid) {
       return res.status(400).json({ error: userCheck.error });
@@ -210,20 +207,81 @@ export const authController = {
   },
 
   async revokeSession(req: Request, res: Response) {
-    const { username, reason } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Target username is required for session revocation.' });
+    if (!req.user) {
+      return res.status(401).json({
+        type: 'https://serverless-securityverification.ai.studio/errors/UNAUTHORIZED',
+        title: 'Unauthorized',
+        status: 401,
+        detail: 'Authentication required for session revocation.',
+        instance: req.originalUrl,
+        errorCode: 'UNAUTHORIZED'
+      });
     }
 
-    const caller = req.user?.username || 'secops_admin';
-    const result = authService.revokeUserSession(username, caller, reason);
+    const { username, token: targetToken, reason } = req.body;
+    if (!username && !targetToken) {
+      return res.status(400).json({
+        type: 'https://serverless-securityverification.ai.studio/errors/INVALID_REQUEST',
+        title: 'Bad Request',
+        status: 400,
+        detail: 'Target username or token is required for session revocation.',
+        instance: req.originalUrl,
+        errorCode: 'INVALID_REQUEST'
+      });
+    }
+
+    const caller = req.user;
+    const isSelfRevocation = username && username.toLowerCase() === caller.username.toLowerCase();
+    const isAdmin = caller.role === 'Admin' || caller.role === 'Super Administrator' || caller.role === 'Security Administrator';
+
+    // Prevent unauthorized users from revoking other users' sessions
+    if (!isSelfRevocation && !isAdmin) {
+      auditRepository.record({
+        username: caller.username,
+        requested_function: req.originalUrl,
+        calculated_risk: 90,
+        status: 'BLOCKED',
+        reason: `[UNAUTHORIZED REVOCATION ATTEMPT] User [${caller.username}] attempted to revoke session for [${username}].`,
+        verification_latency_ms: 0.8,
+        event_type: 'UNAUTHORIZED_REVOCATION'
+      });
+      return res.status(403).json({
+        type: 'https://serverless-securityverification.ai.studio/errors/FORBIDDEN',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Insufficient clearance. Only Administrators may revoke other users sessions.',
+        instance: req.originalUrl,
+        errorCode: 'FORBIDDEN'
+      });
+    }
+
+    // Verify target existence
+    if (username) {
+      const targetUser = userRepository.findByUsername(username);
+      if (!targetUser) {
+        return res.status(404).json({
+          type: 'https://serverless-securityverification.ai.studio/errors/NOT_FOUND',
+          title: 'Not Found',
+          status: 404,
+          detail: `Target principal [${username}] not found in database.`,
+          instance: req.originalUrl,
+          errorCode: 'USER_NOT_FOUND'
+        });
+      }
+    }
+
+    const result = authService.revokeUserSession(
+      username || targetToken,
+      caller.username,
+      reason || (isSelfRevocation ? 'Self session termination' : 'Administrative session revocation')
+    );
 
     auditRepository.record({
-      username: caller,
-      requested_function: '/api/v1/auth/revoke-session',
+      username: caller.username,
+      requested_function: req.originalUrl,
       calculated_risk: 0,
       status: 'ALLOWED',
-      reason: `[SESSION REVOKED] Administrator [${caller}] terminated active session for [${username}].`,
+      reason: `[SESSION REVOKED] ${isSelfRevocation ? 'Self-revocation' : 'Administrator [' + caller.username + ']'} terminated active session for [${username || targetToken}].`,
       verification_latency_ms: 1.1,
       event_type: 'SESSION_REVOCATION_EXECUTED'
     });
@@ -231,10 +289,10 @@ export const authController = {
     return res.json({
       success: true,
       revoked: true,
-      target: username,
-      revokedBy: caller,
+      target: username || targetToken,
+      revokedBy: caller.username,
       revokedCount: result.revokedCount,
-      message: `Active session for principal [${username}] successfully terminated in real-time D1 registry.`
+      message: `Active session for principal [${username || targetToken}] successfully terminated in real-time D1 registry.`
     });
   },
 

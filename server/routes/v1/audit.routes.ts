@@ -6,6 +6,7 @@ import { requirePermission, requireRole } from '../../middleware/authorize.ts';
 const router = Router();
 
 router.get('/events', authenticateMiddleware, requirePermission('audit:read'), auditController.getEvents);
+router.get('/logs', authenticateMiddleware, requirePermission('audit:read'), auditController.getEvents);
 router.post('/clear', authenticateMiddleware, requireRole('Admin'), auditController.clearEvents);
 
 export default router;

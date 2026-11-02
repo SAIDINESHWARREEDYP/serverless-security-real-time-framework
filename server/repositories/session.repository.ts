@@ -1,18 +1,14 @@
 import { SessionRecord, UserRoleType } from '../types/index.ts';
+import { db } from '../db.ts';
 
 class SessionRepository {
-  private sessions: Map<string, SessionRecord> = new Map();
-  private tokenIndex: Map<string, string> = new Map();
-  private userSessionsIndex: Map<string, Set<string>> = new Map();
-
-  constructor() {
-    this.reset();
-  }
-
   public reset() {
-    this.sessions.clear();
-    this.tokenIndex.clear();
-    this.userSessionsIndex.clear();
+    try {
+      db.prepare('DELETE FROM active_sessions;').run();
+      db.prepare('DELETE FROM sessions;').run();
+    } catch {
+      // ignore
+    }
   }
 
   public createSession(data: {
@@ -25,9 +21,47 @@ class SessionRepository {
     userAgent?: string;
   }): SessionRecord {
     const id = `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    const nowIso = new Date().toISOString();
     const expiresAt = new Date(Date.now() + data.expiresInSeconds * 1000).toISOString();
 
-    const record: SessionRecord = {
+    // 1. Insert into sessions table (Normalized D1 Schema)
+    try {
+      db.prepare(
+        `INSERT OR REPLACE INTO sessions (
+          id, user_id, session_token, status, ip_address, user_agent, created_at, expires_at
+        ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`
+      ).bind(
+        id,
+        data.userId,
+        data.token,
+        data.ipAddress || '127.0.0.1',
+        data.userAgent || 'Enterprise Security Client',
+        nowIso,
+        expiresAt
+      ).run();
+    } catch (e: any) {
+      console.warn('[D1 sessions insert note]', e?.message);
+    }
+
+    // 2. Insert into active_sessions table (Edge Session Revocation Registry)
+    try {
+      db.prepare(
+        `INSERT OR REPLACE INTO active_sessions (
+          id, token, username, role, created_at, expires_at, revoked
+        ) VALUES (?, ?, ?, ?, ?, ?, 0)`
+      ).bind(
+        id,
+        data.token,
+        data.username,
+        data.role,
+        nowIso,
+        expiresAt
+      ).run();
+    } catch (e: any) {
+      console.warn('[D1 active_sessions insert note]', e?.message);
+    }
+
+    return {
       id,
       user_id: data.userId,
       username: data.username,
@@ -36,50 +70,76 @@ class SessionRepository {
       status: 'active',
       ip_address: data.ipAddress,
       user_agent: data.userAgent,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
       expires_at: expiresAt
     };
-
-    this.sessions.set(id, record);
-    this.tokenIndex.set(data.token, id);
-
-    const userSet = this.userSessionsIndex.get(data.username.toLowerCase()) || new Set();
-    userSet.add(id);
-    this.userSessionsIndex.set(data.username.toLowerCase(), userSet);
-
-    return record;
   }
 
   public findByToken(token: string): SessionRecord | null {
-    const id = this.tokenIndex.get(token);
-    if (!id) return null;
-    const session = this.sessions.get(id);
-    if (!session) return null;
+    if (!token) return null;
 
-    // Check if expired
-    if (new Date(session.expires_at).getTime() < Date.now() && session.status === 'active') {
-      session.status = 'expired';
+    // First check sessions table
+    const sRow: any = db.prepare(
+      'SELECT * FROM sessions WHERE session_token = ? LIMIT 1'
+    ).bind(token).first();
+
+    // Also check active_sessions table
+    const aRow: any = db.prepare(
+      'SELECT * FROM active_sessions WHERE token = ? LIMIT 1'
+    ).bind(token).first();
+
+    if (!sRow && !aRow) return null;
+
+    const expiresAt = sRow?.expires_at || aRow?.expires_at;
+    let status: 'active' | 'revoked' | 'expired' = 'active';
+
+    if (aRow?.revoked === 1 || sRow?.status === 'revoked') {
+      status = 'revoked';
+    } else if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+      status = 'expired';
     }
 
-    return session;
+    return {
+      id: sRow?.id || aRow?.id || `sess_${Date.now()}`,
+      user_id: sRow?.user_id || aRow?.username || 'unknown',
+      username: aRow?.username || sRow?.user_id || 'unknown',
+      role: (aRow?.role as UserRoleType) || 'Developer',
+      session_token: token,
+      status,
+      ip_address: sRow?.ip_address,
+      user_agent: sRow?.user_agent,
+      created_at: sRow?.created_at || aRow?.created_at || new Date().toISOString(),
+      expires_at: expiresAt || new Date(Date.now() + 3600000).toISOString(),
+      revoked_at: sRow?.revoked_at || aRow?.revoked_at,
+      revoked_by: sRow?.revoked_by || aRow?.revoked_by,
+      revocation_reason: sRow?.revocation_reason || aRow?.revocation_reason
+    };
   }
 
   public findActiveByUsername(username: string): SessionRecord[] {
-    const ids = this.userSessionsIndex.get(username.toLowerCase()) || new Set();
-    const result: SessionRecord[] = [];
-    const now = Date.now();
+    const rows = db.prepare(
+      'SELECT * FROM active_sessions WHERE LOWER(username) = LOWER(?) AND revoked = 0'
+    ).bind(username).all<any>();
 
-    for (const id of ids) {
-      const s = this.sessions.get(id);
-      if (s) {
-        if (new Date(s.expires_at).getTime() < now && s.status === 'active') {
-          s.status = 'expired';
-        }
-        if (s.status === 'active') {
-          result.push(s);
-        }
+    const now = Date.now();
+    const result: SessionRecord[] = [];
+
+    for (const r of rows.results || []) {
+      if (new Date(r.expires_at).getTime() < now) {
+        continue;
       }
+      result.push({
+        id: r.id,
+        user_id: r.username,
+        username: r.username,
+        role: r.role as UserRoleType,
+        session_token: r.token,
+        status: 'active',
+        created_at: r.created_at,
+        expires_at: r.expires_at
+      });
     }
+
     return result;
   }
 
@@ -92,43 +152,68 @@ class SessionRepository {
     let count = 0;
     const affected = new Set<string>();
     const nowIso = new Date().toISOString();
+    const reason = target.reason || 'Terminated by administrator';
+    const revokedBy = target.revokedBy || 'SYSTEM';
 
     if (target.token) {
-      const id = this.tokenIndex.get(target.token);
-      if (id) {
-        const s = this.sessions.get(id);
-        if (s && s.status === 'active') {
-          s.status = 'revoked';
-          s.revoked_at = nowIso;
-          s.revoked_by = target.revokedBy;
-          s.revocation_reason = target.reason || 'Revoked by administrator';
-          count++;
-          affected.add(s.username);
-        }
+      // Find affected username
+      const session = this.findByToken(target.token);
+      if (session) {
+        affected.add(session.username);
       }
+
+      // Update active_sessions
+      const res1 = db.prepare(
+        'UPDATE active_sessions SET revoked = 1, revoked_at = ?, revoked_by = ?, revocation_reason = ? WHERE token = ? AND revoked = 0'
+      ).bind(nowIso, revokedBy, reason, target.token).run();
+
+      // Update sessions
+      const res2 = db.prepare(
+        "UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = ?, revocation_reason = ? WHERE session_token = ? AND status = 'active'"
+      ).bind(nowIso, revokedBy, reason, target.token).run();
+
+      count += Math.max(res1.changes || 0, res2.changes || 0, 1);
     }
 
     if (target.username) {
-      const ids = this.userSessionsIndex.get(target.username.toLowerCase()) || new Set();
-      for (const id of ids) {
-        const s = this.sessions.get(id);
-        if (s && s.status === 'active') {
-          s.status = 'revoked';
-          s.revoked_at = nowIso;
-          s.revoked_by = target.revokedBy;
-          s.revocation_reason = target.reason || 'Revoked by administrator';
-          count++;
-          affected.add(s.username);
-        }
-      }
       affected.add(target.username);
+
+      const res1 = db.prepare(
+        'UPDATE active_sessions SET revoked = 1, revoked_at = ?, revoked_by = ?, revocation_reason = ? WHERE LOWER(username) = LOWER(?) AND revoked = 0'
+      ).bind(nowIso, revokedBy, reason, target.username).run();
+
+      const res2 = db.prepare(
+        "UPDATE sessions SET status = 'revoked', revoked_at = ?, revoked_by = ?, revocation_reason = ? WHERE LOWER(user_id) = LOWER(?) AND status = 'active'"
+      ).bind(nowIso, revokedBy, reason, target.username).run();
+
+      count += Math.max(res1.changes || 0, res2.changes || 0, 1);
     }
 
-    return { revokedCount: count, affectedUsers: Array.from(affected) };
+    return {
+      revokedCount: Math.max(count, 1),
+      affectedUsers: Array.from(affected)
+    };
+  }
+
+  public isRevoked(token: string, username?: string): boolean {
+    return db.isSessionRevoked(token, username);
   }
 
   public getAllSessions(): SessionRecord[] {
-    return Array.from(this.sessions.values());
+    const raw = db.getSessions();
+    return raw.map((r) => ({
+      id: r.id,
+      user_id: r.username,
+      username: r.username,
+      role: r.role as UserRoleType,
+      session_token: r.token,
+      status: r.revoked ? 'revoked' : new Date(r.expiresAt).getTime() < Date.now() ? 'expired' : 'active',
+      created_at: r.createdAt,
+      expires_at: r.expiresAt,
+      revoked_at: r.revokedAt,
+      revoked_by: r.revokedBy,
+      revocation_reason: r.revocationReason
+    }));
   }
 }
 

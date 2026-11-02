@@ -11,6 +11,7 @@ import {
   verifyTotp,
   generateTotpSecret,
   generateBackupCodes,
+  verifyBackupCode,
   maskPhone,
   maskEmail
 } from '../utils/crypto.ts';
@@ -35,8 +36,6 @@ class AuthService {
     phoneMasked?: string;
     emailMasked?: string;
     methods?: string[];
-    demoTotpCode?: string;
-    demoSmsCode?: string;
     attemptsLeft?: number;
     error?: string;
     remainingAttempts?: number;
@@ -49,7 +48,7 @@ class AuthService {
     if (!rateCheck.allowed) {
       return {
         status: 'SUSPENDED',
-        error: `Account temporarily locked out. Try again in ${rateCheck.remainingLockoutSeconds} seconds.`
+        error: `Account temporarily locked out due to repeated login failures. Try again in ${rateCheck.remainingLockoutSeconds} seconds.`
       };
     }
 
@@ -73,11 +72,9 @@ class AuthService {
       };
     }
 
-    // 3. Cryptographic Password Verification
-    let isPasswordValid = verifyPassword(password, user.password_salt, user.password_hash);
-    if (!isPasswordValid && (password === 'ZeroTrust_2026' || password === 'Admin@ZeroTrust2026!')) {
-      isPasswordValid = true;
-    }
+    // 3. Cryptographic Password Verification (Strict Constant-Time PBKDF2)
+    // Universal password bypasses are completely eliminated
+    const isPasswordValid = verifyPassword(password, user.password_salt, user.password_hash);
 
     if (!isPasswordValid) {
       const fail = rateLimiter.recordLoginFailure(identifier);
@@ -86,7 +83,7 @@ class AuthService {
         requested_function: '/api/v1/auth/login',
         calculated_risk: Math.min(100, user.base_risk_score + 30),
         status: 'BLOCKED',
-        reason: 'Failed login attempt: Password verification failed.',
+        reason: 'Failed login attempt: Cryptographic password verification failed.',
         verification_latency_ms: 1.5,
         event_type: 'INVALID_CREDENTIALS'
       });
@@ -97,7 +94,7 @@ class AuthService {
       };
     }
 
-    // Password passed: reset failed attempts
+    // Password passed: reset failed attempts counter
     rateLimiter.recordLoginSuccess(identifier);
 
     // 4. Zero-Trust Approval Status Verification
@@ -123,14 +120,13 @@ class AuthService {
       };
     }
 
-    // 5. Multi-Factor Authentication Check
+    // 5. Multi-Factor Authentication Check (MFA Enforced, No Demo Bypass)
     if (user.mfa_enabled) {
       const challengeId = `mfa_${crypto.randomBytes(16).toString('hex')}`;
       const totpSecret = user.mfa_secret || 'JBSWY3DPEHPK3PXP';
       if (!user.mfa_secret) {
-        user.mfa_secret = totpSecret;
+        userRepository.update(user.id, { mfa_secret: totpSecret });
       }
-      const currentTotp = computeTotp(totpSecret);
 
       const challenge: MfaChallengeSession = {
         id: challengeId,
@@ -151,32 +147,31 @@ class AuthService {
         requested_function: '/api/v1/auth/login',
         calculated_risk: user.base_risk_score,
         status: 'ALLOWED',
-        reason: `[MFA CHALLENGE] Password verified for ${user.username}. Multi-factor verification code required.`,
+        reason: `[MFA CHALLENGE] Password verified for ${user.username}. RFC 6238 TOTP verification code required.`,
         verification_latency_ms: 1.1,
         event_type: 'MFA_CHALLENGE_ISSUED'
       });
 
+      // Strict security: Never return MFA secrets or demo bypass codes in API responses
       return {
         status: 'MFA_REQUIRED',
         mfaChallengeId: challengeId,
         phoneMasked: challenge.phoneMasked,
         emailMasked: challenge.emailMasked,
-        methods: ['authenticator', 'sms'],
-        demoTotpCode: currentTotp,
-        demoSmsCode: '847291',
+        methods: ['authenticator', 'backup_code'],
         attemptsLeft: challenge.attemptsLeft,
         user: userRepository.sanitize(user)
       };
     }
 
-    // 6. Issue Signed JWT & Session
+    // 6. Issue Cryptographically Signed JWT & Persistent Session in D1
     return this.completeLoginSession(user, params.ipAddress, params.userAgent);
   }
 
   public async verifyMfa(params: {
     mfaChallengeId: string;
     code: string;
-    method?: 'authenticator' | 'sms';
+    method?: string;
     ipAddress?: string;
     userAgent?: string;
   }): Promise<{
@@ -211,49 +206,61 @@ class AuthService {
       return { success: false, error: 'User record not found.' };
     }
 
-    // 1. Verify standard RFC 6238 TOTP with +/- 2 window (60s drift tolerance)
-    let isTotpValid = verifyTotp(cleanCode, challenge.totpSecret, 2);
+    let isCodeValid = false;
+    let verifiedStep: number | undefined;
 
-    // 2. Verify against dynamic frontend hash calculation
-    if (!isTotpValid) {
-      const step = Math.floor(Date.now() / 30000);
-      for (let offset = -2; offset <= 2; offset++) {
-        const s = step + offset;
-        let hash = 0;
-        const str = `${challenge.username}_totp_secret_${s}`;
-        for (let i = 0; i < str.length; i++) {
-          hash = (hash << 5) - hash + str.charCodeAt(i);
-          hash |= 0;
-        }
-        const clientCode = (Math.abs(hash) % 900000 + 100000).toString();
-        if (clientCode === cleanCode) {
-          isTotpValid = true;
-          break;
-        }
+    // 1. Strict RFC 6238 TOTP verification with time-step replay prevention
+    if (/^\d{6}$/.test(cleanCode)) {
+      const totpResult = verifyTotp(
+        cleanCode,
+        challenge.totpSecret,
+        CONFIG.MFA_WINDOW,
+        user.last_totp_step
+      );
+
+      if (totpResult.valid) {
+        isCodeValid = true;
+        verifiedStep = totpResult.matchedStep;
+      } else if (totpResult.reason === 'REPLAYED_TIME_STEP') {
+        return {
+          success: false,
+          error: 'Replay Attack Prevention: This TOTP time-step was already consumed. Please wait for the next 30-second token.',
+          attemptsLeft: challenge.attemptsLeft
+        };
       }
     }
 
-    // 3. Verify against SMS passcode or universal demonstration codes
-    const permittedAuxCodes = ['847291', '123456', '999999', '000000', '202600', '582914'];
-    if (permittedAuxCodes.includes(cleanCode)) {
-      isTotpValid = true;
+    // 2. Single-Use Cryptographic Backup Codes Verification (Hashed with SHA-256)
+    if (!isCodeValid && cleanCode.length >= 8) {
+      const backupResult = verifyBackupCode(cleanCode, user.mfa_backup_codes || []);
+      if (backupResult.valid && backupResult.matchedHash) {
+        isCodeValid = true;
+        // Atomically consume and remove used backup code from D1 to prevent reuse
+        const remainingHashedCodes = (user.mfa_backup_codes || []).filter(
+          (h) => h !== backupResult.matchedHash
+        );
+        userRepository.update(user.id, { mfa_backup_codes: remainingHashedCodes });
+        auditRepository.record({
+          username: user.username,
+          requested_function: '/api/v1/auth/mfa/verify',
+          calculated_risk: 15,
+          status: 'ALLOWED',
+          reason: `[BACKUP CODE CONSUMED] Single-use recovery code consumed for ${user.username}. Code permanently invalidated.`,
+          verification_latency_ms: 1.2,
+          event_type: 'BACKUP_CODE_CONSUMED'
+        });
+      }
     }
 
-    // 4. Verify user backup codes
-    if (user.mfa_backup_codes && user.mfa_backup_codes.includes(cleanCode)) {
-      isTotpValid = true;
-      user.mfa_backup_codes = user.mfa_backup_codes.filter(c => c !== cleanCode);
-    }
-
-    if (!isTotpValid) {
+    // If still invalid, enforce brute-force countdown
+    if (!isCodeValid) {
       challenge.attemptsLeft -= 1;
-
       auditRepository.record({
         username: challenge.username,
         requested_function: '/api/v1/auth/mfa/verify',
         calculated_risk: Math.min(100, user.base_risk_score + 25),
         status: 'BLOCKED',
-        reason: `[MFA REJECTED] Invalid 6-digit passcode submitted (${challenge.attemptsLeft} attempts remaining).`,
+        reason: `[MFA REJECTED] Invalid passcode submitted (${challenge.attemptsLeft} attempts remaining). Arbitrary bypass codes rejected.`,
         verification_latency_ms: 1.4,
         event_type: 'MFA_VERIFICATION_FAILURE'
       });
@@ -274,7 +281,11 @@ class AuthService {
       };
     }
 
-    // MFA Passed: remove challenge and issue JWT
+    // MFA Passed: update last accepted TOTP step to prevent replay attacks
+    if (typeof verifiedStep === 'number') {
+      userRepository.update(user.id, { last_totp_step: verifiedStep });
+    }
+
     this.mfaChallenges.delete(mfaChallengeId);
 
     auditRepository.record({
@@ -282,7 +293,7 @@ class AuthService {
       requested_function: '/api/v1/auth/mfa/verify',
       calculated_risk: user.base_risk_score,
       status: 'ALLOWED',
-      reason: `[MFA AUTHORIZED] Multi-factor authentication successfully confirmed via RFC 6238 TOTP. Signed token issued.`,
+      reason: `[MFA AUTHORIZED] Multi-factor authentication successfully confirmed via RFC 6238 TOTP. Cryptographic JWT session established.`,
       verification_latency_ms: 1.2,
       event_type: 'MFA_SUCCESS'
     });
@@ -296,8 +307,9 @@ class AuthService {
   }
 
   public completeLoginSession(user: UserRecord, ipAddress?: string, userAgent?: string) {
-    user.last_login_at = new Date().toISOString();
+    userRepository.update(user.id, { last_login_at: new Date().toISOString() });
 
+    // Issue genuine RFC 7519 HMAC-SHA256 Signed JWT
     const token = signJwt({
       sub: user.id,
       username: user.username,
@@ -306,6 +318,7 @@ class AuthService {
       expiresInSeconds: CONFIG.JWT_EXPIRY_SECONDS
     });
 
+    // Write persistent session record into D1 SQLite
     sessionRepository.createSession({
       userId: user.id,
       username: user.username,
@@ -328,11 +341,13 @@ class AuthService {
     if (!user) throw new Error('User not found');
 
     const secret = generateTotpSecret();
-    const backupCodes = generateBackupCodes();
+    const { plaintextCodes, hashedCodes } = generateBackupCodes(8);
 
-    user.mfa_secret = secret;
-    user.mfa_backup_codes = backupCodes;
-    user.mfa_enabled = true;
+    userRepository.update(user.id, {
+      mfa_secret: secret,
+      mfa_backup_codes: hashedCodes,
+      mfa_enabled: true
+    });
 
     const uri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${secret}&issuer=ServerlessSecOps`;
 
@@ -341,16 +356,21 @@ class AuthService {
       requested_function: '/api/v1/auth/mfa/setup',
       calculated_risk: 0,
       status: 'ALLOWED',
-      reason: `MFA enrollment completed for user ${user.username}.`,
+      reason: `MFA enrollment completed for user ${user.username}. 8 single-use recovery codes generated.`,
       verification_latency_ms: 0.8,
       event_type: 'MFA_ENROLLED'
     });
 
-    return { secret, uri, backupCodes };
+    return { secret, uri, backupCodes: plaintextCodes };
   }
 
   public logout(token: string, username: string) {
-    sessionRepository.revoke({ token, username, revokedBy: username, reason: 'User voluntary logout' });
+    sessionRepository.revoke({
+      token,
+      username,
+      revokedBy: username,
+      reason: 'User voluntary session termination'
+    });
   }
 
   public revokeUserSession(targetUsername: string, revokedBy: string, reason?: string) {
@@ -364,21 +384,25 @@ class AuthService {
   public changePassword(userId: string, oldPlaintext: string, newPlaintext: string): boolean {
     const user = userRepository.findById(userId);
     if (!user) return false;
-
     if (!verifyPassword(oldPlaintext, user.password_salt, user.password_hash)) {
       return false;
     }
 
     userRepository.updatePassword(userId, newPlaintext);
+
     // Invalidate existing sessions on password change
-    sessionRepository.revoke({ username: user.username, revokedBy: user.username, reason: 'Password change' });
+    sessionRepository.revoke({
+      username: user.username,
+      revokedBy: user.username,
+      reason: 'Password change invalidation'
+    });
 
     auditRepository.record({
       username: user.username,
       requested_function: '/api/v1/auth/change-password',
       calculated_risk: 10,
       status: 'ALLOWED',
-      reason: `Password updated successfully for ${user.username}. Active sessions revoked.`,
+      reason: `Password updated successfully for ${user.username}. Existing sessions revoked in D1.`,
       verification_latency_ms: 1.5,
       event_type: 'PASSWORD_CHANGED'
     });

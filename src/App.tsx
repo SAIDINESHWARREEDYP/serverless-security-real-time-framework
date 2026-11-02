@@ -294,7 +294,7 @@ export default function App() {
       const authRes = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'auditor_guest', password: 'ZeroTrust_2026', skipMfa: true })
+        body: JSON.stringify({ username: 'auditor_guest', password: 'ZeroTrust_2026' })
       });
       const authData = await authRes.json();
       if (!authData.token) {
@@ -430,38 +430,28 @@ export default function App() {
       let bearerToken = currentSession && currentSession.user.username === user ? currentSession.token : null;
 
       if (!bearerToken) {
-        const authResponse = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: user, password: 'ZeroTrust_2026' })
-        });
-
-        const authData = await authResponse.json();
-
-        if (authData.mfaRequired && authData.mfaSessionId && authData.demoTotpCode) {
-          const mfaRes = await fetch('/api/auth/mfa/verify', {
+        if (currentSession && currentSession.token) {
+          bearerToken = currentSession.token;
+        } else {
+          const authResponse = await fetch('/api/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mfaSessionId: authData.mfaSessionId,
-              mfaChallengeId: authData.mfaSessionId,
-              code: authData.demoTotpCode,
-              method: 'authenticator'
-            })
+            body: JSON.stringify({ username: user, password: 'ZeroTrust_2026' })
           });
-          const mfaData = await mfaRes.json();
-          if (mfaData.success && mfaData.token) {
-            bearerToken = mfaData.token;
-          }
-        } else if (authData.success && authData.token) {
-          bearerToken = authData.token;
-        }
 
-        if (!bearerToken) {
-          addTerminalLog('error', `[ERROR] Identity token signature rejected: ${authData.error || 'Access Denied'}`);
-          setIsFiring(false);
-          fetchOverview();
-          return;
+          const authData = await authResponse.json();
+
+          if (authData.success && authData.token) {
+            bearerToken = authData.token;
+          }
+
+          if (!bearerToken) {
+            const reason = authData.error || (authData.mfaRequired ? 'Multi-Factor Authentication required for principal' : 'Access Denied');
+            addTerminalLog('error', `[ERROR] Identity token signature rejected: ${reason}`);
+            setIsFiring(false);
+            fetchOverview();
+            return;
+          }
         }
       }
 
@@ -644,14 +634,15 @@ export default function App() {
           status: data.user?.status || 'APPROVED'
         };
 
-        const newSession: AuthSession = {
-          user: newUser,
-          token: data.token || `zt_jwt_${clean}_${Date.now().toString(36)}`,
-          loginTime: new Date().toLocaleTimeString(),
-          expiresInSeconds: 3600
-        };
-
-        setCurrentSession(newSession);
+        if (data.token) {
+          const newSession: AuthSession = {
+            user: newUser,
+            token: data.token,
+            loginTime: new Date().toLocaleTimeString(),
+            expiresInSeconds: data.expiresInSeconds || 3600
+          };
+          setCurrentSession(newSession);
+        }
         setSelectedUser(clean);
         setUsers(prev => {
           if (prev.some(u => u.username === clean)) return prev;
@@ -676,15 +667,15 @@ export default function App() {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026', skipMfa: true })
+        body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026' })
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok && data.success && data.token) {
         const session: AuthSession = {
           user: targetUser,
-          token: data.token || `zt_jwt_${targetUser.username}_${Date.now().toString(36)}`,
+          token: data.token,
           loginTime: new Date().toLocaleTimeString(),
-          expiresInSeconds: 3600
+          expiresInSeconds: data.expiresInSeconds || 3600
         };
         setCurrentSession(session);
         setSelectedUser(targetUser.username);
@@ -698,6 +689,10 @@ export default function App() {
         } else if (targetUser.role === 'Admin' && (activeTab === 'guest' || activeTab === 'developer')) {
           setActiveTab('admin');
         }
+      } else if (data.mfaRequired) {
+        setCurrentSession(null);
+        setSelectedUser(targetUser.username);
+        addTerminalLog('alert', `[IAM MFA] Principal ${targetUser.username} requires Multi-Factor Authentication.`);
       } else {
         addTerminalLog('error', `[IAM] Failed to authenticate principal: ${data?.error || 'Unknown error'}`);
       }
@@ -709,12 +704,15 @@ export default function App() {
   // Real-time Session Revocation Endpoint Call (Admin Only)
   const handleRevokeSession = async (username: string) => {
     try {
+      if (!currentSession?.token) {
+        throw new Error('Active administrator authentication token required to revoke sessions.');
+      }
       addTerminalLog('post', `[IAM REVOCATION] Requesting real-time session termination for principal [${username}]...`);
       const res = await fetch('/api/auth/revoke-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${currentSession?.token || 'zt_jwt_secops_admin_k7x9'}`
+          Authorization: `Bearer ${currentSession.token}`
         },
         body: JSON.stringify({
           username,
