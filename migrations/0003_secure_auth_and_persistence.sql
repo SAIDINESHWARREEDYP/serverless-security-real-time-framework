@@ -15,6 +15,10 @@ ALTER TABLE users ADD COLUMN mfa_secret TEXT;
 ALTER TABLE users ADD COLUMN mfa_backup_codes TEXT;
 ALTER TABLE users ADD COLUMN last_totp_step INTEGER DEFAULT 0;
 
+-- 1b. Add cryptographic hash-chaining columns to audit_events table
+ALTER TABLE audit_events ADD COLUMN integrity_hash TEXT;
+ALTER TABLE audit_events ADD COLUMN prev_hash TEXT;
+
 -- 2. Upgrade seeded principals to genuine PBKDF2-SHA512 password hashes and secure MFA secrets
 -- Password for all default test seeds: 'ZeroTrust_2026'
 UPDATE users SET 

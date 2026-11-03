@@ -130,6 +130,17 @@ class PersistentSecurityDatabase {
         }
       }
     }
+
+    try {
+      this.sqlite.exec('ALTER TABLE audit_events ADD COLUMN integrity_hash TEXT;');
+    } catch {
+      // already exists
+    }
+    try {
+      this.sqlite.exec('ALTER TABLE audit_events ADD COLUMN prev_hash TEXT;');
+    } catch {
+      // already exists
+    }
   }
 
   /**
@@ -261,7 +272,14 @@ class PersistentSecurityDatabase {
     }));
   }
 
+  public resolveUserId(usernameOrId?: string): string | null {
+    if (!usernameOrId || !usernameOrId.trim()) return null;
+    const u = this.getUser(usernameOrId);
+    return u ? u.id : null;
+  }
+
   public getUser(usernameOrId: string): User | undefined {
+    if (!usernameOrId || !usernameOrId.trim()) return undefined;
     const q = usernameOrId.trim();
     const row = this.sqlite.prepare(
       'SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(id) = LOWER(?) LIMIT 1'

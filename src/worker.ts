@@ -593,10 +593,20 @@ export default {
           const status = body.status || 'OPEN';
           const rootCause = body.root_cause || 'Identified via edge verification pipeline';
           const mitigationSteps = body.mitigation_steps || 'Automated perimeter quarantine applied';
-          const assignedTo = body.assigned_to || 'secops_admin';
+          const rawAssignee = body.assigned_to || 'secops_admin';
+          let assignedTo: string | null = null;
           const nowIso = new Date().toISOString();
 
           if (env.DB) {
+            try {
+              const userRow: any = await env.DB.prepare('SELECT id FROM users WHERE id = ? OR LOWER(username) = LOWER(?) LIMIT 1').bind(rawAssignee, rawAssignee).first();
+              if (userRow?.id) {
+                assignedTo = userRow.id;
+              }
+            } catch {
+              assignedTo = null;
+            }
+
             await env.DB.prepare(
               `INSERT INTO incidents (
                 id, title, severity, status, root_cause, mitigation_steps, assigned_to, created_at

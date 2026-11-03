@@ -182,6 +182,30 @@ class AuditRepository {
         acknowledged: false
       };
 
+      // Safely resolve user_id foreign key from users table (must reference users(id) or NULL)
+      let alertUserId: string | null = null;
+      if (data.username) {
+        try {
+          const u = db.getUser(data.username);
+          if (u?.id) {
+            alertUserId = u.id;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // Check if invocation_id exists in invocation_history (must reference invocation_history(id) or NULL)
+      let alertInvocationId: string | null = null;
+      try {
+        const invRow = db.prepare('SELECT id FROM invocation_history WHERE id = ? LIMIT 1').bind(String(id)).first<any>();
+        if (invRow?.id) {
+          alertInvocationId = invRow.id;
+        }
+      } catch {
+        // ignore
+      }
+
       try {
         db.prepare(
           `INSERT INTO security_alerts (
@@ -189,17 +213,17 @@ class AuditRepository {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           alertId,
-          String(id),
+          alertInvocationId,
           eventType,
           severity,
           data.requested_function,
-          JSON.stringify({ reason: data.reason, risk: data.calculated_risk }),
+          JSON.stringify({ username: data.username, reason: data.reason, risk: data.calculated_risk }),
           '127.0.0.1',
-          data.username,
+          alertUserId,
           timestamp
         ).run();
-      } catch {
-        // ignore
+      } catch (err: any) {
+        console.warn('[D1 security_alerts insert note]', err?.message);
       }
 
       this.broadcast({ type: 'THREAT_ALERT', data: alert, timestamp });
@@ -239,17 +263,32 @@ class AuditRepository {
 
   public getAlerts(): SecurityAlert[] {
     const rows = db.prepare('SELECT * FROM security_alerts ORDER BY created_at DESC LIMIT 100').all<any>();
-    return (rows.results || []).map((r) => ({
-      id: r.id,
-      timestamp: r.created_at,
-      alert_type: r.alert_type,
-      severity: r.severity as any,
-      threat_vector: r.threat_vector,
-      details: r.details_json,
-      ip_address: r.ip_address,
-      username: r.user_id || 'anonymous',
-      acknowledged: Boolean(r.acknowledged_at)
-    }));
+    return (rows.results || []).map((r) => {
+      let username = 'anonymous';
+      if (r.details_json) {
+        try {
+          const parsed = JSON.parse(r.details_json);
+          if (parsed.username) username = parsed.username;
+        } catch {
+          // ignore
+        }
+      }
+      if (username === 'anonymous' && r.user_id) {
+        const u = db.getUser(r.user_id);
+        username = u?.username || r.user_id;
+      }
+      return {
+        id: r.id,
+        timestamp: r.created_at,
+        alert_type: r.alert_type,
+        severity: r.severity as any,
+        threat_vector: r.threat_vector,
+        details: r.details_json,
+        ip_address: r.ip_address,
+        username,
+        acknowledged: Boolean(r.acknowledged_at)
+      };
+    });
   }
 
   public acknowledgeAlert(id: string): boolean {
@@ -261,23 +300,35 @@ class AuditRepository {
 
   public getIncidents(): IncidentCase[] {
     const rows = db.prepare('SELECT * FROM incidents ORDER BY created_at DESC').all<any>();
-    return (rows.results || []).map((r) => ({
-      id: r.id,
-      title: r.title,
-      severity: r.severity as any,
-      status: r.status as any,
-      created_at: r.created_at,
-      root_cause: r.root_cause,
-      mitigation_steps: r.mitigation_steps,
-      assigned_to: r.assigned_to,
-      resolved_at: r.resolved_at,
-      resolved_by: r.resolved_by
-    }));
+    return (rows.results || []).map((r) => {
+      let assignee = r.assigned_to;
+      if (assignee) {
+        const u = db.getUser(assignee);
+        if (u) assignee = u.username;
+      }
+      return {
+        id: r.id,
+        title: r.title,
+        severity: r.severity as any,
+        status: r.status as any,
+        created_at: r.created_at,
+        root_cause: r.root_cause,
+        mitigation_steps: r.mitigation_steps,
+        assigned_to: assignee || 'secops_admin',
+        resolved_at: r.resolved_at,
+        resolved_by: r.resolved_by
+      };
+    });
   }
 
   public getIncidentById(id: string): IncidentCase | null {
     const r = db.prepare('SELECT * FROM incidents WHERE id = ? LIMIT 1').bind(id).first<any>();
     if (!r) return null;
+    let assignee = r.assigned_to;
+    if (assignee) {
+      const u = db.getUser(assignee);
+      if (u) assignee = u.username;
+    }
     return {
       id: r.id,
       title: r.title,
@@ -286,7 +337,7 @@ class AuditRepository {
       created_at: r.created_at,
       root_cause: r.root_cause,
       mitigation_steps: r.mitigation_steps,
-      assigned_to: r.assigned_to,
+      assigned_to: assignee || 'secops_admin',
       resolved_at: r.resolved_at,
       resolved_by: r.resolved_by
     };
@@ -304,6 +355,18 @@ class AuditRepository {
     const nowIso = new Date().toISOString();
     const status = data.status || 'OPEN';
 
+    // Resolve assigned_to foreign key: must match users(id) or be NULL
+    let resolvedAssigneeId: string | null = null;
+    const assigneeInput = data.assigned_to || 'secops_admin';
+    try {
+      const u = db.getUser(assigneeInput);
+      if (u?.id) {
+        resolvedAssigneeId = u.id;
+      }
+    } catch {
+      // ignore
+    }
+
     // Persist to D1 SQLite incidents table
     db.prepare(
       `INSERT INTO incidents (
@@ -316,7 +379,7 @@ class AuditRepository {
       status,
       data.root_cause || 'Under investigation by SecOps team',
       data.mitigation_steps || 'Automated perimeter quarantine applied',
-      data.assigned_to || 'secops_admin',
+      resolvedAssigneeId,
       nowIso
     ).run();
 
@@ -357,9 +420,20 @@ class AuditRepository {
       fields.push('root_cause = ?');
       values.push(updates.root_cause);
     }
-    if (updates.assigned_to) {
+    if (updates.assigned_to !== undefined) {
+      let resolvedAssigneeId: string | null = null;
+      if (updates.assigned_to) {
+        try {
+          const u = db.getUser(updates.assigned_to);
+          if (u?.id) {
+            resolvedAssigneeId = u.id;
+          }
+        } catch {
+          // ignore
+        }
+      }
       fields.push('assigned_to = ?');
-      values.push(updates.assigned_to);
+      values.push(resolvedAssigneeId);
     }
 
     if (fields.length > 0) {

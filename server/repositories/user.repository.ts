@@ -1,4 +1,4 @@
-import { UserRecord, SanitizedUser, UserApprovalStatus, UserRoleType } from '../types/index.ts';
+import type { UserRecord, SanitizedUser, UserApprovalStatus, UserRoleType } from '../types/index.ts';
 import { hashPassword, verifyPassword } from '../utils/crypto.ts';
 import { db } from '../db.ts';
 
