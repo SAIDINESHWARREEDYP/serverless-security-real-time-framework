@@ -179,7 +179,7 @@ rootRouter.get('/system/policy-config', (req, res) => {
   res.json(policyRepository.getPolicy());
 });
 
-rootRouter.post('/system/policy-config', (req, res) => {
+rootRouter.post('/system/policy-config', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   const updated = policyRepository.updatePolicy(req.body);
   res.json({ success: true, policyConfig: updated });
 });
@@ -206,15 +206,18 @@ rootRouter.get('/auth/status', (req: Request, res: Response) => {
   });
 });
 
-// 6. User Management Routes
-rootRouter.post('/system/users', (req, res) => {
+// 6. User Management Routes (Protected: Admin clearance required)
+rootRouter.post('/system/users', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   const { username, password, role, base_risk_score, department, status, email, requestJustification, approvedBy } = req.body;
   if (!username || !username.trim()) {
     return res.status(400).json({ error: 'Username is required.' });
   }
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Password is required and must be at least 8 characters long.' });
+  }
   const user = userRepository.create({
     username: username.trim(),
-    password: password || 'ZeroTrust_2026',
+    password: password.trim(),
     role,
     base_risk_score,
     department,
@@ -226,10 +229,10 @@ rootRouter.post('/system/users', (req, res) => {
   return res.json({ success: true, user: userRepository.sanitize(user), message: `Identity [${user.username}] saved into database.` });
 });
 
-rootRouter.post('/system/users/approve', userController.approveUser);
-rootRouter.post('/system/users/reject', userController.rejectUser);
+rootRouter.post('/system/users/approve', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), userController.approveUser);
+rootRouter.post('/system/users/reject', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), userController.rejectUser);
 
-rootRouter.delete('/system/users/:username', (req, res) => {
+rootRouter.delete('/system/users/:username', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   const { username } = req.params;
   if (username.toLowerCase() === 'secops_admin') {
     return res.status(400).json({ error: 'Cannot delete primary root SecOps admin.' });
@@ -239,7 +242,7 @@ rootRouter.delete('/system/users/:username', (req, res) => {
   return res.json({ success: true, message: `User '${username}' removed from database.` });
 });
 
-rootRouter.patch('/system/users/:username', (req, res) => {
+rootRouter.patch('/system/users/:username', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   const { username } = req.params;
   const user = userRepository.findByUsername(username);
   if (!user) return res.status(404).json({ error: `User '${username}' not found` });
@@ -251,7 +254,7 @@ rootRouter.patch('/system/users/:username', (req, res) => {
 rootRouter.post(['/auth/revoke-session', '/system/sessions/revoke'], authenticateMiddleware, authController.revokeSession);
 
 // 8. System Reset & Clear
-rootRouter.post('/system/reset', (req, res) => {
+rootRouter.post('/system/reset', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   userRepository.reset();
   policyRepository.reset();
   auditRepository.clear();
@@ -260,14 +263,14 @@ rootRouter.post('/system/reset', (req, res) => {
   res.json({ success: true, message: 'Database reset to factory test seed baseline.', policyConfig: policyRepository.getPolicy() });
 });
 
-rootRouter.post('/system/clearLogs', (req, res) => {
+rootRouter.post('/system/clearLogs', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   auditRepository.clear();
   db.clearLogs();
   res.json({ success: true, message: 'Security audit logs cleared.' });
 });
 
 // 9. Rule Management
-rootRouter.post('/system/rules', (req, res) => {
+rootRouter.post('/system/rules', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   const { current_function, allowed_next_function } = req.body;
   if (!current_function || !allowed_next_function) {
     return res.status(400).json({ error: 'Missing current_function or allowed_next_function' });
@@ -276,7 +279,7 @@ rootRouter.post('/system/rules', (req, res) => {
   res.json({ success: true, rule });
 });
 
-rootRouter.delete('/system/rules/:id', (req, res) => {
+rootRouter.delete('/system/rules/:id', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
   const id = parseInt(req.params.id, 10);
   const ok = policyRepository.deleteRule(id);
   res.json({ success: ok });

@@ -1,5 +1,6 @@
+import crypto from 'crypto';
 import type { UserRecord, SanitizedUser, UserApprovalStatus, UserRoleType } from '../types/index.ts';
-import { hashPassword, verifyPassword } from '../utils/crypto.ts';
+import { hashPassword, verifyPassword, generateTotpSecret, generateBackupCodes } from '../utils/crypto.ts';
 import { db } from '../db.ts';
 
 class UserRepository {
@@ -69,6 +70,10 @@ class UserRepository {
     const isApproved = data.status === 'APPROVED';
 
     // Insert directly into persistent SQLite D1 table
+    const randomTotpSecret = generateTotpSecret();
+    const backupCodes = generateBackupCodes(4);
+    const hashedBackupCodes = backupCodes.hashedCodes;
+
     db.prepare(
       `INSERT INTO users (
         id, username, password_salt, password_hash, role, base_risk_score,
@@ -87,11 +92,8 @@ class UserRepository {
       data.email || `${cleanUsername.toLowerCase()}@corp.internal`,
       data.phone || '+1 (555) 019-8392',
       data.mfa_enabled ? 1 : 1,
-      'JBSWY3DPEHPK3PXP', // Default TOTP enrollment secret
-      JSON.stringify([
-        '28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af',
-        'f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f'
-      ]),
+      randomTotpSecret,
+      JSON.stringify(hashedBackupCodes),
       nowIso,
       isApproved ? nowIso : null,
       isApproved ? data.approved_by || 'SYSTEM' : null,

@@ -1,0 +1,9 @@
+# FINAL ABSTRACT
+
+**Title:** Design and Implementation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications  
+**Authors:** B.Tech Computer Science and Engineering Capstone Candidates (2026–2027)  
+**Word Count:** 186 words (Strictly within the 150–200 word university constraint)  
+
+---
+
+Serverless cloud computing introduces distinct operational vulnerabilities, including stateless identity fragmentation, out-of-order function execution, and cloud metadata exploitation. While existing research frameworks like BAMBDA (Shin et al., IEEE Access 2025) verify runtime temporal properties via log analysis, modern distributed applications require synchronized, in-line perimeter defense. This paper presents an integrated real-time security verification framework designed for edge and microservice environments using Cloudflare Workers, Cloudflare D1, and Node.js Express with TypeScript. The architecture enforces an in-line 15-step verification pipeline that inspects incoming invocations prior to handler execution. Core security modules include PBKDF2-SHA512 password hashing, RFC 6238 time-based one-time password multi-factor authentication with replay protection, cryptographic HMAC-SHA256 token verification, stateful session revocation, role-based access control, deterministic workflow sequence checking, dynamic rate burst detection, and heuristic threat scanning across six serverless attack vectors. Evaluated across 34 automated unit, integration, and security test cases, the framework achieves deterministic fail-closed containment and maintains tamper-evident SHA-256 audit hash chaining. Empirical micro-benchmarking demonstrates a mean in-line verification latency of 1.07 milliseconds (median 1.04 ms, p95 1.20 ms), confirming practical feasibility for high-throughput serverless microservices.

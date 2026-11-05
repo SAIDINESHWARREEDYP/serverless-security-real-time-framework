@@ -8,11 +8,7 @@
 
 ## Abstract
 
-Serverless computing (Function-as-a-Service, or FaaS) has revolutionized cloud software engineering by decoupling infrastructure provisioning from operational logic. However, the ephemeral, event-driven, and highly distributed nature of serverless execution invalidates traditional perimeter-based security architectures. Serverless applications face unique vulnerabilities, including unauthorized function invocation, broken authentication, privilege escalation through over-privileged IAM roles, event injection attacks, and blind spots in distributed audit logging.
-
-This project designs, engineers, and validates an **Integrated Real-Time Security Verification Framework** tailored for serverless cloud architectures (implemented on Cloudflare Workers edge runtime and Cloudflare D1 distributed SQLite). The framework introduces an ultra-low-latency, in-line **15-Step Security Verification Engine** that intercepts and inspects every invocation in real time. It unifies zero-trust authentication (PBKDF2-SHA512 password hashing with RFC 6238 TOTP Multi-Factor Authentication and HMAC-SHA256 JWT tokens), fine-grained Role-Based Access Control (RBAC with 6 hierarchical roles and 21 discrete permissions), deterministic payload sanitization, sliding-window rate tracking, Markov state machine sequence validation, and a cryptographically linked SHA-256 tamper-evident audit ledger.
-
-Empirical evaluation demonstrates an average verification latency of **1.42 milliseconds** (well below the 2.5ms threshold established by the *Bλambda* literature), zero false-positive bypasses across 34 automated unit and negative security penetration tests, and instant real-time telemetry streaming via Server-Sent Events (SSE). The framework provides an enterprise-ready, academically rigorous defense-in-depth security layer for modern serverless clouds.
+Serverless cloud computing introduces distinct operational vulnerabilities, including stateless identity fragmentation, out-of-order function execution, and cloud metadata exploitation. While existing research frameworks like BAMBDA (Shin et al., IEEE Access 2025) verify runtime temporal properties via log analysis, modern distributed applications require synchronized, in-line perimeter defense. This paper presents an integrated real-time security verification framework designed for edge and microservice environments using Cloudflare Workers, Cloudflare D1, and Node.js Express with TypeScript. The architecture enforces an in-line 15-step verification pipeline that inspects incoming invocations prior to handler execution. Core security modules include PBKDF2-SHA512 password hashing, RFC 6238 time-based one-time password multi-factor authentication with replay protection, cryptographic HMAC-SHA256 token verification, stateful session revocation, role-based access control, deterministic workflow sequence checking, dynamic rate burst detection, and heuristic threat scanning across six serverless attack vectors. Evaluated across 34 automated unit, integration, and security test cases, the framework achieves deterministic fail-closed containment and maintains tamper-evident SHA-256 audit hash chaining. Empirical micro-benchmarking demonstrates a mean in-line verification latency of 1.07 milliseconds (median 1.04 ms, p95 1.20 ms), confirming practical feasibility for high-throughput serverless microservices.
 
 ---
 
@@ -63,23 +59,23 @@ The objective of this capstone project is to develop and evaluate an **integrate
 
 ---
 
-## 2. Background & Related Work (IEEE Access *Bλambda* Comparative Analysis)
+## 2. Background & Related Work (IEEE Access *BAMBDA* Comparative Analysis)
 
 In 2025, IEEE Access published the foundational benchmark paper:
-> **Bλambda: A Real-Time Verification Framework for Serverless Computing**  
-> *IEEE Access, vol. 13, pp. 35727–35745, 2025. DOI: 10.1109/ACCESS.2025.3572729*
+> **Changhee Shin, Bom Kim, and Seungsoo Lee, "BAMBDA: A Real-Time Verification Framework for Serverless Computing," *IEEE Access*, vol. 13, pp. 90896–90911, 2025. DOI: 10.1109/ACCESS.2025.3572729 [1]**
 
-*Bλambda* demonstrated that formal security property verification could be applied to serverless functions at runtime with less than 3% execution overhead. However, *Bλambda* focused primarily on static property assertion and formal language invariants, leaving gaps in:
-- Integrated Multi-Factor Authentication (MFA) and enterprise session revocation.
+*BAMBDA* demonstrated that runtime temporal property verification could be applied to serverless functions via automated code injection into AWS Lambda layers and centralized log group analysis, reporting an 8.12% runtime execution overhead under warm-start conditions. However, *BAMBDA* focused primarily on post-invocation log group property assertion, leaving open architectural challenges in:
+- Synchronous, in-line perimeter interception prior to handler invocation.
+- Integrated Multi-Factor Authentication (MFA) with strict clock-drift tolerance and replay prevention.
+- Stateful real-time session revocation persisting across edge isolate restarts.
 - Cryptographically verifiable tamper-evident audit ledgers.
-- Dynamic Markov sequence anomaly detection for multi-step workflow transitions.
-- Interactive security operations center (SOC) dashboards and policy simulation.
+- Deterministic sequence anomaly detection for multi-function business workflows.
 
-The framework developed in this project directly builds upon and extends the *Bλambda* architecture by implementing a fully operational, end-to-end framework featuring:
-- A 15-step in-line pipeline achieving an average latency of **1.42ms** (surpassing the *Bλambda* baseline of 2.10ms).
-- Complete RFC 6238 TOTP MFA integration.
-- Chained HMAC-SHA256 audit ledger with real-time mathematical tamper detection.
-- Reactive SSE push telemetry delivering 100% visibility into edge invocations.
+The framework developed in this capstone investigates an alternative edge gateway architecture that implements an in-line, Zero-Trust defense layer featuring:
+- A 15-step in-line pipeline achieving a reproducible mean verification latency of **1.07 ms** (median 1.04 ms, p95 1.20 ms).
+- Complete RFC 6238 TOTP MFA integration with single-use backup recovery codes [2].
+- Cryptographic HMAC-SHA256 JWT tokens [3] conforming to NIST SP 800-207 Zero Trust Architecture [4].
+- A chained SHA-256 audit ledger ($H_t = \text{SHA256}(R_t \parallel H_{t-1})$) [11] with real-time SSE push telemetry.
 
 ---
 
@@ -381,23 +377,22 @@ The automated security test suite verified that:
 
 ## 21. Comparison with State-of-the-Art Solutions
 
-| Security Feature | Standard Cloud WAF | AWS IAM / API Gateway | IEEE Access *Bλambda* (2025) | Our Framework |
+| Security Feature | Standard Cloud WAF | AWS IAM / API Gateway | IEEE Access *BAMBDA* (2025) [1] | Our Framework |
 |---|---|---|---|---|
-| In-Line Edge Verification | Yes | Partial | Yes | **Yes** |
-| Execution Latency | 5–15 ms | 10–25 ms | 2.10 ms | **1.42 ms** |
-| Cryptographic Audit Chaining | No | No | No | **Yes (SHA-256)** |
-| Markov Sequence Verification | No | No | Invariant Only | **Yes (Probabilistic)** |
-| Built-in TOTP MFA | No | External (Cognito) | No | **Yes (RFC 6238)** |
-| Real-Time SSE Telemetry | No | CloudWatch (Minutes) | No | **Yes (Sub-second)** |
+| In-Line Edge Verification | Yes | Partial | Post-Log / Injection | **Yes (15-Step In-Line)** |
+| Verification Latency | 5–15 ms | 10–25 ms | 8.12% relative overhead | **1.07 ms mean (reproducible)** |
+| Cryptographic Audit Chaining | No | No | No (CloudWatch) | **Yes (SHA-256 Ledger)** [11] |
+| Sequence Verification | No | No | Formal Invariant Only | **Yes (Rule-based Table)** |
+| Built-in TOTP MFA | No | External (Cognito) | No | **Yes (RFC 6238)** [2] |
+| Real-Time SSE Telemetry | No | CloudWatch (Minutes) | No | **Yes (Sub-second push)** |
 
 ---
 
 ## 22. Limitations & Boundary Constraints
 
-As detailed in `LIMITATIONS_AND_FUTURE_ENHANCEMENTS.md`:
-- D1 cross-region write replication can introduce minor synchronization delays under extreme global bursts.
-- In-line payload scanning uses optimized heuristics rather than deep neural network NLP to honor the sub-2.5ms budget.
-- Dense Markov state matrices require pruning when function catalogs exceed 5,000 endpoints.
+- **Local Development Emulation**: Local tests use `node:sqlite` emulating Cloudflare D1's SQL dialect. Remote Cloudflare D1 deployment requires Cloudflare credentials and network access.
+- **Payload Inspection Heuristics**: In-line payload scanning uses optimized regex/heuristic pattern matching rather than deep neural network NLP to honor the sub-1.5ms latency budget.
+- **Workflow Sequence Scale**: Deterministic transition lookup tables (`function_rules`) operate with $O(1)$ indexed efficiency; scaling to more than 10,000 distinct transitions requires catalog partitioning.
 
 ---
 
@@ -405,25 +400,38 @@ As detailed in `LIMITATIONS_AND_FUTURE_ENHANCEMENTS.md`:
 
 1. **Wasm & eBPF Acceleration**: Compiling verification checks into WebAssembly modules executed within hypervisor microVM kernels to reach sub-200 microsecond overheads.
 2. **Zero-Knowledge Proof (ZKP) Auditing**: Implementing zk-SNARKs to allow third-party compliance verification without payload decryption.
-3. **Adaptive Reinforcement Learning**: Self-tuning frequency thresholds based on seasonal traffic patterns.
+3. **Adaptive Rate Throttling**: Machine-learning assisted dynamic frequency thresholds based on seasonal traffic patterns.
 
 ---
 
 ## 24. Conclusion & Academic Summary
 
-This capstone project successfully demonstrates the design, implementation, and empirical validation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications. Grounded in the theoretical principles of the IEEE Access 2025 *Bλambda* benchmark, the framework proves that enterprise-grade zero-trust verification—encompassing multi-factor authentication, granular RBAC, in-line payload inspection, Markov sequence modeling, and tamper-evident audit chaining—can be achieved at the cloud edge with an average latency of only **1.42 milliseconds**.
+This capstone project successfully demonstrates the design, implementation, and empirical validation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications. Differentiated from the post-invocation log analysis approach of the IEEE Access 2025 *BAMBDA* paper [1], this framework proves that comprehensive zero-trust verification—encompassing multi-factor authentication, granular RBAC, in-line payload inspection, rule-based sequence checking, and tamper-evident audit chaining—can be achieved synchronously at the edge with a reproducible mean latency of only **1.07 milliseconds** (median 1.04 ms, p95 1.20 ms).
 
-The resulting framework is fully functional, academically defensible, comprehensively tested (34/34 tests passing), and ready for production deployment on Cloudflare Workers and D1.
+The resulting codebase passes 34 out of 34 automated unit, integration, and security tests (100% success rate) and provides an academically sound, production-hardened foundation for secure serverless cloud computing.
 
 ---
 
 ## 25. References & Academic Citations
 
-1. IEEE Access Paper: *Bλambda: A Real-Time Verification Framework for Serverless Computing*, IEEE Access, vol. 13, pp. 35727–35745, 2025. DOI: 10.1109/ACCESS.2025.3572729.
-2. OWASP Foundation, *OWASP Serverless Top 10 Vulnerabilities*, 2024.
-3. National Institute of Standards and Technology (NIST), *Special Publication 800-207: Zero Trust Architecture*, 2020.
-4. Internet Engineering Task Force (IETF), *RFC 6238: TOTP: Time-Based One-Time Password Algorithm*, 2011.
-5. Internet Engineering Task Force (IETF), *RFC 7519: JSON Web Token (JWT)*, 2015.
-6. Internet Engineering Task Force (IETF), *RFC 2898: Password-Based Cryptography Specification (PBKDF2)*, 2000.
-7. Cloudflare, *Cloudflare Workers Documentation & V8 Isolate Architecture*, 2025.
-8. Cloudflare, *Cloudflare D1: Serverless Relational Database Documentation*, 2025.
+[1] C. Shin, B. Kim, and S. Lee, "BAMBDA: A Real-Time Verification Framework for Serverless Computing," *IEEE Access*, vol. 13, pp. 90896–90911, 2025, doi: 10.1109/ACCESS.2025.3572729.
+
+[2] D. M'Raihi, S. Machani, M. Pei, and J. Rydell, "TOTP: Time-Based One-Time Password Algorithm," RFC 6238, Internet Engineering Task Force (IETF), May 2011, doi: 10.17487/RFC6238.
+
+[3] M. Jones, J. Bradley, and N. Sakimura, "JSON Web Token (JWT)," RFC 7519, Internet Engineering Task Force (IETF), May 2015, doi: 10.17487/RFC7519.
+
+[4] S. Rose, O. Borchert, S. Mitchell, and S. Connelly, "Zero Trust Architecture," NIST Special Publication 800-207, National Institute of Standards and Technology, Gaithersburg, MD, Aug. 2020, doi: 10.6028/NIST.SP.800-207.
+
+[5] B. Kaliski, "PKCS #5: Password-Based Cryptography Specification Version 2.0," RFC 2898 / RFC 8018, Internet Engineering Task Force (IETF), Sep. 2000, doi: 10.17487/RFC2898.
+
+[6] OWASP Foundation, "OWASP Serverless Top 10," Open Web Application Security Project, 2021. [Online]. Available: https://owasp.org/www-project-serverless-top-10/
+
+[7] Cloudflare, Inc., "Cloudflare Workers Documentation: Edge Compute and Runtime APIs," 2024. [Online]. Available: https://developers.cloudflare.com/workers/
+
+[8] Cloudflare, Inc., "Cloudflare D1: Serverless Relational Database Documentation," 2024. [Online]. Available: https://developers.cloudflare.com/d1/
+
+[9] E. Rescorla, "The Transport Layer Security (TLS) Protocol Version 1.3," RFC 8446, Internet Engineering Task Force (IETF), Aug. 2018, doi: 10.17487/RFC8446.
+
+[10] D. Eastlake and P. Jones, "US Secure Hash Algorithm 1 (SHA1)," RFC 3174, Internet Engineering Task Force (IETF), Sep. 2001, doi: 10.17487/RFC3174.
+
+[11] National Institute of Standards and Technology (NIST), "Secure Hash Standard (SHS)," FIPS PUB 180-4, Information Technology Laboratory, Gaithersburg, MD, Aug. 2015, doi: 10.6028/NIST.FIPS.180-4.

@@ -41,9 +41,15 @@ export default {
     const method = request.method;
     const origin = request.headers.get('Origin') || '';
 
-    // Determine JWT Secret from Environment Binding with resilient fallback
-    let jwtSecret = env.JWT_SECRET?.trim() || 'dev_zt_secops_verification_secret_key_minimum_32_characters_2026_local_only';
-    if (jwtSecret.length < 32 && env.JWT_SECRET?.trim()) {
+    // Determine JWT Secret from Environment Binding with resilient validation
+    let jwtSecret = env.JWT_SECRET?.trim() || '';
+    if (!jwtSecret) {
+      if (env.ENVIRONMENT === 'production') {
+        return jsonResponse({ error: 'Fatal security configuration: JWT_SECRET must be configured in production.' }, 500, origin);
+      }
+      jwtSecret = 'dev_zt_secops_verification_secret_key_minimum_32_characters_2026_local_only';
+    }
+    if (jwtSecret.length < 32) {
       jwtSecret = await sha256Hex(jwtSecret);
     }
 
@@ -223,17 +229,23 @@ export default {
           // Generate PBKDF2 salt and hash
           const salt = generateRandomHex(16);
           const hash = await derivePbkdf2Hex(password, salt);
-          const secret = 'JBSWY3DPEHPK3PXP';
+          // Generate cryptographically random 16-character base32 TOTP secret
+          const randomBytes = new Uint8Array(10);
+          crypto.getRandomValues(randomBytes);
+          let generatedSecret = '';
+          for (let i = 0; i < randomBytes.length; i++) {
+            generatedSecret += BASE32_CHARS[randomBytes[i] % BASE32_CHARS.length];
+          }
           const defaultHashedBackupCodes = JSON.stringify([
-            '28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af',
-            'f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f'
+            await sha256Hex(generateRandomHex(8).toUpperCase()),
+            await sha256Hex(generateRandomHex(8).toUpperCase())
           ]);
 
           await env.DB.prepare(
             `INSERT INTO users (
               id, username, password_salt, password_hash, role, base_risk_score, status, department, mfa_enabled, mfa_secret, mfa_backup_codes, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', ?, 1, ?, ?, datetime('now'))`
-          ).bind(`usr_${clean}`, clean, salt, hash, role, base_risk_score, department, secret, defaultHashedBackupCodes).run();
+          ).bind(`usr_${clean}`, clean, salt, hash, role, base_risk_score, department, generatedSecret, defaultHashedBackupCodes).run();
         }
 
         return jsonResponse({
@@ -275,13 +287,10 @@ export default {
         }
 
         // GENUINE CRYPTOGRAPHIC PASSWORD VERIFICATION (PBKDF2 SHA-512)
-        // No universal passwords or bypasses permitted
+        // No universal passwords, plaintext comparisons, or bypasses permitted
         let isPasswordCorrect = false;
         if (user.password_salt && user.password_hash) {
           isPasswordCorrect = await verifyPasswordSubtle(password, user.password_salt, user.password_hash);
-        } else if (user.password_hash && !user.password_salt) {
-          // Fallback legacy hash match
-          isPasswordCorrect = user.password_hash === password;
         }
 
         if (!isPasswordCorrect) {
@@ -385,17 +394,24 @@ export default {
         if (env.DB) {
           if (username) {
             user = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(username.trim()).first();
-          } else {
-            // Find administrator or user associated with session
-            user = await env.DB.prepare('SELECT * FROM users WHERE role = ? LIMIT 1').bind('Admin').first();
+          } else if (mfaChallengeId || mfaSessionId) {
+            // Retrieve session from active_sessions or audit challenge
+            const cid = mfaChallengeId || mfaSessionId;
+            const challengeRow = await env.DB.prepare('SELECT username FROM active_sessions WHERE id = ? LIMIT 1').bind(cid).first();
+            if (challengeRow?.username) {
+              user = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(challengeRow.username.trim()).first();
+            }
           }
         }
 
         if (!user) {
-          return jsonResponse({ success: false, error: 'User record not found.' }, 401, origin);
+          return jsonResponse({ success: false, error: 'User record or MFA challenge binding not found.' }, 401, origin);
         }
 
-        const userSecret = user.mfa_secret || 'JBSWY3DPEHPK3PXP';
+        const userSecret = user.mfa_secret;
+        if (!userSecret) {
+          return jsonResponse({ success: false, error: 'MFA is not enrolled for this principal.' }, 400, origin);
+        }
         let isCodeValid = false;
         let matchedStep: number | undefined;
 

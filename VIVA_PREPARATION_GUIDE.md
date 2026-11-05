@@ -19,12 +19,15 @@ This viva preparation guide contains **42 rigorous, highly defensible questions 
 2. **Ephemeral Lifecycles**: Instances spin up and terminate in milliseconds, making static host-level monitoring impossible.
 3. **Disaggregated Attack Surface**: Instead of one large perimeter, every single micro-function represents an independent entry point requiring per-invocation zero-trust verification.
 
-### Q2: What is the IEEE Access 2025 *Bλambda* paper, and how does your project build upon it?
-**Answer:** The *Bλambda* paper (*IEEE Access, 2025, DOI: 10.1109/ACCESS.2025.3572729*) established that formal security property verification could be applied to serverless functions at runtime with less than 3% latency overhead (benchmark baseline: 2.10ms). Our project takes the theoretical foundations of *Bλambda* and engineers a complete operational framework featuring:
-- A 15-step in-line pipeline achieving an average latency of **1.42ms** (faster than *Bλambda*).
-- Built-in RFC 6238 TOTP Multi-Factor Authentication and session revocation.
-- A cryptographically linked SHA-256 tamper-evident audit ledger.
-- Discrete Markov sequence anomaly detection for multi-function business workflows.
+### Q2: What is the IEEE Access 2025 *BAMBDA* paper, and how does your project build upon it?
+**Answer:** The *BAMBDA* paper (*Changhee Shin, Bom Kim, and Seungsoo Lee, "BAMBDA: A Real-Time Verification Framework for Serverless Computing," IEEE Access, vol. 13, pp. 90896–90911, 2025, DOI: 10.1109/ACCESS.2025.3572729*) proposed automated code injection and centralized log-group analysis to verify temporal safety and liveness properties in AWS Lambda workflows, reporting an 8.12% runtime overhead under warm-start conditions.
+Our project investigates an alternative in-line gateway architecture designed for edge runtimes (Cloudflare Workers with Cloudflare D1) and Node.js microservices. Our independently developed contributions include:
+- An in-line 15-step verification pipeline intercepting requests prior to function handler invocation, with a reproducible mean verification latency of **1.07 ms** (median 1.04 ms, p95 1.20 ms).
+- Native Zero-Trust identity management: PBKDF2-SHA512 hashing (100,000 rounds), RFC 6238 TOTP MFA with replay prevention, single-use hashed backup codes, and HMAC-SHA256 JWT tokens.
+- Stateful real-time session revocation backed by relational SQL persistence.
+- Deterministic rule-based workflow transition checking (`function_rules`) to prevent unauthorized lateral jumps.
+- Heuristic threat scanning across six serverless attack vectors (including AWS/GCP IMDS SSRF `169.254.169.254`).
+- A tamper-evident SHA-256 hash-chained audit ledger with real-time SSE streaming.
 
 ### Q3: Why is Function Event Injection (SAS-01) ranked as the top vulnerability in the OWASP Serverless Top 10?
 **Answer:** In serverless architectures, functions consume input not only from traditional HTTP bodies but also from heterogeneous event sources (Cloudflare D1 triggers, KV updates, S3 bucket events, CloudWatch events). Traditional Web Application Firewalls (WAFs) only inspect HTTP ingress, leaving internal event-driven data flows uninspected. If malicious code or SQL injection is embedded within an internal event, downstream functions execute it unsanitized. Our framework mitigates this by placing Step 7 (Payload Sanitization) in-line for every function invocation regardless of trigger source.

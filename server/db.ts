@@ -1,7 +1,8 @@
 /**
- * Persistent SQLite Database Engine for the Serverless Security Verification Framework.
+ * Local SQLite Database Engine Emulating Cloudflare D1 Prepared Statement Contract.
  * Implements Cloudflare D1 prepared statement API contract (prepare/bind/first/all/run)
- * backed by persistent SQLite storage on disk.
+ * backed by persistent SQLite storage (node:sqlite) on disk for local Express development & testing.
+ * The production Cloudflare Worker targets actual remote Cloudflare D1 via the env.DB binding.
  * Automatically bootstraps and applies migrations:
  * - 0001_initial_schema.sql
  * - 0002_normalized_d1_schema.sql

@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "serverless-security-d1",
-      "database_id": "703e0f39-d179-43c1-9c95-2ba30aef99c4-d1",
+      "database_id": "703e0f39-d179-43c1-9c95-2ba30aef99c4",
       "migrations_dir": "migrations"
     }
   ],
