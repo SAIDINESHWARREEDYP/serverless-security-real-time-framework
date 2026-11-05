@@ -157,7 +157,7 @@ async function runTestSuite() {
     const verifySuccess = verifyTotp(correctCode, secret);
     const verifyFailure = verifyTotp(invalidCode, secret);
 
-    assert(verifySuccess && !verifyFailure, '8. RFC 6238 TOTP MFA Verification', `Valid TOTP accepted (${correctCode}), invalid code rejected without bypass.`);
+    assert(Boolean(verifySuccess.valid && !verifyFailure.valid), '8. RFC 6238 TOTP MFA Verification', `Valid TOTP accepted (${correctCode}), invalid code rejected without bypass.`);
   } catch (err: any) {
     assert(false, '8. RFC 6238 TOTP MFA Verification', err.message);
   }

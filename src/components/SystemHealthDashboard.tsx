@@ -5,6 +5,7 @@ import {
   Area,
   BarChart,
   Bar,
+  LineChart,
   Line,
   ComposedChart,
   Legend,
@@ -96,7 +97,7 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
   const chartAxisStroke = isLight ? '#cbd5e1' : '#223452';
   const chartTextFill = isLight ? '#475569' : '#64748b';
 
-  const [activeView, setActiveView] = useState<'both' | 'latency' | 'frequency' | 'risk'>('both');
+  const [activeView, setActiveView] = useState<'both' | 'trend' | 'latency' | 'frequency' | 'risk'>('both');
   const [latencyMetricFilter, setLatencyMetricFilter] = useState<'ALL' | 'PIPELINE' | 'D1_PERSISTENCE'>('ALL');
   const [timeResolution, setTimeResolution] = useState<'chronological' | 'hourly'>('chronological');
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -441,6 +442,80 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
     };
   }, [latencyTrendData]);
 
+  // 5. Historical Trend of System-Wide Average Risk Scores (Last 50 Audit Log Entries)
+  const riskTrendData = useMemo(() => {
+    if (logs.length === 0) {
+      // Baseline synthetic points to showcase zero-trust baseline before traffic
+      const now = Date.now();
+      return Array.from({ length: 12 }).map((_, i) => {
+        const time = new Date(now - (11 - i) * 30000).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+        const risk = 14 + Math.round(Math.sin(i) * 6);
+        return {
+          id: i + 1,
+          label: `#${i + 1}`,
+          time,
+          riskScore: risk,
+          avgRisk: risk,
+          status: 'ALLOWED',
+          fn: 'healthCheck',
+          username: 'secops_admin'
+        };
+      });
+    }
+
+    // Sort chronologically (oldest to newest) and take the last 50 entries
+    // logs in the application are in descending order (newest first), so slice(0, 50).reverse()
+    const last50 = [...logs].slice(0, 50).reverse();
+
+    let cumulativeRiskSum = 0;
+    return last50.map((log, index) => {
+      cumulativeRiskSum += log.calculated_risk;
+      const runningAvg = Math.round(cumulativeRiskSum / (index + 1));
+
+      const date = new Date(log.timestamp);
+      const timeStr = isNaN(date.getTime())
+        ? `#${log.id}`
+        : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      return {
+        id: log.id,
+        label: `#${log.id}`,
+        time: timeStr,
+        riskScore: log.calculated_risk,
+        avgRisk: runningAvg,
+        status: log.status,
+        fn: log.requested_function.replace('/api/', '').replace('v1/', ''),
+        username: log.username
+      };
+    });
+  }, [logs]);
+
+  // Statistics & Trajectory for Last 50 Risk Scores
+  const riskTrendStats = useMemo(() => {
+    if (riskTrendData.length === 0) {
+      return { currentAvg: 15, peak: 15, min: 15, criticalCount: 0, trend: 'STABLE' };
+    }
+    const scores = riskTrendData.map((d) => d.riskScore);
+    const avgScores = riskTrendData.map((d) => d.avgRisk);
+    const currentAvg = avgScores[avgScores.length - 1] ?? 0;
+    const peak = Math.max(...scores);
+    const min = Math.min(...scores);
+    const criticalCount = riskTrendData.filter((d) => d.riskScore >= maxThreshold).length;
+
+    // Trajectory: compare first third vs last third of the 50-entry window
+    const third = Math.max(1, Math.floor(riskTrendData.length / 3));
+    const firstAvg = riskTrendData.slice(0, third).reduce((s, d) => s + d.riskScore, 0) / third;
+    const lastAvg = riskTrendData.slice(-third).reduce((s, d) => s + d.riskScore, 0) / third;
+    const diff = lastAvg - firstAvg;
+    const trend = diff > 8 ? 'ESCALATING' : diff < -8 ? 'DE-ESCALATING' : 'STABLE';
+
+    return { currentAvg, peak, min, criticalCount, trend };
+  }, [riskTrendData, maxThreshold]);
+
   // Overall metrics summary
   const totalAuditCount = logs.length;
   const totalBlocked = logs.filter((l) => l.status === 'BLOCKED').length;
@@ -619,6 +694,22 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
               }`}
             >
               Unified Dashboard
+            </button>
+            <button
+              id="tab-view-risk-trend-50"
+              onClick={() => setActiveView('trend')}
+              className={`px-3 py-1 rounded-lg transition-all flex items-center gap-1.5 ${
+                activeView === 'trend'
+                  ? isLight
+                    ? 'bg-white text-blue-700 font-bold shadow-xs'
+                    : 'bg-[#00d2ff] text-black font-bold'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
+                  : 'text-[#94a3b8] hover:text-white'
+              }`}
+            >
+              <TrendingUp className="w-3 h-3 text-emerald-400" />
+              <span>50-Log Risk Trend</span>
             </button>
             <button
               onClick={() => setActiveView('latency')}
@@ -1294,6 +1385,179 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
               </span>
               <span className="text-cyan-400 font-semibold font-mono">
                 X-Verification-Latency-MS Header Verified
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* CHART 4: HISTORICAL TREND OF SYSTEM-WIDE AVERAGE RISK SCORES OVER LAST 50 ENTRIES */}
+        {(activeView === 'both' || activeView === 'trend') && (
+          <div className="lg:col-span-12 glossy-panel rounded-2xl p-4 sm:p-5 flex flex-col shadow-xs transition-colors border border-blue-500/20">
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between mb-3 border-b pb-2 gap-2 ${
+              isLight ? 'border-slate-200' : 'border-[#1c2b42]'
+            }`}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    Historical Trend of System-Wide Average Risk Scores (Last 50 Entries)
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Sliding window moving average progression &amp; discrete invocation anomalies across the last {riskTrendData.length} audit logs
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${
+                  riskTrendStats.trend === 'ESCALATING'
+                    ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                    : riskTrendStats.trend === 'DE-ESCALATING'
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                }`}>
+                  <Activity className="w-3 h-3" />
+                  <span>Trajectory: {riskTrendStats.trend}</span>
+                </span>
+                <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-mono ${
+                  isLight ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-slate-900 text-slate-300 border-slate-800'
+                }`}>
+                  Sampling: {riskTrendData.length}/50 Logs
+                </span>
+              </div>
+            </div>
+
+            {/* Quick KPI Badges for Risk Trend */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mb-3.5">
+              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
+                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">50-Log Moving Avg</span>
+                <span className={`text-sm font-bold font-mono tabular-nums ${
+                  riskTrendStats.currentAvg >= maxThreshold
+                    ? 'text-rose-400'
+                    : riskTrendStats.currentAvg >= 35
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}>
+                  {riskTrendStats.currentAvg}%
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
+                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Peak Risk Detected</span>
+                <span className="text-sm font-bold font-mono text-rose-400 tabular-nums">
+                  {riskTrendStats.peak}%
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
+                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Lowest Risk Hit</span>
+                <span className="text-sm font-bold font-mono text-emerald-400 tabular-nums">
+                  {riskTrendStats.min}%
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
+                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Critical Events</span>
+                <span className="text-sm font-bold font-mono text-rose-400 tabular-nums">
+                  {riskTrendStats.criticalCount} <span className="text-[10px] font-normal text-slate-400">(≥{maxThreshold}%)</span>
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80 col-span-2 sm:col-span-1">
+                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Policy Cutoff</span>
+                <span className="text-sm font-bold font-mono text-amber-400 tabular-nums">
+                  {maxThreshold}% Boundary
+                </span>
+              </div>
+            </div>
+
+            {/* Recharts LineChart */}
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={riskTrendData}
+                  margin={{ top: 15, right: 15, left: -20, bottom: 0 }}
+                >
+                  <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    stroke={chartTextFill}
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={{ stroke: chartAxisStroke }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    stroke={chartTextFill}
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={{ stroke: chartAxisStroke }}
+                    unit="%"
+                  />
+                  <Tooltip content={<CustomChartTooltip isLight={isLight} />} />
+                  <Legend
+                    verticalAlign="top"
+                    align="right"
+                    height={32}
+                    iconType="circle"
+                    wrapperStyle={{ fontSize: '11px', fontFamily: 'monospace' }}
+                  />
+                  <ReferenceLine
+                    y={maxThreshold}
+                    stroke="#ff4a6b"
+                    strokeDasharray="4 4"
+                    strokeWidth={1.5}
+                    label={{
+                      value: `MAX CUTOFF (${maxThreshold}%)`,
+                      fill: '#ff4a6b',
+                      fontSize: 9,
+                      position: 'top'
+                    }}
+                  />
+                  <ReferenceLine
+                    y={25}
+                    stroke="#00ff87"
+                    strokeDasharray="2 2"
+                    strokeWidth={1}
+                    label={{
+                      value: 'NOMINAL (25%)',
+                      fill: '#00ff87',
+                      fontSize: 9,
+                      position: 'bottom'
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="riskScore"
+                    name="Instant Invocation Risk"
+                    stroke="#f59e0b"
+                    strokeWidth={1.5}
+                    strokeDasharray="3 3"
+                    dot={{ r: 2, fill: '#f59e0b', strokeWidth: 0 }}
+                    activeDot={{ r: 5, fill: '#f59e0b' }}
+                    unit="%"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="avgRisk"
+                    name="System Moving Average Risk"
+                    stroke="#00d2ff"
+                    strokeWidth={3}
+                    dot={{ r: 3, fill: '#00d2ff', strokeWidth: 1, stroke: '#090d16' }}
+                    activeDot={{ r: 6, fill: '#00ff87', strokeWidth: 2, stroke: '#090d16' }}
+                    unit="%"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className={`mt-2.5 text-[10px] flex items-center justify-between border-t pt-2 ${
+              isLight ? 'border-slate-200 text-slate-500' : 'border-[#162236] text-[#64748b]'
+            }`}>
+              <span className="flex items-center gap-1.5 font-mono">
+                <span className="w-2 h-2 rounded-full bg-[#00d2ff] inline-block" />
+                Cyan line visualizes sliding system-wide average across historical 50-entry evaluation window
+              </span>
+              <span className="text-[#00ff87] font-semibold font-mono">
+                Continuous Sliding Window Telemetry
               </span>
             </div>
           </div>

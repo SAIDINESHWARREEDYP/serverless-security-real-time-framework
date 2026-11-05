@@ -108,9 +108,10 @@ class AuditRepository {
     // Insert into persistent D1 SQLite audit_events
     const runResult = db.prepare(
       `INSERT INTO audit_events (
-        username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, created_at, integrity_hash, prev_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
+      timestamp,
       data.username,
       data.requested_function,
       data.calculated_risk,
@@ -118,7 +119,9 @@ class AuditRepository {
       data.reason,
       data.verification_latency_ms,
       eventType,
-      timestamp
+      timestamp,
+      this.lastHash,
+      this.lastHash
     ).run();
 
     const id = Number(runResult.lastRowId || Date.now());

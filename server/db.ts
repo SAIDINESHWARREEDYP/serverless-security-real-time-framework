@@ -368,10 +368,14 @@ class PersistentSecurityDatabase {
   }
 
   public getRecentRequestCount(username: string, windowMs = 60000): number {
-    const cutoff = new Date(Date.now() - windowMs).toISOString();
+    const cutoffDate = new Date(Date.now() - windowMs);
+    const cutoffIso = cutoffDate.toISOString();
+    const cutoffSqlite = cutoffIso.replace('T', ' ').replace(/\..*$/, '');
     const row = this.sqlite.prepare(
-      'SELECT COUNT(*) as count FROM audit_events WHERE LOWER(username) = LOWER(?) AND timestamp >= ?'
-    ).get(username, cutoff) as any;
+      `SELECT COUNT(*) as count FROM audit_events 
+       WHERE LOWER(username) = LOWER(?) 
+         AND (timestamp >= ? OR timestamp >= ? OR created_at >= ? OR created_at >= ?)`
+    ).get(username, cutoffIso, cutoffSqlite, cutoffIso, cutoffSqlite) as any;
 
     return row?.count || 0;
   }

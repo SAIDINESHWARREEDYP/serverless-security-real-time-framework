@@ -47,7 +47,7 @@ const rawZeroTrustOrigins = parseSafeOrigin(process.env.ZERO_TRUST_ORIGIN);
 export const CONFIG = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   IS_PROD: isProd,
-  PORT: parseInt(process.env.PORT || '3000', 10),
+  PORT: process.env.NODE_ENV === 'production' && process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
 
   // Explicit Trusted Origins for CORS Defense (Never reflect arbitrary untrusted origins)
   TRUSTED_ORIGINS: [

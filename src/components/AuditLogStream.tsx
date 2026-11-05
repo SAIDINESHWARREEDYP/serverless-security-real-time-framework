@@ -9,6 +9,7 @@ import {
   Flame,
   Activity,
   Download,
+  FileJson,
   Check,
   X,
   SlidersHorizontal,
@@ -46,6 +47,7 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
   const [filterPrincipal, setFilterPrincipal] = useState<string>('ALL');
   const [minRiskThreshold, setMinRiskThreshold] = useState<number>(0);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [downloadJsonSuccess, setDownloadJsonSuccess] = useState(false);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   // Extract unique function paths and principals for dynamic dropdowns
@@ -200,6 +202,66 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
     setTimeout(() => setDownloadSuccess(false), 2200);
   };
 
+  const handleDownloadJSON = () => {
+    if (filteredLogs.length === 0) return;
+
+    const payload = {
+      exportMetadata: {
+        title: 'Serverless Security Verification Framework - Cryptographic Audit Ledger Export',
+        exportedAt: new Date().toISOString(),
+        totalLogsInDataset: logs.length,
+        filteredLogsCount: filteredLogs.length,
+        activeFilters: {
+          verdict: filterVerdict,
+          severity: filterSeverity,
+          functionPath: filterFunction,
+          principal: filterPrincipal,
+          minRiskThreshold,
+          searchQuery: searchQuery.trim() || null
+        },
+        statistics: {
+          allowed: filteredLogs.filter((l) => l.status === 'ALLOWED').length,
+          blocked: filteredLogs.filter((l) => l.status === 'BLOCKED').length,
+          averageRiskScore: filteredLogs.length > 0
+            ? Math.round(filteredLogs.reduce((acc, curr) => acc + curr.calculated_risk, 0) / filteredLogs.length)
+            : 0,
+          criticalCount: filteredLogs.filter((l) => l.calculated_risk >= 75).length
+        }
+      },
+      auditLogs: filteredLogs.map((log) => ({
+        id: log.id,
+        timestamp: log.timestamp,
+        localTime: new Date(log.timestamp).toLocaleString(),
+        principal: log.username,
+        requestedFunction: log.requested_function,
+        calculatedRisk: log.calculated_risk,
+        status: log.status,
+        verdict: log.status,
+        reason: log.reason,
+        verificationLatencyMs: log.verification_latency_ms ?? 0.28,
+        eventType: log.event_type || 'STANDARD_VERIFICATION'
+      }))
+    };
+
+    const jsonString = JSON.stringify(payload, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filterTag = filterVerdict !== 'ALL' ? `_${filterVerdict.toLowerCase()}` : '';
+    link.setAttribute('download', `security_audit_logs${filterTag}_${dateStr}.json`);
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setDownloadJsonSuccess(true);
+    setTimeout(() => setDownloadJsonSuccess(false), 2200);
+  };
+
   return (
     <div className="bg-[#131c2e] border border-[#223452] p-4 sm:p-5 rounded-xl flex flex-col h-full font-mono shadow-sm">
       {/* 1. Header and Primary Actions */}
@@ -280,6 +342,32 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
               <>
                 <Download className="w-3.5 h-3.5 text-[#00ff87]" />
                 <span>Export CSV ({filteredLogs.length})</span>
+              </>
+            )}
+          </button>
+
+          <button
+            id="btn-download-json"
+            onClick={handleDownloadJSON}
+            disabled={filteredLogs.length === 0}
+            className={`px-2.5 py-1.5 rounded bg-[#090d16] hover:bg-[#1a273f] border border-[#223452] text-xs flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              downloadJsonSuccess ? 'text-[#00ff87] border-[#00ff87]/50' : 'text-[#94a3b8] hover:text-[#00d2ff]'
+            }`}
+            title={
+              filteredLogs.length > 0
+                ? `Export ${filteredLogs.length} currently filtered logs as a structured JSON file`
+                : 'No logs currently match filters to download'
+            }
+          >
+            {downloadJsonSuccess ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-[#00ff87]" />
+                <span className="text-[#00ff87]">JSON Downloaded!</span>
+              </>
+            ) : (
+              <>
+                <FileJson className="w-3.5 h-3.5 text-[#00d2ff]" />
+                <span>Export JSON ({filteredLogs.length})</span>
               </>
             )}
           </button>
