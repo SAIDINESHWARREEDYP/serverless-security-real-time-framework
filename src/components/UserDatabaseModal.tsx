@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   UserPlus,
@@ -21,9 +21,20 @@ import {
   Download,
   Smartphone,
   KeyRound,
-  AlertTriangle
+  AlertTriangle,
+  LifeBuoy,
+  Eye,
+  EyeOff,
+  Copy,
+  Check
 } from 'lucide-react';
 import { User, UserApprovalStatus } from '../types.ts';
+import {
+  generateTotpToken,
+  getTotpRemainingSeconds,
+  normalizeBase32Secret,
+  formatTotpKeyUri
+} from '../utils/mfa.ts';
 
 interface UserDatabaseModalProps {
   isOpen: boolean;
@@ -44,6 +55,7 @@ interface UserDatabaseModalProps {
   onBatchSeed: () => Promise<void>;
   onRevokeSession?: (username: string) => Promise<void>;
   onSelectUserForLogin?: (user: User) => void;
+  onRefreshUsers?: () => Promise<void>;
 }
 
 export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
@@ -56,7 +68,8 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   onDeleteUser,
   onBatchSeed,
   onRevokeSession,
-  onSelectUserForLogin
+  onSelectUserForLogin,
+  onRefreshUsers
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -69,6 +82,30 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const [riskFilter, setRiskFilter] = useState<'ALL' | 'CRITICAL' | 'ELEVATED' | 'MODERATE' | 'NOMINAL'>('ALL');
   const [sortBy, setSortBy] = useState<'name' | 'risk_desc' | 'risk_asc' | 'status'>('name');
 
+  // Development Mode state (facilitates troubleshooting MFA mismatches and viewing credentials)
+  const [isDevMode, setIsDevMode] = useState(true);
+
+  // Recovery Codes Modal state
+  const [recoveryCodesModal, setRecoveryCodesModal] = useState<{ username: string; codes: string[] } | null>(null);
+  const [isGeneratingRecovery, setIsGeneratingRecovery] = useState<string | null>(null);
+  const [copiedCodes, setCopiedCodes] = useState(false);
+
+  // Security Credentials View state
+  const [securityCredentialsUser, setSecurityCredentialsUser] = useState<{
+    username: string;
+    role: string;
+    base32Secret: string;
+    activeTotp: string;
+    keyUri: string;
+    secondsRemaining: number;
+    backupCodesCount: number;
+  } | null>(null);
+  const [isLoadingCredentials, setIsLoadingCredentials] = useState<string | null>(null);
+  const [showSecretRaw, setShowSecretRaw] = useState(false);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+  const [copiedTotp, setCopiedTotp] = useState(false);
+  const [copiedUri, setCopiedUri] = useState(false);
+
   // New user form state
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('ZeroTrust_2026');
@@ -80,7 +117,105 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Live timer for Security Credentials Inspector (updates active TOTP and countdown bar every second)
+  useEffect(() => {
+    if (!securityCredentialsUser) return;
+    const interval = setInterval(() => {
+      const { secondsRemaining } = getTotpRemainingSeconds();
+      const freshToken = generateTotpToken(securityCredentialsUser.base32Secret);
+      setSecurityCredentialsUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              activeTotp: freshToken,
+              secondsRemaining
+            }
+          : null
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [securityCredentialsUser?.base32Secret]);
+
   if (!isOpen) return null;
+
+  // Handle generating single-use recovery codes
+  const handleGenerateRecoveryCodes = async (targetUsername: string) => {
+    setIsGeneratingRecovery(targetUsername);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/system/users/${encodeURIComponent(targetUsername)}/recovery-codes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.plaintextCodes)) {
+        setRecoveryCodesModal({
+          username: targetUsername,
+          codes: data.plaintextCodes
+        });
+        await onRefreshUsers?.();
+      } else {
+        setActionError(data.error || 'Failed to generate recovery codes');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'Error generating recovery codes');
+    } finally {
+      setIsGeneratingRecovery(null);
+    }
+  };
+
+  // Handle opening Security Credentials view
+  const handleOpenSecurityCredentials = async (targetUser: User) => {
+    setIsLoadingCredentials(targetUser.username);
+    setActionError(null);
+    setShowSecretRaw(false);
+    try {
+      const res = await fetch(`/api/system/users/${encodeURIComponent(targetUser.username)}/credentials`);
+      const data = await res.json();
+      if (data.success) {
+        setSecurityCredentialsUser({
+          username: data.username,
+          role: data.role || targetUser.role,
+          base32Secret: data.base32Secret,
+          activeTotp: data.activeTotpToken,
+          keyUri: data.keyUri,
+          secondsRemaining: data.secondsRemaining,
+          backupCodesCount: data.backupCodesCount
+        });
+      } else {
+        // Fallback using client-side derivation
+        const sec = normalizeBase32Secret(targetUser.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+        const token = generateTotpToken(sec);
+        const { secondsRemaining } = getTotpRemainingSeconds();
+        const uri = formatTotpKeyUri(targetUser.username, 'ServerlessSecOps', sec);
+        setSecurityCredentialsUser({
+          username: targetUser.username,
+          role: targetUser.role,
+          base32Secret: sec,
+          activeTotp: token,
+          keyUri: uri,
+          secondsRemaining,
+          backupCodesCount: Array.isArray(targetUser.mfa_backup_codes) ? targetUser.mfa_backup_codes.length : 0
+        });
+      }
+    } catch (err: any) {
+      const sec = normalizeBase32Secret(targetUser.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+      const token = generateTotpToken(sec);
+      const { secondsRemaining } = getTotpRemainingSeconds();
+      const uri = formatTotpKeyUri(targetUser.username, 'ServerlessSecOps', sec);
+      setSecurityCredentialsUser({
+        username: targetUser.username,
+        role: targetUser.role,
+        base32Secret: sec,
+        activeTotp: token,
+        keyUri: uri,
+        secondsRemaining,
+        backupCodesCount: Array.isArray(targetUser.mfa_backup_codes) ? targetUser.mfa_backup_codes.length : 0
+      });
+    } finally {
+      setIsLoadingCredentials(null);
+    }
+  };
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,30 +251,32 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     total: users.length || 1
   };
 
-  const filteredUsers = users.filter((u) => {
-    const q = searchQuery.toLowerCase().trim();
-    const matchesSearch =
-      !q ||
-      u.username.toLowerCase().includes(q) ||
-      (u.department && u.department.toLowerCase().includes(q)) ||
-      u.role.toLowerCase().includes(q);
+  const filteredUsers = users
+    .filter((u) => {
+      const q = searchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        u.username.toLowerCase().includes(q) ||
+        (u.department && u.department.toLowerCase().includes(q)) ||
+        u.role.toLowerCase().includes(q);
 
-    const matchesStatus = statusFilter === 'ALL' || u.status === statusFilter;
-    const matchesRole = roleFilter === 'ALL' || u.role === roleFilter;
+      const matchesStatus = statusFilter === 'ALL' || u.status === statusFilter;
+      const matchesRole = roleFilter === 'ALL' || u.role === roleFilter;
 
-    let matchesRisk = true;
-    if (riskFilter === 'CRITICAL') matchesRisk = u.base_risk_score >= 75;
-    else if (riskFilter === 'ELEVATED') matchesRisk = u.base_risk_score >= 50 && u.base_risk_score < 75;
-    else if (riskFilter === 'MODERATE') matchesRisk = u.base_risk_score >= 25 && u.base_risk_score < 50;
-    else if (riskFilter === 'NOMINAL') matchesRisk = u.base_risk_score < 25;
+      let matchesRisk = true;
+      if (riskFilter === 'CRITICAL') matchesRisk = u.base_risk_score >= 75;
+      else if (riskFilter === 'ELEVATED') matchesRisk = u.base_risk_score >= 50 && u.base_risk_score < 75;
+      else if (riskFilter === 'MODERATE') matchesRisk = u.base_risk_score >= 25 && u.base_risk_score < 50;
+      else if (riskFilter === 'NOMINAL') matchesRisk = u.base_risk_score < 25;
 
-    return matchesSearch && matchesStatus && matchesRole && matchesRisk;
-  }).sort((a, b) => {
-    if (sortBy === 'risk_desc') return b.base_risk_score - a.base_risk_score;
-    if (sortBy === 'risk_asc') return a.base_risk_score - b.base_risk_score;
-    if (sortBy === 'status') return a.status.localeCompare(b.status);
-    return a.username.localeCompare(b.username);
-  });
+      return matchesSearch && matchesStatus && matchesRole && matchesRisk;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'risk_desc') return b.base_risk_score - a.base_risk_score;
+      if (sortBy === 'risk_asc') return a.base_risk_score - b.base_risk_score;
+      if (sortBy === 'status') return (a.status || '').localeCompare(b.status || '');
+      return a.username.localeCompare(b.username);
+    });
 
   const pendingCount = users.filter((u) => u.status === 'PENDING_APPROVAL').length;
   const approvedCount = users.filter((u) => u.status === 'APPROVED').length;
@@ -154,7 +291,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <Database className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-semibold text-white tracking-tight">
                   Enterprise User Database &amp; Saved Logins
                 </h3>
@@ -168,16 +305,31 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Manage all registered logins, view approval clearance status, and provision multi-user identities.
+                Manage registered identities, generate single-use recovery bypass codes, and inspect MFA credentials in Dev Mode.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
+            {/* Development Mode Toggle Switch */}
+            <button
+              type="button"
+              onClick={() => setIsDevMode(!isDevMode)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-semibold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                isDevMode
+                  ? 'bg-purple-600/20 text-purple-300 border-purple-500/40 shadow-xs'
+                  : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-white'
+              }`}
+              title="Toggle Development Mode to inspect Base32 secrets and troubleshoot MFA mismatches"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>Dev Mode: {isDevMode ? 'ON' : 'OFF'}</span>
+            </button>
+
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               title="Close"
             >
               <X className="w-5 h-5" />
@@ -195,7 +347,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             <button
               type="button"
               onClick={() => setRevocationNotice(null)}
-              className="text-slate-400 hover:text-white"
+              className="text-slate-400 hover:text-white cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -211,11 +363,8 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
                 Identity Risk Spectrum Distribution
               </span>
-              <span className="text-slate-500 text-[10px]">
-                {users.length} Registered Identities
-              </span>
+              <span className="text-slate-500 text-[10px]">{users.length} Registered Identities</span>
             </div>
-            {/* Visual multi-segmented bar */}
             <div className="h-2 w-full rounded-full overflow-hidden flex bg-slate-900 border border-slate-800">
               <div
                 style={{ width: `${Math.round((userRiskStats.nominal / userRiskStats.total) * 100)}%` }}
@@ -238,12 +387,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 title={`Critical (≥75%): ${userRiskStats.critical}`}
               />
             </div>
-            {/* Quick Filter Clickable Metrics */}
             <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400 flex-wrap">
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'NOMINAL' ? 'ALL' : 'NOMINAL')}
-                className={`flex items-center gap-1 hover:text-white transition-colors ${riskFilter === 'NOMINAL' ? 'text-emerald-300 font-bold' : ''}`}
+                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
+                  riskFilter === 'NOMINAL' ? 'text-emerald-300 font-bold' : ''
+                }`}
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
                 Nominal: {userRiskStats.nominal}
@@ -251,7 +401,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'MODERATE' ? 'ALL' : 'MODERATE')}
-                className={`flex items-center gap-1 hover:text-white transition-colors ${riskFilter === 'MODERATE' ? 'text-cyan-300 font-bold' : ''}`}
+                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
+                  riskFilter === 'MODERATE' ? 'text-cyan-300 font-bold' : ''
+                }`}
               >
                 <span className="w-2 h-2 rounded-full bg-cyan-500" />
                 Moderate: {userRiskStats.moderate}
@@ -259,7 +411,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'ELEVATED' ? 'ALL' : 'ELEVATED')}
-                className={`flex items-center gap-1 hover:text-white transition-colors ${riskFilter === 'ELEVATED' ? 'text-amber-300 font-bold' : ''}`}
+                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
+                  riskFilter === 'ELEVATED' ? 'text-amber-300 font-bold' : ''
+                }`}
               >
                 <span className="w-2 h-2 rounded-full bg-amber-400" />
                 Elevated: {userRiskStats.elevated}
@@ -267,7 +421,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'CRITICAL' ? 'ALL' : 'CRITICAL')}
-                className={`flex items-center gap-1 hover:text-white transition-colors ${riskFilter === 'CRITICAL' ? 'text-rose-300 font-bold' : ''}`}
+                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
+                  riskFilter === 'CRITICAL' ? 'text-rose-300 font-bold' : ''
+                }`}
               >
                 <span className="w-2 h-2 rounded-full bg-rose-500" />
                 Critical: {userRiskStats.critical}
@@ -276,7 +432,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setRiskFilter('ALL')}
-                  className="text-blue-400 hover:underline text-[10px] ml-auto"
+                  className="text-blue-400 hover:underline text-[10px] ml-auto cursor-pointer"
                 >
                   Clear Risk Filter
                 </button>
@@ -349,28 +505,28 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               </select>
             </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onBatchSeed()}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
-              title="Populate test corporate users in database"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Seed Enterprise Users</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onBatchSeed()}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Populate test corporate users in database"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Seed Enterprise Users</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>{showAddForm ? 'Hide Form' : 'Save New User Login'}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>{showAddForm ? 'Hide Form' : 'Save New User Login'}</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
         {/* Add User Drawer Form */}
         {showAddForm && (
@@ -404,7 +560,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   placeholder="e.g. devops_elena"
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
                 />
               </div>
 
@@ -415,7 +571,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="ZeroTrust_2026"
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
                 />
               </div>
 
@@ -488,14 +644,14 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors"
+                className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
               >
                 {isSubmitting ? 'Saving to Database...' : 'Save Identity'}
               </button>
@@ -516,7 +672,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   setStatusFilter('ALL');
                   setRoleFilter('ALL');
                 }}
-                className="mt-2 text-blue-400 hover:underline text-xs"
+                className="mt-2 text-blue-400 hover:underline text-xs cursor-pointer"
               >
                 Reset Search Filters
               </button>
@@ -528,6 +684,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 const isApproved = user.status === 'APPROVED';
                 const isRejected = user.status === 'REJECTED';
                 const isSuspended = user.status === 'SUSPENDED';
+                const backupCount = Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes.length : 0;
 
                 return (
                   <div
@@ -595,6 +752,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                             <Smartphone className="w-2.5 h-2.5 text-blue-400" />
                             MFA Active
                           </span>
+
+                          {backupCount > 0 && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                              <LifeBuoy className="w-2.5 h-2.5 text-amber-400" />
+                              {backupCount} Recovery Codes
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 flex-wrap">
@@ -604,7 +768,6 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               {user.department}
                             </span>
                           )}
-                          {/* Visual Risk Meter and Score */}
                           <div className="flex items-center gap-2">
                             <span className="font-mono">
                               Risk:{' '}
@@ -623,7 +786,6 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               </span>
                             </span>
 
-                            {/* Mini visual meter */}
                             <div className="w-16 h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800 hidden sm:block">
                               <div
                                 className={`h-full transition-all ${
@@ -659,11 +821,6 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                                 : 'NOMINAL'}
                             </span>
                           </div>
-                          {user.approvedBy && (
-                            <span className="text-slate-500 font-mono text-[10px]">
-                              Cleared by: {user.approvedBy}
-                            </span>
-                          )}
                         </div>
 
                         {user.requestJustification && (
@@ -675,13 +832,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                     </div>
 
                     {/* Action Controls */}
-                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center flex-wrap">
                       {isPending && (
                         <>
                           <button
                             type="button"
                             onClick={() => onApproveUser(user.username)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 transition-colors"
+                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 transition-colors cursor-pointer"
                             title="Verify and Approve user for login"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -690,7 +847,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                           <button
                             type="button"
                             onClick={() => onRejectUser(user.username)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 flex items-center gap-1 transition-colors"
+                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer"
                             title="Reject user request"
                           >
                             <XCircle className="w-3.5 h-3.5 text-rose-400" />
@@ -699,7 +856,37 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         </>
                       )}
 
-                      {/* Real-time Session Revocation Action (Admin Trigger) - Available next to each listed user */}
+                      {/* FEATURE 1: Security Credentials Inspector (Admin in Dev Mode) */}
+                      {isDevMode && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSecurityCredentials(user)}
+                          disabled={isLoadingCredentials === user.username}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/60 hover:border-blue-500 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                          title="Inspect Base32 TOTP secret, live token, and OTP auth URI for troubleshooting MFA mismatches"
+                        >
+                          <KeyRound className="w-3.5 h-3.5 text-blue-400" />
+                          <span>
+                            {isLoadingCredentials === user.username ? 'Loading...' : 'Security Credentials'}
+                          </span>
+                        </button>
+                      )}
+
+                      {/* FEATURE 2: Generate Single-Use Recovery Codes */}
+                      <button
+                        type="button"
+                        onClick={() => handleGenerateRecoveryCodes(user.username)}
+                        disabled={isGeneratingRecovery === user.username}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border border-amber-800/60 hover:border-amber-500 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                        title="Generate 8 single-use high-entropy recovery bypass codes and store in user profile"
+                      >
+                        <LifeBuoy className="w-3.5 h-3.5 text-amber-400" />
+                        <span>
+                          {isGeneratingRecovery === user.username ? 'Generating...' : 'Recovery Codes'}
+                        </span>
+                      </button>
+
+                      {/* Real-time Session Revocation Action */}
                       {onRevokeSession && (
                         <button
                           type="button"
@@ -713,10 +900,16 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               ? 'bg-rose-500/30 text-rose-300 border border-rose-500/60'
                               : 'bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 hover:border-rose-500'
                           }`}
-                          title={`Terminate ${user.username}'s active session record in the database, ensuring their token is no longer honored.`}
+                          title={`Terminate ${user.username}'s active session record in the database.`}
                         >
                           <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                          <span>{revokingUser === user.username ? 'Revoking...' : revokedUsersList.has(user.username) ? 'Session Terminated' : 'Revoke Session'}</span>
+                          <span>
+                            {revokingUser === user.username
+                              ? 'Revoking...'
+                              : revokedUsersList.has(user.username)
+                              ? 'Session Terminated'
+                              : 'Revoke Session'}
+                          </span>
                         </button>
                       )}
 
@@ -724,7 +917,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         <button
                           type="button"
                           onClick={() => onDeleteUser(user.username)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors"
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
                           title="Delete from database"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -741,19 +934,249 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         {/* Modal Footer */}
         <div className="p-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs text-slate-400">
           <span className="font-mono text-[11px]">
-            Cloudflare D1 SQLite &amp; Edge IAM Engine
+            Cloudflare D1 SQLite &amp; Edge IAM Engine • RFC 6238 MFA Protected
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer"
           >
             Close Directory
           </button>
         </div>
       </div>
 
-      {/* Small Confirmation Dialog to Prevent Accidental Session Termination */}
+      {/* MODAL 1: SECURITY CREDENTIALS INSPECTOR (Dev Mode View) */}
+      {securityCredentialsUser && (
+        <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-blue-500/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>Security Credentials Inspector</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                      Dev Mode
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Troubleshoot MFA token alignment and inspect base32 secret for{' '}
+                    <span className="text-white font-mono font-semibold">[{securityCredentialsUser.username}]</span>.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSecurityCredentialsUser(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Live RFC 6238 Token Display */}
+            <div className="p-4 rounded-xl bg-slate-950 border border-blue-500/30 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                  Synchronized Live TOTP (30s Window)
+                </span>
+                <span className="text-[11px] font-mono text-blue-400 font-bold">
+                  {securityCredentialsUser.secondsRemaining}s remaining
+                </span>
+              </div>
+
+              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-blue-500 h-full transition-all duration-1000 ease-linear rounded-full"
+                  style={{ width: `${(securityCredentialsUser.secondsRemaining / 30) * 100}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-2xl font-mono font-bold text-white tracking-widest">
+                  {securityCredentialsUser.activeTotp.slice(0, 3)} {securityCredentialsUser.activeTotp.slice(3, 6)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(securityCredentialsUser.activeTotp);
+                    setCopiedTotp(true);
+                    setTimeout(() => setCopiedTotp(false), 2000);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-blue-600/30 hover:bg-blue-600/40 border border-blue-500/40 text-blue-300 text-xs font-mono flex items-center gap-1.5 cursor-pointer"
+                >
+                  {copiedTotp ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedTotp ? 'Copied' : 'Copy TOTP'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Base32 Secret Key */}
+            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-medium">Shared Base32 Secret Key (RFC 6238):</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowSecretRaw(!showSecretRaw)}
+                    className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                  >
+                    {showSecretRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showSecretRaw ? 'Hide' : 'Reveal'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(securityCredentialsUser.base32Secret);
+                      setCopiedSecret(true);
+                      setTimeout(() => setCopiedSecret(false), 2000);
+                    }}
+                    className="text-[11px] text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedSecret ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedSecret ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+              <div className="font-mono text-xs text-white p-2 bg-slate-900 rounded-lg border border-slate-800 break-all select-all">
+                {showSecretRaw ? securityCredentialsUser.base32Secret : '••••••••••••••••••••••••••••••••'}
+              </div>
+            </div>
+
+            {/* OTPAuth URI */}
+            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-medium">OTP Authenticator URI:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(securityCredentialsUser.keyUri);
+                    setCopiedUri(true);
+                    setTimeout(() => setCopiedUri(false), 2000);
+                  }}
+                  className="text-[11px] text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedUri ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedUri ? 'Copied' : 'Copy URI'}</span>
+                </button>
+              </div>
+              <div className="font-mono text-[11px] text-slate-400 p-2 bg-slate-900 rounded-lg border border-slate-800 break-all truncate">
+                {securityCredentialsUser.keyUri}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
+              <span>Single-use bypass codes stored: <strong className="text-amber-400 font-mono">{securityCredentialsUser.backupCodesCount}</strong></span>
+              <button
+                type="button"
+                onClick={() => setSecurityCredentialsUser(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                Close Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: GENERATED RECOVERY CODES MODAL */}
+      {recoveryCodesModal && (
+        <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                  <LifeBuoy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Single-Use Recovery Bypass Codes</h3>
+                  <p className="text-xs text-slate-400">
+                    Generated 8 emergency bypass codes for{' '}
+                    <span className="text-white font-mono font-semibold">[{recoveryCodesModal.username}]</span>.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setRecoveryCodesModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed">
+              <strong className="block text-amber-300 font-bold mb-0.5">Important Security Notice:</strong>
+              Each code can only be used once to bypass MFA if the physical TOTP authenticator device is lost. Once consumed, the code is permanently invalidated. Store these codes in an encrypted password vault.
+            </div>
+
+            {/* 8 Codes Grid */}
+            <div className="grid grid-cols-2 gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800 font-mono text-sm">
+              {recoveryCodesModal.codes.map((code, idx) => (
+                <div
+                  key={idx}
+                  className="p-2 rounded bg-slate-900 border border-slate-800 flex items-center justify-between text-white font-bold tracking-wider"
+                >
+                  <span className="text-slate-500 text-xs font-normal">#{idx + 1}</span>
+                  <span className="text-amber-300">{code}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const content = `Serverless Zero-Trust Recovery Codes\nUser: ${recoveryCodesModal.username}\nGenerated: ${new Date().toISOString()}\n\n${recoveryCodesModal.codes.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nNote: Each code is single-use.`;
+                  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `recovery_codes_${recoveryCodesModal.username}_${new Date().toISOString().slice(0, 10)}.txt`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download .txt</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const str = recoveryCodesModal.codes.join('\n');
+                    navigator.clipboard.writeText(str);
+                    setCopiedCodes(true);
+                    setTimeout(() => setCopiedCodes(false), 2000);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 border border-blue-500/40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  {copiedCodes ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedCodes ? 'Copied All' : 'Copy All Codes'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRecoveryCodesModal(null)}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM REVOCATION MODAL */}
       {confirmRevokeUser && (
         <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-rose-500/50 rounded-2xl p-5 max-w-md w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
@@ -816,8 +1239,8 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   const targetUsername = confirmRevokeUser.username;
                   setRevokingUser(targetUsername);
                   try {
-                    await onRevokeSession(targetUsername);
-                    setRevokedUsersList(prev => new Set(prev).add(targetUsername));
+                    await onRevokeSession?.(targetUsername);
+                    setRevokedUsersList((prev) => new Set(prev).add(targetUsername));
                     setRevocationNotice(`Active session for principal [${targetUsername}] terminated in real-time. Token invalidated.`);
                     setTimeout(() => setRevocationNotice(null), 5000);
                   } catch (err: any) {

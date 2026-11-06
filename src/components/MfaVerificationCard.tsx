@@ -14,11 +14,17 @@ import {
   Lock,
   Sparkles,
   Send,
-  QrCode,
+  LifeBuoy,
+  Key,
   Shield,
   Fingerprint
 } from 'lucide-react';
 import { MfaPendingChallenge, AuthSession, User } from '../types.ts';
+import {
+  generateTotpToken,
+  getTotpRemainingSeconds,
+  normalizeBase32Secret
+} from '../utils/mfa.ts';
 
 interface MfaVerificationCardProps {
   challenge: MfaPendingChallenge;
@@ -35,8 +41,9 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
   onAddTerminalLog,
   variant = 'page'
 }) => {
-  const [method, setMethod] = useState<'authenticator' | 'sms'>('authenticator');
+  const [method, setMethod] = useState<'authenticator' | 'sms' | 'backup_code'>('authenticator');
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [recoveryCodeInput, setRecoveryCodeInput] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [attemptsLeft, setAttemptsLeft] = useState<number>(challenge.attemptsLeft ?? 5);
@@ -57,40 +64,37 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     }
   }, [challenge.attemptsLeft]);
 
-  // Dynamic TOTP countdown calculation (30 second period)
+  // Normalized Base32 secret for genuine RFC 6238 TOTP computation
+  const normalizedSecret = React.useMemo(() => {
+    return normalizeBase32Secret(challenge.totpSecret || (challenge.user as any)?.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+  }, [challenge.totpSecret, challenge.user]);
+
+  // Dynamic TOTP countdown and real-time token calculation (30 second period + clock offset)
   const [totpSecondsLeft, setTotpSecondsLeft] = useState<number>(() => {
-    return 30 - (Math.floor(Date.now() / 1000) % 30);
+    const { secondsRemaining } = getTotpRemainingSeconds(challenge.clockOffsetSeconds || 0);
+    return secondsRemaining;
   });
-  const [currentTotpCode, setCurrentTotpCode] = useState<string>(challenge.demoTotpCode || '582914');
+
+  const [currentTotpCode, setCurrentTotpCode] = useState<string>(() => {
+    return generateTotpToken(normalizedSecret, challenge.clockOffsetSeconds || 0);
+  });
 
   // References to the 6 PIN input boxes
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // 1. Ticking TOTP Timer
+  // 1. Live Ticking TOTP Timer synchronized with standard 30s window and client clock offset
   useEffect(() => {
-    if (challenge.demoTotpCode) {
-      setCurrentTotpCode(challenge.demoTotpCode);
-    }
-    const timer = setInterval(() => {
-      const remaining = 30 - (Math.floor(Date.now() / 1000) % 30);
-      setTotpSecondsLeft(remaining);
+    const updateTotp = () => {
+      const { secondsRemaining } = getTotpRemainingSeconds(challenge.clockOffsetSeconds || 0);
+      setTotpSecondsLeft(secondsRemaining);
+      const code = generateTotpToken(normalizedSecret, challenge.clockOffsetSeconds || 0);
+      setCurrentTotpCode(code);
+    };
 
-      // Recalculate code on cycle
-      if (remaining === 30) {
-        const step = Math.floor(Date.now() / 30000);
-        let hash = 0;
-        const str = `${challenge.username}_totp_secret_${step}`;
-        for (let i = 0; i < str.length; i++) {
-          hash = (hash << 5) - hash + str.charCodeAt(i);
-          hash |= 0;
-        }
-        const code = (Math.abs(hash) % 900000 + 100000).toString();
-        setCurrentTotpCode(code);
-      }
-    }, 1000);
-
+    updateTotp();
+    const timer = setInterval(updateTotp, 1000);
     return () => clearInterval(timer);
-  }, [challenge.username, challenge.demoTotpCode]);
+  }, [normalizedSecret, challenge.clockOffsetSeconds]);
 
   // 2. Resend SMS Cooldown Timer
   useEffect(() => {
@@ -103,12 +107,13 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
 
   // Auto-focus first input box on mount
   useEffect(() => {
-    inputRefs.current[0]?.focus();
-  }, []);
+    if (method !== 'backup_code') {
+      inputRefs.current[0]?.focus();
+    }
+  }, [method]);
 
   // Handle digit typing & auto-advance
   const handleDigitChange = (index: number, val: string) => {
-    // Only accept numeric characters
     const clean = val.replace(/\D/g, '');
     if (!clean && val !== '') return;
 
@@ -151,43 +156,68 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (!pasted) return;
+    const pasted = e.clipboardData.getData('text').trim();
+
+    // Check if user pasted a recovery code (format: XXXX-XXXX or 8+ alphanumeric)
+    if (pasted.includes('-') || pasted.length >= 8) {
+      setMethod('backup_code');
+      setRecoveryCodeInput(pasted);
+      return;
+    }
+
+    const numericOnly = pasted.replace(/\D/g, '').slice(0, 6);
+    if (!numericOnly) return;
     const newDigits = [...digits];
     for (let i = 0; i < 6; i++) {
-      newDigits[i] = pasted[i] || '';
+      newDigits[i] = numericOnly[i] || '';
     }
     setDigits(newDigits);
-    const targetIdx = Math.min(5, pasted.length);
+    const targetIdx = Math.min(5, numericOnly.length);
     inputRefs.current[targetIdx]?.focus();
 
-    if (pasted.length === 6) {
-      submitVerification(pasted);
+    if (numericOnly.length === 6) {
+      submitVerification(numericOnly);
     }
   };
 
   // Submit verification code to API
   const submitVerification = async (codeToVerify?: string) => {
-    const raw = (codeToVerify || digits.join('')).trim();
-    const cleanCode = raw.replace(/[\s\-]/g, '');
-    if (cleanCode.length < 6) {
-      setErrorMsg('Please enter a complete 6-digit verification code.');
-      return;
+    let cleanCode = '';
+    const isRecovery = method === 'backup_code';
+
+    if (isRecovery) {
+      cleanCode = (codeToVerify || recoveryCodeInput).trim().toUpperCase();
+      if (cleanCode.length < 8) {
+        setErrorMsg('Please enter a valid single-use recovery code (format: XXXX-XXXX).');
+        return;
+      }
+    } else {
+      const raw = (codeToVerify || digits.join('')).trim();
+      cleanCode = raw.replace(/[\s\-]/g, '');
+      if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
+        setErrorMsg('Please enter a complete 6-digit verification code.');
+        return;
+      }
     }
 
     setLoading(true);
     setErrorMsg(null);
 
     try {
-      onAddTerminalLog?.('post', `[MFA] Submitting 2nd factor (${method.toUpperCase()}) code for verification...`);
+      onAddTerminalLog?.(
+        'post',
+        `[MFA] Submitting 2nd factor (${isRecovery ? 'RECOVERY CODE' : method.toUpperCase()}) code for verification...`
+      );
+
       const res = await fetch('/api/auth/mfa/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mfaSessionId: challenge.mfaSessionId,
           mfaChallengeId: challenge.mfaSessionId,
+          username: challenge.username,
           code: cleanCode,
-          method
+          method: isRecovery ? 'backup_code' : method
         })
       });
 
@@ -196,21 +226,21 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
       if (!res.ok || !data.success) {
         const remaining = data.attemptsLeft !== undefined ? data.attemptsLeft : Math.max(0, attemptsLeft - 1);
         setAttemptsLeft(remaining);
-        setErrorMsg(data.error || `Invalid verification code. ${remaining} attempts remaining.`);
+        setErrorMsg(data.error || data.detail || `Invalid verification code. ${remaining} attempts remaining.`);
         if (data.locked || remaining <= 0) {
           onAddTerminalLog?.('error', `[MFA LOCKED] Challenge invalidated due to repeated failed entries. Please re-authenticate.`);
         } else {
-          onAddTerminalLog?.('alert', `[MFA MISMATCH] Incorrect 6-digit code entered for ${challenge.username}. ${remaining} attempts remaining.`);
+          onAddTerminalLog?.('alert', `[MFA MISMATCH] Verification failed for ${challenge.username}. ${remaining} attempts remaining.`);
         }
         setDigits(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
+        if (!isRecovery) inputRefs.current[0]?.focus();
         setLoading(false);
         return;
       }
 
       // MFA SUCCESS - Guaranteed clean state transition
       setErrorMsg(null);
-      onAddTerminalLog?.('success', `[MFA VERIFIED] Factor 2 verified via ${method.toUpperCase()}. High-assurance session established.`);
+      onAddTerminalLog?.('success', `[MFA VERIFIED] Factor 2 verified via ${isRecovery ? 'RECOVERY CODE' : method.toUpperCase()}. High-assurance session established.`);
       console.log('[MFA_SUCCESS] Session credentials confirmed for:', data.user?.username);
 
       const session: AuthSession = {
@@ -218,7 +248,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
         token: data.token,
         loginTime: new Date().toLocaleTimeString(),
         expiresInSeconds: data.expiresInSeconds || 3600,
-        mfaMethod: method
+        mfaMethod: isRecovery ? 'hardware_token' : method
       };
 
       onVerifySuccess(session);
@@ -239,13 +269,13 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
       const res = await fetch('/api/auth/mfa/send-sms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaSessionId: challenge.mfaSessionId })
+        body: JSON.stringify({ mfaSessionId: challenge.mfaSessionId, username: challenge.username })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setResendCooldown(30);
         setSmsNotification({
-          code: data.demoSmsCode,
+          code: data.demoSmsCode || '847291',
           timestamp: 'Just now'
         });
         onAddTerminalLog?.('info', `[MFA SMS] Fresh one-time passcode dispatched to ${challenge.phoneMasked}.`);
@@ -261,13 +291,16 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
 
   // 1-Click Auto-fill helper
   const handleAutoFillCode = (code: string) => {
-    const chars = code.slice(0, 6).split('');
+    const chars = code.replace(/[\s\-]/g, '').slice(0, 6).split('');
     setDigits(chars);
     setErrorMsg(null);
     submitVerification(code);
   };
 
-  const isComplete = digits.every((d) => d !== '');
+  const isComplete =
+    method === 'backup_code'
+      ? recoveryCodeInput.trim().length >= 8
+      : digits.every((d) => d !== '');
 
   return (
     <div className={`w-full ${variant === 'page' ? 'max-w-xl mx-auto my-6' : 'w-full'} font-sans`}>
@@ -278,7 +311,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
             <button
               type="button"
               onClick={onCancel}
-              className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back to Identity Selection</span>
@@ -337,22 +370,22 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           </div>
         </div>
 
-        {/* Method Switcher Tabs */}
-        <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+        {/* Method Switcher Tabs: Authenticator, SMS, and Recovery Code */}
+        <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
           <button
             type="button"
             onClick={() => {
               setMethod('authenticator');
               setErrorMsg(null);
             }}
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
               method === 'authenticator'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
             }`}
           >
-            <Smartphone className="w-4 h-4" />
-            <span>Authenticator App</span>
+            <Smartphone className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Authenticator</span>
           </button>
 
           <button
@@ -361,24 +394,40 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
               setMethod('sms');
               setErrorMsg(null);
             }}
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
               method === 'sms'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
             }`}
           >
-            <MessageSquare className="w-4 h-4" />
-            <span>SMS Security Code</span>
+            <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">SMS Code</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMethod('backup_code');
+              setErrorMsg(null);
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+              method === 'backup_code'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+            }`}
+          >
+            <LifeBuoy className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Recovery Code</span>
           </button>
         </div>
 
-        {/* METHOD 1: AUTHENTICATOR APP (TOTP) */}
+        {/* METHOD 1: AUTHENTICATOR APP (RFC 6238 TOTP) */}
         {method === 'authenticator' && (
           <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/90 space-y-3.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-blue-400" />
-                Time-based OTP (TOTP 30s Window)
+                RFC 6238 TOTP (30s Window)
               </span>
               <span className="text-[11px] font-mono text-blue-400 font-semibold">
                 {totpSecondsLeft}s remaining
@@ -393,14 +442,14 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
               />
             </div>
 
-            {/* Authenticator Demo Code Helper Banner */}
+            {/* Authenticator Code Helper Banner */}
             <div className="p-3 rounded-lg bg-blue-950/30 border border-blue-500/30 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 rounded bg-blue-500/20 text-blue-400">
                   <KeyRound className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase font-mono text-slate-400">Active Authenticator Code:</div>
+                  <div className="text-[10px] uppercase font-mono text-slate-400">Active RFC 6238 Token:</div>
                   <div className="font-mono text-base font-bold text-white tracking-widest">
                     {currentTotpCode.slice(0, 3)} {currentTotpCode.slice(3, 6)}
                   </div>
@@ -410,7 +459,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
               <button
                 type="button"
                 onClick={() => handleAutoFillCode(currentTotpCode)}
-                className="glossy-btn px-3 py-1.5 rounded-lg text-xs text-blue-300 hover:text-white font-medium flex items-center gap-1.5 border border-blue-500/40 bg-blue-600/30"
+                className="glossy-btn px-3 py-1.5 rounded-lg text-xs text-blue-300 hover:text-white font-medium flex items-center gap-1.5 border border-blue-500/40 bg-blue-600/30 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                 <span>Auto-fill</span>
@@ -450,7 +499,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
                   <button
                     type="button"
                     onClick={() => handleAutoFillCode(smsNotification.code)}
-                    className="text-xs text-emerald-300 hover:text-emerald-200 font-medium underline flex items-center gap-1"
+                    className="text-xs text-emerald-300 hover:text-emerald-200 font-medium underline flex items-center gap-1 cursor-pointer"
                   >
                     <span>Auto-fill {smsNotification.code}</span>
                   </button>
@@ -459,7 +508,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
                     type="button"
                     disabled={resendCooldown > 0 || loading}
                     onClick={handleResendSms}
-                    className="text-xs text-slate-400 hover:text-white disabled:opacity-50 flex items-center gap-1"
+                    className="text-xs text-slate-400 hover:text-white disabled:opacity-50 flex items-center gap-1 cursor-pointer"
                   >
                     <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
                     <span>{resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend SMS'}</span>
@@ -467,6 +516,30 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* METHOD 3: RECOVERY CODE */}
+        {method === 'backup_code' && (
+          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/90 space-y-3">
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <LifeBuoy className="w-4 h-4 text-amber-400" />
+              <span className="font-semibold text-white">Single-Use Recovery Bypass Code</span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Lost your authenticator device? Enter one of your emergency 8-character recovery codes (format: <code className="text-amber-300">XXXX-XXXX</code>). Each code is single-use and will be permanently consumed upon entry.
+            </p>
+
+            <div className="relative">
+              <input
+                type="text"
+                value={recoveryCodeInput}
+                onChange={(e) => setRecoveryCodeInput(e.target.value.toUpperCase())}
+                placeholder="e.g. 7K4N-9P2W"
+                maxLength={12}
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-center text-sm font-bold tracking-widest focus:outline-none focus:border-blue-500 uppercase"
+              />
+            </div>
           </div>
         )}
 
@@ -485,34 +558,36 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           </div>
         )}
 
-        {/* 6-DIGIT CODE INPUT */}
-        <div className="space-y-2">
-          <label className="block text-center text-xs font-mono uppercase text-slate-400 font-medium">
-            Enter 6-Digit Verification Code
-          </label>
+        {/* 6-DIGIT CODE INPUT (When not in recovery code mode) */}
+        {method !== 'backup_code' && (
+          <div className="space-y-2">
+            <label className="block text-center text-xs font-mono uppercase text-slate-400 font-medium">
+              Enter 6-Digit Verification Code
+            </label>
 
-          <div className="flex items-center justify-center gap-2 sm:gap-3">
-            {digits.map((digit, idx) => (
-              <input
-                key={idx}
-                ref={(el) => { inputRefs.current[idx] = el; }}
-                type="text"
-                inputMode="numeric"
-                maxLength={1}
-                value={digit}
-                onChange={(e) => handleDigitChange(idx, e.target.value)}
-                onKeyDown={(e) => handleKeyDown(idx, e)}
-                onPaste={handlePaste}
-                disabled={loading}
-                className="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl font-mono font-bold rounded-xl bg-slate-950 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 text-white outline-none transition-all shadow-inner"
-              />
-            ))}
+            <div className="flex items-center justify-center gap-2 sm:gap-3">
+              {digits.map((digit, idx) => (
+                <input
+                  key={idx}
+                  ref={(el) => { inputRefs.current[idx] = el; }}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={1}
+                  value={digit}
+                  onChange={(e) => handleDigitChange(idx, e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(idx, e)}
+                  onPaste={handlePaste}
+                  disabled={loading}
+                  className="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl font-mono font-bold rounded-xl bg-slate-950 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 text-white outline-none transition-all shadow-inner"
+                />
+              ))}
+            </div>
+
+            <p className="text-center text-[11px] text-slate-500">
+              Paste or type the 6-digit code from your authenticator app
+            </p>
           </div>
-
-          <p className="text-center text-[11px] text-slate-500">
-            Paste or type the 6-digit code from your authenticator app
-          </p>
-        </div>
+        )}
 
         {/* Action Buttons */}
         <div className="space-y-2.5 pt-2">
@@ -539,7 +614,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="w-full py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900/50 text-xs font-medium transition-colors"
+            className="w-full py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900/50 text-xs font-medium transition-colors cursor-pointer"
           >
             Cancel Login
           </button>
@@ -551,7 +626,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
             <Lock className="w-3 h-3 text-blue-400" />
             NIST SP 800-207 Zero-Trust MFA
           </span>
-          <span className="text-emerald-500">Edge Cryptographic Signatures</span>
+          <span className="text-emerald-500">RFC 6238 SHA-1 / SHA-256</span>
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { rbacRepository } from '../repositories/rbac.repository.ts';
 import { auditRepository } from '../repositories/audit.repository.ts';
-import { UserRoleType } from '../types/index.ts';
+import type { UserRoleType } from '../types/index.ts';
 
 export function requireRole(...allowedRoles: UserRoleType[]) {
   return (req: Request, res: Response, next: NextFunction) => {

@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT,
   phone TEXT,
   mfa_enabled INTEGER DEFAULT 1,
+  password_salt TEXT,
+  mfa_secret TEXT,
+  mfa_backup_codes TEXT,
+  last_totp_step INTEGER DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   approved_at TEXT,
   approved_by TEXT,
@@ -42,7 +46,9 @@ CREATE TABLE IF NOT EXISTS security_audit_logs (
   status TEXT NOT NULL CHECK(status IN ('ALLOWED', 'BLOCKED')),
   reason TEXT NOT NULL,
   verification_latency_ms REAL,
-  event_type TEXT
+  event_type TEXT,
+  integrity_hash TEXT,
+  prev_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_username ON security_audit_logs(username);
@@ -77,6 +83,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
   reason TEXT NOT NULL,
   verification_latency_ms REAL NOT NULL,
   event_type TEXT,
+  integrity_hash TEXT,
+  prev_hash TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -113,14 +121,14 @@ CREATE INDEX IF NOT EXISTS idx_sessions_username ON active_sessions(username);
 CREATE INDEX IF NOT EXISTS idx_sessions_revoked ON active_sessions(revoked);
 
 -- Seed Initial Security Principals
-INSERT OR IGNORE INTO users (id, username, password_hash, role, base_risk_score, status, department, email)
+INSERT OR IGNORE INTO users (id, username, password_hash, password_salt, role, base_risk_score, status, department, email, mfa_secret, mfa_backup_codes, last_totp_step)
 VALUES
-  ('usr_secops_admin', 'secops_admin', 'ZeroTrust_2026', 'Admin', 0, 'APPROVED', 'SecOps Core Operations', 'secops_admin@corp.internal'),
-  ('usr_cloud_dev', 'cloud_dev', 'ZeroTrust_2026', 'Developer', 15, 'APPROVED', 'Cloud Platform Engineering', 'cloud_dev@corp.internal'),
-  ('usr_auditor_guest', 'auditor_guest', 'ZeroTrust_2026', 'Guest', 30, 'APPROVED', 'Third-Party Compliance & SOC-2', 'auditor_guest@compliance-partner.com'),
-  ('usr_sarah_infra', 'sarah_infra', 'ZeroTrust_2026', 'Developer', 10, 'APPROVED', 'Infrastructure & Edge Reliability', 'sarah_infra@corp.internal'),
-  ('usr_alex_contractor', 'alex_contractor', 'ZeroTrust_2026', 'Developer', 25, 'PENDING_APPROVAL', 'Edge Pipeline Contractors', 'alex_contractor@contractor.internal'),
-  ('usr_threat_actor', 'threat_actor', 'ZeroTrust_2026', 'Guest', 70, 'SUSPENDED', 'Untrusted Public Origin', 'threat_actor@darknet-proxy.io');
+  ('usr_secops_admin', 'secops_admin', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6', 'Admin', 0, 'APPROVED', 'SecOps Core Operations', 'secops_admin@corp.internal', 'JBSWY3DPEHPK3PXP', '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f"]', 0),
+  ('usr_cloud_dev', 'cloud_dev', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6', 'Developer', 15, 'APPROVED', 'Cloud Platform Engineering', 'cloud_dev@corp.internal', 'JBSWY3DPEHPK3PXP', '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f"]', 0),
+  ('usr_auditor_guest', 'auditor_guest', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6', 'Guest', 30, 'APPROVED', 'Third-Party Compliance & SOC-2', 'auditor_guest@compliance-partner.com', 'JBSWY3DPEHPK3PXP', '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f"]', 0),
+  ('usr_sarah_infra', 'sarah_infra', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6', 'Developer', 10, 'APPROVED', 'Infrastructure & Edge Reliability', 'sarah_infra@corp.internal', 'JBSWY3DPEHPK3PXP', '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f"]', 0),
+  ('usr_alex_contractor', 'alex_contractor', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6', 'Developer', 25, 'PENDING_APPROVAL', 'Edge Pipeline Contractors', 'alex_contractor@contractor.internal', 'JBSWY3DPEHPK3PXP', '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f"]', 0),
+  ('usr_threat_actor', 'threat_actor', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6', 'Guest', 70, 'SUSPENDED', 'Untrusted Public Origin', 'threat_actor@darknet-proxy.io', 'JBSWY3DPEHPK3PXP', '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f"]', 0);
 
 -- Seed Initial Markov Chain Sequences
 INSERT OR IGNORE INTO function_rules (current_function, allowed_next_function)

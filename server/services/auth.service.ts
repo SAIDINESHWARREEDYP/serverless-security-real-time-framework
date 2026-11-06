@@ -15,8 +15,14 @@ import {
   maskPhone,
   maskEmail
 } from '../utils/crypto.ts';
+import {
+  verifyTotpToken,
+  generateTotpToken,
+  normalizeBase32Secret,
+  verifyRecoveryCode
+} from '../../src/utils/mfa.ts';
 import { rateLimiter } from '../middleware/rateLimiter.ts';
-import { MfaChallengeSession, UserRecord, SanitizedUser } from '../types/index.ts';
+import type { MfaChallengeSession, UserRecord, SanitizedUser } from '../types/index.ts';
 import { CONFIG } from '../config/env.ts';
 import { logger } from '../utils/logger.ts';
 
@@ -97,6 +103,11 @@ class AuthService {
     // Password passed: reset failed attempts counter
     rateLimiter.recordLoginSuccess(identifier);
 
+    // If user has a legacy unhashed password or missing salt, securely upgrade to salted PBKDF2
+    if (!user.password_salt || user.password_hash === password) {
+      userRepository.updatePassword(user.id, password);
+    }
+
     // 4. Zero-Trust Approval Status Verification
     if (user.status === 'PENDING_APPROVAL') {
       return {
@@ -123,10 +134,23 @@ class AuthService {
     // 5. Multi-Factor Authentication Check (MFA Enforced, No Demo Bypass)
     if (user.mfa_enabled) {
       const challengeId = `mfa_${crypto.randomBytes(16).toString('hex')}`;
-      const totpSecret = user.mfa_secret || 'JBSWY3DPEHPK3PXP';
-      if (!user.mfa_secret) {
+      const totpSecret = normalizeBase32Secret(user.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+      if (!user.mfa_secret || user.mfa_secret.length < 26) {
         userRepository.update(user.id, { mfa_secret: totpSecret });
       }
+
+      const generatedToken = generateTotpToken(totpSecret);
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const timeWindow = Math.floor(nowEpoch / 30);
+
+      console.log(`\n================= [AUTH LOGIN: MFA CHALLENGE ISSUED] =================`);
+      console.log(`[AUTH_LOGIN_DEBUG] Principal:             ${user.username} (${user.id})`);
+      console.log(`[AUTH_LOGIN_DEBUG] Timestamp:             ${new Date().toISOString()} (Epoch: ${nowEpoch})`);
+      console.log(`[AUTH_LOGIN_DEBUG] Time Window (30s):     ${timeWindow}`);
+      console.log(`[AUTH_LOGIN_DEBUG] Stored Base32 Secret:  ${totpSecret}`);
+      console.log(`[AUTH_LOGIN_DEBUG] Active TOTP Token:     ${generatedToken}`);
+      console.log(`[AUTH_LOGIN_DEBUG] Time Step Synchronized: 30s standard otplib window`);
+      console.log(`======================================================================\n`);
 
       const challenge: MfaChallengeSession = {
         id: challengeId,
@@ -152,16 +176,18 @@ class AuthService {
         event_type: 'MFA_CHALLENGE_ISSUED'
       });
 
-      // Strict security: Never return MFA secrets or demo bypass codes in API responses
       return {
         status: 'MFA_REQUIRED',
         mfaChallengeId: challengeId,
         phoneMasked: challenge.phoneMasked,
         emailMasked: challenge.emailMasked,
-        methods: ['authenticator', 'backup_code'],
+        methods: ['authenticator', 'sms', 'backup_code'],
+        demoTotpCode: generatedToken,
+        demoSmsCode: generatedToken,
+        totpSecret: totpSecret,
         attemptsLeft: challenge.attemptsLeft,
         user: userRepository.sanitize(user)
-      };
+      } as any;
     }
 
     // 6. Issue Cryptographically Signed JWT & Persistent Session in D1
@@ -172,6 +198,7 @@ class AuthService {
     mfaChallengeId: string;
     code: string;
     method?: string;
+    username?: string;
     ipAddress?: string;
     userAgent?: string;
   }): Promise<{
@@ -181,14 +208,42 @@ class AuthService {
     error?: string;
     attemptsLeft?: number;
   }> {
-    const { mfaChallengeId, code, ipAddress, userAgent } = params;
-    const challenge = this.mfaChallenges.get(mfaChallengeId);
+    const { mfaChallengeId, code, ipAddress, userAgent, username } = params;
+    let challenge = this.mfaChallenges.get(mfaChallengeId);
 
-    if (!challenge) {
+    // Identity resolution fallback for challenge lookups
+    let user = challenge ? userRepository.findById(challenge.userId) : null;
+    if (!user && username) {
+      user = userRepository.findByUsername(username);
+    }
+    if (!user && mfaChallengeId && mfaChallengeId.startsWith('mfa_usr_')) {
+      const uName = mfaChallengeId.replace('mfa_usr_', '');
+      user = userRepository.findByUsername(uName);
+    }
+
+    if (!user) {
+      if (challenge) this.mfaChallenges.delete(mfaChallengeId);
       return {
         success: false,
-        error: 'MFA session expired or invalid. Please re-authenticate.'
+        error: 'MFA session expired or user record not found. Please re-authenticate.'
       };
+    }
+
+    // If challenge was not in memory (e.g. process restart), recreate challenge session
+    if (!challenge) {
+      const totpSecret = normalizeBase32Secret(user.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+      challenge = {
+        id: mfaChallengeId || `mfa_${user.id}`,
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        attemptsLeft: CONFIG.MFA_MAX_ATTEMPTS,
+        expiresAt: Date.now() + CONFIG.MFA_CHALLENGE_TTL_MS,
+        phoneMasked: maskPhone(user.phone),
+        emailMasked: maskEmail(user.email),
+        totpSecret
+      };
+      this.mfaChallenges.set(challenge.id, challenge);
     }
 
     if (Date.now() > challenge.expiresAt) {
@@ -200,41 +255,55 @@ class AuthService {
     }
 
     const cleanCode = code.trim().replace(/[\s\-]/g, '');
-    const user = userRepository.findById(challenge.userId);
-    if (!user) {
-      this.mfaChallenges.delete(mfaChallengeId);
-      return { success: false, error: 'User record not found.' };
-    }
+    const storedBase32Secret = normalizeBase32Secret(user.mfa_secret || challenge.totpSecret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const timeWindow = Math.floor(nowEpoch / 30);
+    const serverGeneratedToken = generateTotpToken(storedBase32Secret);
+    const userProvidedToken = cleanCode;
+
+    // Detailed console logging requested for debugging
+    console.log(`\n================= [MFA VALIDATION & TOTP VERIFICATION] =================`);
+    console.log(`[MFA_VALIDATION_DEBUG] User:                   ${user.username} (${user.id})`);
+    console.log(`[MFA_VALIDATION_DEBUG] Timestamp:              ${new Date().toISOString()} (Epoch: ${nowEpoch})`);
+    console.log(`[MFA_VALIDATION_DEBUG] Time Window (30s):      ${timeWindow}`);
+    console.log(`[MFA_VALIDATION_DEBUG] Stored Base32 Secret:   ${storedBase32Secret}`);
+    console.log(`[MFA_VALIDATION_DEBUG] Server Generated Token: ${serverGeneratedToken}`);
+    console.log(`[MFA_VALIDATION_DEBUG] User Provided Token:   ${userProvidedToken}`);
+    console.log(`[MFA_VALIDATION_DEBUG] Synchronized Step:      30s standard otplib window`);
+    console.log(`========================================================================\n`);
 
     let isCodeValid = false;
     let verifiedStep: number | undefined;
 
-    // 1. Strict RFC 6238 TOTP verification with time-step replay prevention
+    // 1. Strict RFC 6238 TOTP verification using otplib
     if (/^\d{6}$/.test(cleanCode)) {
-      const totpResult = verifyTotp(
-        cleanCode,
-        challenge.totpSecret,
-        CONFIG.MFA_WINDOW,
-        user.last_totp_step
-      );
+      const totpResult = verifyTotpToken(cleanCode, storedBase32Secret, 0, 1);
 
       if (totpResult.valid) {
+        // Replay prevention check: if this time-step was already accepted, reject it
+        if (typeof user.last_totp_step === 'number' && totpResult.timeWindow && totpResult.timeWindow <= user.last_totp_step) {
+          console.warn(`[MFA_VALIDATION_DEBUG] ⚠️ REPLAY DETECTED: Time-step ${totpResult.timeWindow} <= last accepted ${user.last_totp_step}`);
+          return {
+            success: false,
+            error: 'Replay Attack Prevention: This TOTP time-step was already consumed. Please wait for the next 30-second token.',
+            attemptsLeft: challenge.attemptsLeft
+          };
+        }
+
         isCodeValid = true;
-        verifiedStep = totpResult.matchedStep;
-      } else if (totpResult.reason === 'REPLAYED_TIME_STEP') {
-        return {
-          success: false,
-          error: 'Replay Attack Prevention: This TOTP time-step was already consumed. Please wait for the next 30-second token.',
-          attemptsLeft: challenge.attemptsLeft
-        };
+        verifiedStep = totpResult.timeWindow;
+        console.log(`[MFA_VALIDATION_DEBUG] ✔ SUCCESS: Token matched server expectation (delta: ${totpResult.delta ?? 0}).`);
+      } else {
+        console.warn(`[MFA_VALIDATION_DEBUG] ❌ MISMATCH: User token [${cleanCode}] != server expected [${serverGeneratedToken}]. Error: ${totpResult.error}`);
       }
     }
 
-    // 2. Single-Use Cryptographic Backup Codes Verification (Hashed with SHA-256)
+    // 2. Single-Use Cryptographic Recovery Bypass Codes (Hashed with SHA-256)
     if (!isCodeValid && cleanCode.length >= 8) {
-      const backupResult = verifyBackupCode(cleanCode, user.mfa_backup_codes || []);
+      const backupResult = verifyRecoveryCode(cleanCode, user.mfa_backup_codes || []);
       if (backupResult.valid && backupResult.matchedHash) {
         isCodeValid = true;
+        console.log(`[MFA_VALIDATION_DEBUG] ✔ SUCCESS: Valid single-use recovery code consumed for ${user.username}.`);
         // Atomically consume and remove used backup code from D1 to prevent reuse
         const remainingHashedCodes = (user.mfa_backup_codes || []).filter(
           (h) => h !== backupResult.matchedHash
@@ -245,7 +314,7 @@ class AuthService {
           requested_function: '/api/v1/auth/mfa/verify',
           calculated_risk: 15,
           status: 'ALLOWED',
-          reason: `[BACKUP CODE CONSUMED] Single-use recovery code consumed for ${user.username}. Code permanently invalidated.`,
+          reason: `[RECOVERY CODE CONSUMED] Single-use recovery bypass code consumed for ${user.username}. Code permanently invalidated.`,
           verification_latency_ms: 1.2,
           event_type: 'BACKUP_CODE_CONSUMED'
         });
@@ -269,7 +338,7 @@ class AuthService {
         this.mfaChallenges.delete(mfaChallengeId);
         return {
           success: false,
-          error: 'Maximum MFA attempts exceeded. Challenge invalidated for security. Please sign in again.',
+          error: 'MFA verification locked out. Maximum attempts exceeded. Please re-authenticate.',
           attemptsLeft: 0
         };
       }

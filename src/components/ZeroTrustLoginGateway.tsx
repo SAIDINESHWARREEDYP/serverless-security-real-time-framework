@@ -79,6 +79,47 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
+  // Real-time NTP-style Time Synchronization & Clock Skew Correction State
+  const [ntpOffsetSeconds, setNtpOffsetSeconds] = useState<number>(0);
+  const [ntpLatencyMs, setNtpLatencyMs] = useState<number>(0);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [isSyncingTime, setIsSyncingTime] = useState(false);
+  const [simulatedDriftSeconds, setSimulatedDriftSeconds] = useState<number>(0);
+
+  const syncNtpClock = React.useCallback(async () => {
+    setIsSyncingTime(true);
+    try {
+      const t0 = performance.now();
+      const res = await fetch('/api/system/time');
+      const t1 = performance.now();
+      const data = await res.json();
+      if (data && data.serverEpochMs) {
+        const rtt = Math.max(1, Math.round(t1 - t0));
+        setNtpLatencyMs(rtt);
+        const clientNow = Date.now();
+        // NTP formula: server midpoint offset calculation
+        const estimatedServerNow = data.serverEpochMs + Math.round(rtt / 2);
+        const driftSeconds = Math.round((estimatedServerNow - clientNow) / 1000);
+        setNtpOffsetSeconds(driftSeconds);
+        setLastSyncTime(new Date().toLocaleTimeString());
+      }
+    } catch {
+      // Keep running smoothly on network hiccup
+    } finally {
+      setIsSyncingTime(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    syncNtpClock();
+    const interval = setInterval(syncNtpClock, 30000);
+    return () => clearInterval(interval);
+  }, [syncNtpClock]);
+
+  // Combined client clock drift: actual NTP offset + simulated skew (for testing)
+  const effectiveDriftSeconds = simulatedDriftSeconds !== 0 ? simulatedDriftSeconds : ntpOffsetSeconds;
+  const isTimeMismatch = Math.abs(effectiveDriftSeconds) >= 30;
+
   // Live lookup: Check if the entered username exists in the users database
   const matchedExistingUser = useMemo(() => {
     const q = username.trim().toLowerCase();
@@ -220,16 +261,20 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
       // Case 4: Multi-Factor Authentication Challenge Triggered
       if (data.mfaRequired) {
-        onAddTerminalLog?.('info', `[MFA CHALLENGE] Password accepted for ${cleanUser}. Multi-Factor passcode required.`);
+        onAddTerminalLog?.('info', `[MFA CHALLENGE] Password accepted for ${cleanUser}. RFC 6238 Multi-Factor passcode required.`);
         setMfaChallenge({
           mfaSessionId: data.mfaSessionId,
           username: cleanUser,
           user: data.user,
           phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
           emailMasked: data.emailMasked || `${cleanUser.toLowerCase()}@corp.internal`,
-          methods: data.methods || ['authenticator', 'sms'],
+          methods: data.methods || ['authenticator', 'sms', 'backup_code'],
           demoTotpCode: data.demoTotpCode,
           demoSmsCode: data.demoSmsCode,
+          totpSecret: data.totpSecret,
+          serverTime: data.serverTime,
+          stepSeconds: data.stepSeconds || 30,
+          clockOffsetSeconds: effectiveDriftSeconds,
           attemptsLeft: data.attemptsLeft ?? 5,
           expiresInSeconds: 300
         });
@@ -247,7 +292,9 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         };
         onLoginSuccess(session, !matchedExistingUser);
       } else {
-        setErrorMsg(data.error || 'Authentication denied by Zero-Trust Edge Interceptor.');
+        const errorDetail = data.error || data.detail || data.message || 'Authentication denied: Invalid credentials or unapproved account.';
+        setErrorMsg(errorDetail);
+        onAddTerminalLog?.('alert', `[IAM REJECTED] Login failed for ${cleanUser}: ${errorDetail}`);
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Connection failed to identity verification gateway.');
@@ -338,7 +385,88 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto">
           Every principal undergoes strict RBAC validation, Markov sequence evaluation, and administrator clearance verification before being granted system access.
         </p>
+
+        {/* Real-time NTP-Style Time Synchronization Telemetry Strip */}
+        <div className="pt-2 flex items-center justify-center gap-2 flex-wrap text-[11px] font-mono">
+          <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border ${
+            isTimeMismatch
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold animate-pulse'
+              : 'bg-slate-900/90 border-slate-800 text-slate-400'
+          }`}>
+            <Clock className={`w-3.5 h-3.5 ${isSyncingTime ? 'animate-spin text-blue-400' : isTimeMismatch ? 'text-amber-400' : 'text-emerald-400'}`} />
+            <span>
+              Edge NTP Sync: {isTimeMismatch ? 'SKEW DETECTED' : 'SYNCHRONIZED'} ({ntpLatencyMs}ms RTT, Skew: {effectiveDriftSeconds > 0 ? `+${effectiveDriftSeconds}` : effectiveDriftSeconds}s)
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={syncNtpClock}
+            disabled={isSyncingTime}
+            className="px-2.5 py-1 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+            title="Poll /api/system/time to calculate precision drift between client and server"
+          >
+            <RefreshCw className={`w-3 h-3 ${isSyncingTime ? 'animate-spin' : ''}`} />
+            <span>Resync</span>
+          </button>
+
+          {/* Clock Drift Testing Simulation Toggle */}
+          <button
+            type="button"
+            onClick={() => setSimulatedDriftSeconds(prev => prev === 0 ? 45 : 0)}
+            className={`px-2.5 py-1 rounded-full border text-[10px] transition-colors cursor-pointer flex items-center gap-1 ${
+              simulatedDriftSeconds !== 0
+                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold'
+                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Simulate 45s clock variance to verify Time Mismatch detection and client skew compensation"
+          >
+            <span>{simulatedDriftSeconds !== 0 ? '✓ Drift Simulated (+45s)' : 'Simulate 45s Skew'}</span>
+          </button>
+        </div>
       </div>
+
+      {/* Real-Time 'Time Mismatch' Warning Banner (>30s window drift) */}
+      {isTimeMismatch && (
+        <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/50 text-amber-200 text-xs shadow-xl animate-in fade-in space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>Time Mismatch Warning: Local Clock Variance Exceeds 30s Window</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+                    Drift: {effectiveDriftSeconds > 0 ? `+${effectiveDriftSeconds}` : effectiveDriftSeconds}s
+                  </span>
+                </h4>
+                <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
+                  The client system clock is out of synchronization with the Zero-Trust Edge clock by more than 30 seconds. Without clock compensation, standard TOTP authenticator validation will fail due to mismatched time-step windows.
+                </p>
+                <div className="mt-2 text-[11px] font-mono text-emerald-300 flex items-center gap-1.5 bg-emerald-950/40 p-2 rounded-lg border border-emerald-500/30">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>
+                    Client-Side Clock Skew Correction Active: Offsetting TOTP generation by {effectiveDriftSeconds > 0 ? `+${effectiveDriftSeconds}` : effectiveDriftSeconds}s to guarantee token synchronization.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSimulatedDriftSeconds(0);
+                syncNtpClock();
+              }}
+              className="px-3 py-1.5 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/50 text-amber-200 text-xs font-semibold shrink-0 cursor-pointer flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingTime ? 'animate-spin' : ''}`} />
+              <span>Resync NTP</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Error / Status Notice */}
       {errorMsg && (

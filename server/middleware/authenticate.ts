@@ -4,7 +4,7 @@ import { userRepository } from '../repositories/user.repository.ts';
 import { sessionRepository } from '../repositories/session.repository.ts';
 import { policyRepository } from '../repositories/policy.repository.ts';
 import { auditRepository } from '../repositories/audit.repository.ts';
-import { UserRecord, SessionRecord, JwtClaims } from '../types/index.ts';
+import type { UserRecord, SessionRecord, JwtClaims } from '../types/index.ts';
 
 declare global {
   namespace Express {

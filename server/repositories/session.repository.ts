@@ -26,31 +26,13 @@ class SessionRepository {
 
     // 1. Insert into sessions table (Normalized D1 Schema)
     try {
-      // Ensure user_id satisfies foreign key constraint to users(id)
-      let validUserId = data.userId;
-      try {
-        const u = db.getUser(data.userId) || db.getUser(data.username);
-        if (u?.id) {
-          validUserId = u.id;
-        } else {
-          // If neither exists, insert baseline identity to satisfy foreign key constraint
-          const fallbackId = `usr_${(data.username || data.userId).replace(/[^a-zA-Z0-9_]/g, '_')}`;
-          db.prepare(
-            `INSERT OR IGNORE INTO users (id, username, password_hash, role, status) VALUES (?, ?, 'managed_session', ?, 'APPROVED')`
-          ).bind(fallbackId, data.username || data.userId, data.role || 'Developer').run();
-          validUserId = fallbackId;
-        }
-      } catch {
-        // ignore
-      }
-
       db.prepare(
         `INSERT OR REPLACE INTO sessions (
           id, user_id, session_token, status, ip_address, user_agent, created_at, expires_at
         ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`
       ).bind(
         id,
-        validUserId,
+        data.userId,
         data.token,
         data.ipAddress || '127.0.0.1',
         data.userAgent || 'Enterprise Security Client',

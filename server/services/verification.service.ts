@@ -3,7 +3,7 @@ import { policyRepository } from '../repositories/policy.repository.ts';
 import { auditRepository } from '../repositories/audit.repository.ts';
 import { functionRepository } from '../repositories/function.repository.ts';
 import { rbacRepository } from '../repositories/rbac.repository.ts';
-import { UserRecord } from '../types/index.ts';
+import type { UserRecord } from '../types/index.ts';
 
 export interface ThreatScanResult {
   threatDetected: boolean;
@@ -314,7 +314,7 @@ class VerificationService {
     if (policy.globalLockdown) matchedPolicies.push('EMERGENCY_LOCKDOWN_ACTIVE');
     recordStep(7, 'Security Policy Loading', 'PASSED', `Loaded active policy (Max Risk: ${policy.maxRiskThreshold}%, Sequence Strict: ${policy.enforceStrictSequence}).`);
 
-    // STEP 8: Deterministic Rule-Based Sequence & Workflow Transition Verification
+    // STEP 8: Invocation sequence / state transition verification
     let sequencePenalty = 0;
     if (policy.enforceStrictSequence && user) {
       const recentEvents = auditRepository.getEvents(5);
@@ -326,21 +326,21 @@ class VerificationService {
           const allowed = policyRepository.isTransitionAllowed(lastFn, cleanFn);
           if (!allowed) {
             sequencePenalty = policy.sequenceViolationPenalty;
-            recordStep(8, 'Workflow Sequence Verification', 'WARNING', `Sequence anomaly: transition from [${lastFn}] to [${cleanFn}] is not permitted by transition rule table. Applied penalty +${sequencePenalty}%.`);
+            recordStep(8, 'Markov Sequence Verification', 'WARNING', `Sequence anomaly: transition from [${lastFn}] to [${cleanFn}] is not permitted. Applied penalty +${sequencePenalty}%.`);
             if (policy.enforceStrictSequence) {
-              denialReasons.push(`Sequence rule deviation: transition from [${lastFn}] to [${cleanFn}] violates workflow transition rules under strict enforcement.`);
+              denialReasons.push(`Markov sequence deviation: transition from [${lastFn}] to [${cleanFn}] violates state machine under strict enforcement.`);
             }
           } else {
-            recordStep(8, 'Workflow Sequence Verification', 'PASSED', `Valid workflow transition [${lastFn}] -> [${cleanFn}] permitted by transition catalog.`);
+            recordStep(8, 'Markov Sequence Verification', 'PASSED', `Valid Markov transition [${lastFn}] -> [${cleanFn}].`);
           }
         } else {
-          recordStep(8, 'Workflow Sequence Verification', 'PASSED', 'Initial or authentication-cleared function call within permitted workflow state.');
+          recordStep(8, 'Markov Sequence Verification', 'PASSED', 'Initial or authentication-cleared function call within valid Markov state.');
         }
       } else {
-        recordStep(8, 'Workflow Sequence Verification', 'PASSED', 'Initial session transition verified.');
+        recordStep(8, 'Markov Sequence Verification', 'PASSED', 'Initial session transition verified.');
       }
     } else {
-      recordStep(8, 'Workflow Sequence Verification', 'PASSED', 'Strict sequence enforcement not required or initial call.');
+      recordStep(8, 'Markov Sequence Verification', 'PASSED', 'Strict sequence enforcement not required or initial call.');
     }
 
     // STEP 9: Rate limit and invocation frequency evaluation

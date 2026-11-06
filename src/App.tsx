@@ -1747,6 +1747,7 @@ export default function App() {
         onDeleteUser={handleDeleteUser}
         onBatchSeed={handleBatchSeedUsers}
         onRevokeSession={handleRevokeSession}
+        onRefreshUsers={fetchOverview}
       />
 
       <RbacManagementModal

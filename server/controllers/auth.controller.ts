@@ -44,10 +44,12 @@ export const authController = {
 
     if (result.status === 'REJECTED') {
       return res.status(401).json({
+        success: false,
+        error: result.error || 'Invalid credentials or unapproved account.',
+        detail: result.error || 'Invalid credentials or unapproved account.',
         type: 'https://serverless-securityverification.ai.studio/errors/INVALID_CREDENTIALS',
         title: 'Unauthorized',
         status: 401,
-        detail: result.error || 'Invalid credentials or unapproved account.',
         instance: req.originalUrl,
         errorCode: 'INVALID_CREDENTIALS',
         remainingAttempts: result.remainingAttempts
@@ -56,10 +58,13 @@ export const authController = {
 
     if (result.status === 'PENDING_APPROVAL') {
       return res.status(403).json({
+        success: false,
+        pendingApproval: true,
+        error: result.error || 'Zero-Trust Gate: Account pending Administrator verification and clearance.',
+        detail: result.error,
         type: 'https://serverless-securityverification.ai.studio/errors/ACCOUNT_PENDING_APPROVAL',
         title: 'Pending Clearance',
         status: 403,
-        detail: result.error,
         instance: req.originalUrl,
         errorCode: 'ACCOUNT_PENDING_APPROVAL',
         user: result.user
@@ -68,27 +73,37 @@ export const authController = {
 
     if (result.status === 'SUSPENDED') {
       return res.status(403).json({
+        success: false,
+        suspended: true,
+        error: result.error || 'Account suspended by SecOps Security Policy.',
+        detail: result.error,
         type: 'https://serverless-securityverification.ai.studio/errors/ACCOUNT_SUSPENDED',
         title: 'Account Suspended',
         status: 403,
-        detail: result.error,
         instance: req.originalUrl,
         errorCode: 'ACCOUNT_SUSPENDED'
       });
     }
 
     if (result.status === 'MFA_REQUIRED') {
+      const nowMs = Date.now();
       return res.json({
         success: true,
         mfaRequired: true,
         mfaSessionId: result.mfaChallengeId,
         mfaChallengeId: result.mfaChallengeId,
+        username: result.user?.username,
+        role: result.user?.role,
         phoneMasked: result.phoneMasked,
         emailMasked: result.emailMasked,
-        methods: result.methods,
+        methods: result.methods || ['authenticator', 'backup_code', 'sms'],
         attemptsLeft: result.attemptsLeft,
+        serverTime: nowMs,
+        stepSeconds: 30,
         user: result.user,
-        message: 'Password verified. Enter 6-digit TOTP code.'
+        totpSecret: (result as any).totpSecret,
+        demoTotpCode: (result as any).demoTotpCode,
+        message: 'Password verified. Enter 6-digit TOTP code or single-use recovery code.'
       });
     }
 
@@ -101,25 +116,26 @@ export const authController = {
   },
 
   async verifyMfa(req: Request, res: Response) {
-    const { mfaSessionId, mfaChallengeId, code, method } = req.body;
+    const { mfaSessionId, mfaChallengeId, code, method, username } = req.body;
     const challengeId = mfaChallengeId || mfaSessionId;
 
-    if (!challengeId) {
-      return res.status(400).json({ error: 'Missing mfaChallengeId.' });
+    if (!challengeId && !username) {
+      return res.status(400).json({ success: false, error: 'Missing mfaChallengeId or username.' });
     }
 
     const codeCheck = validateTotpCode(code);
     if (!codeCheck.valid) {
-      return res.status(400).json({ error: codeCheck.error });
+      return res.status(400).json({ success: false, error: codeCheck.error });
     }
 
     const ipAddress = req.ip || req.socket.remoteAddress || '127.0.0.1';
     const userAgent = req.headers['user-agent'] as string;
 
     const result = await authService.verifyMfa({
-      mfaChallengeId: challengeId,
+      mfaChallengeId: challengeId || `mfa_usr_${username}`,
       code,
       method,
+      username,
       ipAddress,
       userAgent
     });

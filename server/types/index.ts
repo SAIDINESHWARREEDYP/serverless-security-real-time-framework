@@ -45,6 +45,8 @@ export interface SanitizedUser {
   email?: string;
   phone?: string;
   mfa_enabled: boolean;
+  mfa_secret?: string;
+  mfa_backup_codes?: string[];
   created_at: string;
   approved_at?: string;
   approved_by?: string;

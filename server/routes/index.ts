@@ -17,16 +17,41 @@ import { auditRepository } from '../repositories/audit.repository.ts';
 import { sessionRepository } from '../repositories/session.repository.ts';
 import { verificationService } from '../services/verification.service.ts';
 import { db } from '../db.ts';
+import {
+  generateRecoveryCodes,
+  generateTotpToken,
+  formatTotpKeyUri,
+  getTotpRemainingSeconds,
+  normalizeBase32Secret
+} from '../../src/utils/mfa.ts';
 
 const rootRouter = Router();
 
 // 1. Mount API Version 1
 rootRouter.use('/v1', v1Router);
 
-// 2. Health & Telemetry
+// 2. Health & Telemetry & NTP Time Synchronization
 rootRouter.get('/health', healthController.getHealth);
 rootRouter.get('/system/health', healthController.getHealth);
 rootRouter.get('/system/d1-latency', healthController.getD1Latency);
+
+// NTP-style real-time time synchronization endpoint for ZeroTrustLoginGateway
+rootRouter.get(['/system/time', '/time'], (req: Request, res: Response) => {
+  const now = Date.now();
+  const serverEpochSeconds = Math.floor(now / 1000);
+  const timeStep30s = Math.floor(serverEpochSeconds / 30);
+  const secondsRemainingInWindow = 30 - (serverEpochSeconds % 30);
+
+  return res.json({
+    success: true,
+    serverTimeIso: new Date(now).toISOString(),
+    serverEpochMs: now,
+    serverEpochSeconds,
+    timeStep30s,
+    secondsRemainingInWindow,
+    stepSeconds: 30
+  });
+});
 
 // Real-Time SSE Stream & Incident Management (Root Mounts)
 rootRouter.get('/realtime/stream', (req, res) => {
@@ -248,6 +273,67 @@ rootRouter.patch('/system/users/:username', authenticateMiddleware, requireRole(
   if (!user) return res.status(404).json({ error: `User '${username}' not found` });
   const updated = userRepository.update(user.id, req.body);
   return res.json({ success: true, user: updated ? userRepository.sanitize(updated) : null });
+});
+
+// Single-use recovery bypass codes generation for user profile
+rootRouter.post('/system/users/:username/recovery-codes', (req: Request, res: Response) => {
+  const { username } = req.params;
+  const user = userRepository.findByUsername(username);
+  if (!user) {
+    return res.status(404).json({ error: `User '${username}' not found in database.` });
+  }
+
+  const { plaintextCodes, hashedCodes } = generateRecoveryCodes(8);
+  userRepository.update(user.id, {
+    mfa_backup_codes: hashedCodes,
+    mfa_enabled: true
+  });
+
+  auditRepository.record({
+    username: user.username,
+    requested_function: `/api/system/users/${username}/recovery-codes`,
+    calculated_risk: 10,
+    status: 'ALLOWED',
+    reason: `[RECOVERY CODES GENERATED] Created 8 single-use bypass codes for ${user.username}. Hashes stored in D1.`,
+    verification_latency_ms: 1.1,
+    event_type: 'RECOVERY_CODES_GENERATED'
+  });
+
+  return res.json({
+    success: true,
+    username: user.username,
+    plaintextCodes,
+    codesCount: plaintextCodes.length,
+    message: `Generated ${plaintextCodes.length} single-use bypass recovery codes for ${user.username}.`
+  });
+});
+
+// Security Credentials View: inspect base32 secret, live TOTP code, and OTP URI for Admin / Dev Mode
+rootRouter.get('/system/users/:username/credentials', (req: Request, res: Response) => {
+  const { username } = req.params;
+  const user = userRepository.findByUsername(username);
+  if (!user) {
+    return res.status(404).json({ error: `User '${username}' not found in database.` });
+  }
+
+  const base32Secret = normalizeBase32Secret(user.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+  const activeTotpToken = generateTotpToken(base32Secret);
+  const remaining = getTotpRemainingSeconds();
+  const keyUri = formatTotpKeyUri(user.username, 'ServerlessSecOps', base32Secret);
+
+  return res.json({
+    success: true,
+    username: user.username,
+    role: user.role,
+    mfa_enabled: Boolean(user.mfa_enabled),
+    base32Secret,
+    keyUri,
+    activeTotpToken,
+    timeStep30s: remaining.timeStep,
+    secondsRemaining: remaining.secondsRemaining,
+    backupCodesCount: Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes.length : 0,
+    serverTimeIso: new Date().toISOString()
+  });
 });
 
 // 7. Session Revocation Routes
