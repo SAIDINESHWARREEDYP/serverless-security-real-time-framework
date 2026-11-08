@@ -15,6 +15,8 @@ import { userRepository } from '../repositories/user.repository.ts';
 import { policyRepository } from '../repositories/policy.repository.ts';
 import { auditRepository } from '../repositories/audit.repository.ts';
 import { sessionRepository } from '../repositories/session.repository.ts';
+import { passwordRequestRepository } from '../repositories/password-request.repository.ts';
+import { usernameRequestRepository } from '../repositories/username-request.repository.ts';
 import { verificationService } from '../services/verification.service.ts';
 import { db } from '../db.ts';
 import {
@@ -306,6 +308,122 @@ rootRouter.post('/system/users/:username/recovery-codes', (req: Request, res: Re
     codesCount: plaintextCodes.length,
     message: `Generated ${plaintextCodes.length} single-use bypass recovery codes for ${user.username}.`
   });
+});
+
+// 6.5. Password Change Request Management Routes (Zero-Trust: Admin approval required to commit to DB)
+rootRouter.post(['/password-requests/submit', '/auth/password-requests/submit'], (req: Request, res: Response) => {
+  const { username, newPassword, justification } = req.body;
+  if (!username || !username.trim()) {
+    return res.status(400).json({ error: 'Username is required.' });
+  }
+  if (!newPassword || newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+  }
+
+  try {
+    const request = passwordRequestRepository.create({
+      username: username.trim(),
+      newPasswordPlaintext: newPassword,
+      justification
+    });
+
+    return res.json({
+      success: true,
+      request,
+      message: `Password change request for [${username.trim()}] submitted successfully. Awaiting SecOps Administrator approval before it is applied to the database.`
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to submit password change request.' });
+  }
+});
+
+rootRouter.get('/password-requests', (req: Request, res: Response) => {
+  const status = (req.query.status as string) || 'ALL';
+  const requests = passwordRequestRepository.list(status);
+  return res.json({ success: true, requests });
+});
+
+rootRouter.post('/password-requests/:id/approve', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
+  const { id } = req.params;
+  const adminUsername = req.user?.username || 'secops_admin';
+
+  try {
+    const result = passwordRequestRepository.approve(id, adminUsername);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to approve password change request.' });
+  }
+});
+
+rootRouter.post('/password-requests/:id/reject', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  const adminUsername = req.user?.username || 'secops_admin';
+
+  try {
+    const result = passwordRequestRepository.reject(id, adminUsername, reason);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to reject password change request.' });
+  }
+});
+
+// 6.6. Username Change Request Management Routes (Zero-Trust: Admin approval required to commit to DB)
+rootRouter.post(['/username-requests/submit', '/auth/username-requests/submit'], (req: Request, res: Response) => {
+  const { currentUsername, requestedUsername, justification } = req.body;
+  if (!currentUsername || !currentUsername.trim()) {
+    return res.status(400).json({ error: 'Current username is required.' });
+  }
+  if (!requestedUsername || !requestedUsername.trim()) {
+    return res.status(400).json({ error: 'Requested new username is required.' });
+  }
+
+  try {
+    const request = usernameRequestRepository.create({
+      currentUsername: currentUsername.trim(),
+      requestedUsername: requestedUsername.trim(),
+      justification
+    });
+
+    return res.json({
+      success: true,
+      request,
+      message: `Username change request for [${currentUsername.trim()}] to [${requestedUsername.trim()}] submitted successfully. Awaiting SecOps Administrator approval before it is applied to the database.`
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to submit username change request.' });
+  }
+});
+
+rootRouter.get('/username-requests', (req: Request, res: Response) => {
+  const status = (req.query.status as string) || 'ALL';
+  const requests = usernameRequestRepository.list(status);
+  return res.json({ success: true, requests });
+});
+
+rootRouter.post('/username-requests/:id/approve', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
+  const { id } = req.params;
+  const adminUsername = req.user?.username || 'secops_admin';
+
+  try {
+    const result = usernameRequestRepository.approve(id, adminUsername);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to approve username change request.' });
+  }
+});
+
+rootRouter.post('/username-requests/:id/reject', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  const adminUsername = req.user?.username || 'secops_admin';
+
+  try {
+    const result = usernameRequestRepository.reject(id, adminUsername, reason);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to reject username change request.' });
+  }
 });
 
 // Security Credentials View: inspect base32 secret, live TOTP code, and OTP URI for Admin / Dev Mode

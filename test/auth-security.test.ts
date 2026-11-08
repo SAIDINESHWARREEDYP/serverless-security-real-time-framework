@@ -33,7 +33,7 @@ async function runTestSuite() {
   // Test 1: Valid Login with PBKDF2 Password Hashing
   try {
     const user = userRepository.findByUsername('secops_admin');
-    const isPwValid = user ? verifyPassword('ZeroTrust_2026', user.password_salt, user.password_hash) : false;
+    const isPwValid = user ? verifyPassword('12345@pro', user.password_salt, user.password_hash) : false;
     assert(isPwValid, '1. Valid Login & PBKDF2 Verification', 'PBKDF2 SHA-512 derived key matches cryptographic salt.');
   } catch (err: any) {
     assert(false, '1. Valid Login & PBKDF2 Verification', err.message);

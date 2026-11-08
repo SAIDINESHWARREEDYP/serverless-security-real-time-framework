@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users,
   UserPlus,
@@ -26,7 +26,8 @@ import {
   Eye,
   EyeOff,
   Copy,
-  Check
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import { User, UserApprovalStatus } from '../types.ts';
 import {
@@ -35,6 +36,31 @@ import {
   normalizeBase32Secret,
   formatTotpKeyUri
 } from '../utils/mfa.ts';
+
+export interface PasswordChangeRequestItem {
+  id: string;
+  user_id: string;
+  username: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_at: string;
+  reviewed_at?: string;
+  reviewed_by?: string;
+  justification?: string;
+  rejection_reason?: string;
+}
+
+export interface UsernameChangeRequestItem {
+  id: string;
+  user_id: string;
+  current_username: string;
+  requested_username: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_at: string;
+  reviewed_at?: string;
+  reviewed_by?: string;
+  justification?: string;
+  rejection_reason?: string;
+}
 
 interface UserDatabaseModalProps {
   isOpen: boolean;
@@ -108,7 +134,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
   // New user form state
   const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('ZeroTrust_2026');
+  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
   const [newDept, setNewDept] = useState('Engineering & Cloud Ops');
   const [newRisk, setNewRisk] = useState<number>(20);
@@ -116,6 +142,173 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const [newJustification, setNewJustification] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Credential & Identity Change Requests Management state
+  const [modalTab, setModalTab] = useState<'identities' | 'pending_users' | 'password_requests'>('identities');
+  const [passwordRequests, setPasswordRequests] = useState<PasswordChangeRequestItem[]>([]);
+  const [usernameRequests, setUsernameRequests] = useState<UsernameChangeRequestItem[]>([]);
+  const [changeRequestFilter, setChangeRequestFilter] = useState<'ALL' | 'PASSWORD' | 'USERNAME'>('ALL');
+  const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
+  const [requestNotice, setRequestNotice] = useState<string | null>(null);
+
+  const fetchAllChangeRequests = React.useCallback(async () => {
+    setIsLoadingRequests(true);
+    try {
+      const [pwdRes, usrRes] = await Promise.all([
+        fetch('/api/password-requests'),
+        fetch('/api/username-requests')
+      ]);
+      if (pwdRes.ok) {
+        const data = await pwdRes.json();
+        if (data.success && Array.isArray(data.requests)) {
+          setPasswordRequests(data.requests);
+        }
+      }
+      if (usrRes.ok) {
+        const data = await usrRes.json();
+        if (data.success && Array.isArray(data.requests)) {
+          setUsernameRequests(data.requests);
+        }
+      }
+    } catch {
+      // Ignore network hiccup
+    } finally {
+      setIsLoadingRequests(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchAllChangeRequests();
+    }
+  }, [isOpen, fetchAllChangeRequests]);
+
+  const handleApprovePasswordRequest = async (id: string) => {
+    setProcessingRequestId(id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/password-requests/${id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRequestNotice(`Password change for [${data.username}] approved! New password saved to database.`);
+        await fetchAllChangeRequests();
+        onRefreshUsers?.();
+      } else {
+        setActionError(data.error || 'Failed to approve password change request.');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'Network error.');
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleRejectPasswordRequest = async (id: string) => {
+    setProcessingRequestId(id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/password-requests/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Declined by Administrator' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRequestNotice(`Password change request for [${data.username}] rejected.`);
+        await fetchAllChangeRequests();
+      } else {
+        setActionError(data.error || 'Failed to reject password change request.');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'Network error.');
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleApproveUsernameRequest = async (id: string) => {
+    setProcessingRequestId(id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/username-requests/${id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRequestNotice(`Username change from [${data.oldUsername}] to [${data.newUsername}] approved! Saved to database.`);
+        await fetchAllChangeRequests();
+        onRefreshUsers?.();
+      } else {
+        setActionError(data.error || 'Failed to approve username change request.');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'Network error.');
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleRejectUsernameRequest = async (id: string) => {
+    setProcessingRequestId(id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/username-requests/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Declined by Administrator' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRequestNotice(`Username change request rejected.`);
+        await fetchAllChangeRequests();
+      } else {
+        setActionError(data.error || 'Failed to reject username change request.');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'Network error.');
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const [processingApprovalUser, setProcessingApprovalUser] = useState<string | null>(null);
+
+  const handleApprovePendingUser = async (username: string) => {
+    setProcessingApprovalUser(username);
+    setActionError(null);
+    try {
+      await onApproveUser(username);
+      setRequestNotice(`Principal [${username}] has been APPROVED. Status updated in database and administrative audit log recorded.`);
+      onRefreshUsers?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to approve user.');
+    } finally {
+      setProcessingApprovalUser(null);
+    }
+  };
+
+  const handleRejectPendingUser = async (username: string, reason?: string) => {
+    setProcessingApprovalUser(username);
+    setActionError(null);
+    try {
+      await onRejectUser(username, reason || 'Access denied by SecOps Administrator via User Database');
+      setRequestNotice(`Principal [${username}] access request REJECTED. Status updated in database and administrative audit log recorded.`);
+      onRefreshUsers?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to reject user.');
+    } finally {
+      setProcessingApprovalUser(null);
+    }
+  };
+
+  const pendingPasswordRequestsCount = passwordRequests.filter((r) => r.status === 'PENDING').length;
+  const pendingUsernameRequestsCount = usernameRequests.filter((r) => r.status === 'PENDING').length;
+  const totalPendingChangeRequests = pendingPasswordRequestsCount + pendingUsernameRequestsCount;
 
   // Live timer for Security Credentials Inspector (updates active TOTP and countdown bar every second)
   useEffect(() => {
@@ -220,12 +413,16 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUsername.trim()) return;
+    if (!newPassword || newPassword.trim().length < 8) {
+      setActionError('Password is required and must be at least 8 characters.');
+      return;
+    }
     setIsSubmitting(true);
     setActionError(null);
     try {
       await onAddUser({
         username: newUsername.trim(),
-        password: newPassword || 'ZeroTrust_2026',
+        password: newPassword.trim(),
         role: newRole,
         base_risk_score: newRisk,
         department: newDept,
@@ -233,6 +430,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         requestJustification: newJustification || 'Manual creation via User Database Manager'
       });
       setNewUsername('');
+      setNewPassword('');
       setNewJustification('');
       setShowAddForm(false);
     } catch (err: any) {
@@ -278,7 +476,8 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
       return a.username.localeCompare(b.username);
     });
 
-  const pendingCount = users.filter((u) => u.status === 'PENDING_APPROVAL').length;
+  const pendingUsers = useMemo(() => users.filter((u) => u.status === 'PENDING_APPROVAL'), [users]);
+  const pendingCount = pendingUsers.length;
   const approvedCount = users.filter((u) => u.status === 'APPROVED').length;
 
   return (
@@ -354,8 +553,122 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
           </div>
         )}
 
-        {/* Action Toolbar */}
-        <div className="p-4 border-b border-slate-800/80 bg-slate-900/40 flex flex-col gap-3">
+        {/* View Switcher: Identities vs Pending User Requests vs Credential & Identity Change Requests */}
+        <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setModalTab('identities')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                modalTab === 'identities'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Registered Identities ({users.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setModalTab('pending_users')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                modalTab === 'pending_users'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-900/30'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-white'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Pending Requests</span>
+              {pendingCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-400 text-slate-950 animate-pulse">
+                  {pendingCount} Pending
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setModalTab('password_requests');
+                fetchAllChangeRequests();
+              }}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                modalTab === 'password_requests'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/30'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-white'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Identity &amp; Credential Requests</span>
+              {totalPendingChangeRequests > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-400 text-slate-950">
+                  {totalPendingChangeRequests} Pending
+                </span>
+              )}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {onRefreshUsers && (
+              <button
+                type="button"
+                onClick={() => {
+                  onRefreshUsers();
+                  if (modalTab === 'password_requests') fetchAllChangeRequests();
+                }}
+                disabled={isLoadingRequests}
+                className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Refresh users and requests from database"
+              >
+                <RefreshCw className={`w-3 h-3 ${isLoadingRequests ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Real-time Password Request Feedback Notice */}
+        {requestNotice && (
+          <div className="px-5 py-2.5 bg-emerald-500/15 border-b border-emerald-500/30 text-emerald-300 text-xs font-mono flex items-center justify-between animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{requestNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRequestNotice(null)}
+              className="text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {modalTab === 'identities' && (
+          <>
+            {/* Real-time Pending Approvals Alert Callout */}
+            {pendingCount > 0 && (
+              <div className="mx-4 mt-3 p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-center justify-between gap-3 animate-in fade-in">
+                <div className="flex items-center gap-2.5">
+                  <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                  <span>
+                    <strong>{pendingCount} Identity Registration Request{pendingCount > 1 ? 's' : ''}</strong> awaiting administrator review and clearance.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModalTab('pending_users')}
+                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                >
+                  <span>Review in Pending Requests</span>
+                  <span>&rarr;</span>
+                </button>
+              </div>
+            )}
+
+            {/* Action Toolbar */}
+            <div className="p-4 border-b border-slate-800/80 bg-slate-900/40 flex flex-col gap-3">
           {/* Top Risk Visual Spectrum Bar */}
           <div className="p-2.5 bg-slate-950/80 border border-slate-800/80 rounded-xl">
             <div className="flex items-center justify-between text-[11px] mb-1.5">
@@ -565,12 +878,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">Password</label>
+                <label className="block text-slate-400 mb-1 font-medium">Password (Min 8 chars) *</label>
                 <input
-                  type="text"
+                  type="password"
+                  required
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="ZeroTrust_2026"
+                  placeholder="Create user password"
                   className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
                 />
               </div>
@@ -837,21 +1151,23 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         <>
                           <button
                             type="button"
-                            onClick={() => onApproveUser(user.username)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            disabled={processingApprovalUser === user.username}
+                            onClick={() => handleApprovePendingUser(user.username)}
+                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 transition-colors cursor-pointer"
                             title="Verify and Approve user for login"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>Approve</span>
+                            <span>{processingApprovalUser === user.username ? 'Approving...' : 'Approve'}</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => onRejectUser(user.username)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            disabled={processingApprovalUser === user.username}
+                            onClick={() => handleRejectPendingUser(user.username)}
+                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 disabled:opacity-50 text-rose-300 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer"
                             title="Reject user request"
                           >
                             <XCircle className="w-3.5 h-3.5 text-rose-400" />
-                            <span>Reject</span>
+                            <span>{processingApprovalUser === user.username ? 'Rejecting...' : 'Reject'}</span>
                           </button>
                         </>
                       )}
@@ -930,6 +1246,414 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             </div>
           )}
         </div>
+      </>
+    )}
+
+    {/* Dedicated Pending Requests Tab Panel */}
+    {modalTab === 'pending_users' && (
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        {/* Banner with Zero-Trust Policy Notice */}
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 space-y-2">
+          <div className="flex items-center gap-2 font-bold text-amber-300">
+            <ShieldCheck className="w-4 h-4 text-amber-400" />
+            <span>Zero-Trust Pending Identity Clearances &amp; Verification Gate</span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-300">
+            Principals who self-register are held in <strong>PENDING_APPROVAL</strong> status until authorized by a SecOps Administrator. Clicking <strong>"Approve"</strong> transitions the user record to <code>APPROVED</code>, enables RFC 6238 MFA token issuance, and records an administrative decision in the tamper-evident audit ledger. Clicking <strong>"Reject"</strong> denies access fail-closed.
+          </p>
+        </div>
+
+        {/* Section Header */}
+        <div className="flex items-center justify-between text-xs text-slate-400 px-1 border-b border-slate-800 pb-2.5">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-amber-400" />
+            <span className="font-bold text-white text-sm">
+              Pending Clearance Requests ({pendingUsers.length})
+            </span>
+          </div>
+          <span className="text-[11px] font-mono text-amber-400">
+            {pendingUsers.length === 1 ? '1 User Awaiting Review' : `${pendingUsers.length} Users Awaiting Review`}
+          </span>
+        </div>
+
+        {/* Pending Users List */}
+        {pendingUsers.length === 0 ? (
+          <div className="text-center py-16 text-slate-500 text-xs space-y-3">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <p className="font-semibold text-slate-300 text-sm">No Pending Requests</p>
+            <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+              All user registrations and access requests have been cleared. New accounts submitted through the Zero-Trust Gateway will appear here for verification.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3">
+            {pendingUsers.map((user) => (
+              <div
+                key={user.id || user.username}
+                className="p-4 rounded-xl border border-amber-500/30 bg-slate-950/90 hover:border-amber-500/50 transition-all space-y-3 text-xs shadow-lg shadow-black/40"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center font-mono font-bold text-sm text-amber-300 shrink-0">
+                      {user.username.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-white font-mono text-sm">
+                          {user.username}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                          Role: {user.role}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold flex items-center gap-1 animate-pulse">
+                          <Clock className="w-2.5 h-2.5" />
+                          PENDING_APPROVAL
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                        {user.department && (
+                          <span className="flex items-center gap-1">
+                            <Building2 className="w-3 h-3 text-slate-500" />
+                            {user.department}
+                          </span>
+                        )}
+                        <span>•</span>
+                        <span className="font-mono text-slate-500">
+                          Registered: {user.created_at || user.createdAt ? new Date(user.created_at || user.createdAt).toISOString() : 'Recent registration'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Approve / Reject Actions */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={processingApprovalUser === user.username}
+                      onClick={() => handleApprovePendingUser(user.username)}
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-emerald-900/30 cursor-pointer"
+                      title={`Approve ${user.username} and activate access in database`}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{processingApprovalUser === user.username ? 'Approving...' : 'Approve Access'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={processingApprovalUser === user.username}
+                      onClick={() => handleRejectPendingUser(user.username)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/50 disabled:opacity-50 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-700/50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title={`Reject ${user.username}'s clearance request`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>{processingApprovalUser === user.username ? 'Rejecting...' : 'Reject'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Justification & Risk Info */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+                  <div>
+                    <span className="text-slate-500 font-medium">Access Justification: </span>
+                    <span className="text-slate-300 italic">{user.requestJustification || 'Self-service identity clearance request'}</span>
+                  </div>
+                  <div className="flex items-center justify-between sm:justify-end gap-2">
+                    <span className="text-slate-500 font-medium">Base Risk Assessment: </span>
+                    <span className="font-mono font-bold text-amber-400">{user.base_risk_score}%</span>
+                    <div className="w-16 h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                      <div
+                        className="h-full bg-amber-400"
+                        style={{ width: `${Math.min(user.base_risk_score, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Credential & Identity Change Requests Tab Panel */}
+    {modalTab === 'password_requests' && (
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 space-y-2">
+          <div className="flex items-center gap-2 font-bold text-amber-300">
+            <ShieldCheck className="w-4 h-4 text-amber-400" />
+            <span>Zero-Trust Credential &amp; Identity Governance Policy</span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-300">
+            To guarantee fail-closed security, all password and username change requests submitted by users are held in a pending state until explicitly accepted by an Administrator. Upon clicking <strong>"Accept &amp; Save to DB"</strong>, changes are atomically committed into the Cloudflare D1 / SQLite database (passwords stored as salted PBKDF2 hashes; usernames checked for uniqueness and updated), and any active sessions are revoked. Plaintext passwords are never displayed or stored.
+          </p>
+        </div>
+
+        {/* Sub-Filters: All, Password, Username */}
+        <div className="flex items-center justify-between gap-3 flex-wrap border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setChangeRequestFilter('ALL')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                changeRequestFilter === 'ALL'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-850 text-slate-400 hover:text-white'
+              }`}
+            >
+              All Requests ({passwordRequests.length + usernameRequests.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setChangeRequestFilter('PASSWORD')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+                changeRequestFilter === 'PASSWORD'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-slate-850 text-slate-400 hover:text-white'
+              }`}
+            >
+              <KeyRound className="w-3 h-3" />
+              <span>Password ({passwordRequests.length})</span>
+              {pendingPasswordRequestsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 font-mono">
+                  {pendingPasswordRequestsCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setChangeRequestFilter('USERNAME')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+                changeRequestFilter === 'USERNAME'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-slate-850 text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-3 h-3" />
+              <span>Username ({usernameRequests.length})</span>
+              {pendingUsernameRequestsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-purple-400 text-slate-950 font-mono">
+                  {pendingUsernameRequestsCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          <span className="text-[11px] font-mono text-amber-400">
+            {totalPendingChangeRequests} Total Pending Acceptance
+          </span>
+        </div>
+
+        {/* Requests List */}
+        {((changeRequestFilter === 'ALL' && passwordRequests.length === 0 && usernameRequests.length === 0) ||
+          (changeRequestFilter === 'PASSWORD' && passwordRequests.length === 0) ||
+          (changeRequestFilter === 'USERNAME' && usernameRequests.length === 0)) ? (
+          <div className="text-center py-16 text-slate-500 text-xs space-y-2">
+            <KeyRound className="w-10 h-10 mx-auto text-slate-600 opacity-60" />
+            <p className="font-medium text-slate-400">No change requests matching the selected filter.</p>
+            <p className="text-[11px] text-slate-500">
+              Users can submit password and username change requests from the Login Gateway or profile interface.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* 1. PASSWORD REQUESTS */}
+            {(changeRequestFilter === 'ALL' || changeRequestFilter === 'PASSWORD') && passwordRequests.length > 0 && (
+              <div className="space-y-2.5">
+                <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5 px-1">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Password Change Requests ({passwordRequests.length})</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2.5">
+                  {passwordRequests.map((req) => (
+                    <div
+                      key={req.id}
+                      className="p-4 rounded-xl border border-slate-800 bg-slate-950/80 hover:border-slate-700 transition-all space-y-3 text-xs"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-mono font-bold">
+                            <KeyRound className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-sm font-bold text-white">
+                                {req.username}
+                              </span>
+                              <span
+                                className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
+                                  req.status === 'PENDING'
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    : req.status === 'APPROVED'
+                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                    : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                                }`}
+                              >
+                                {req.status === 'PENDING' ? 'Awaiting Admin Acceptance' : req.status}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              Request ID: {req.id} • Requested {new Date(req.requested_at).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {req.status === 'PENDING' && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={processingRequestId === req.id}
+                              onClick={() => handleApprovePasswordRequest(req.id)}
+                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm shadow-emerald-900/30 cursor-pointer disabled:opacity-50"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{processingRequestId === req.id ? 'Saving to DB...' : 'Accept & Save to DB'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={processingRequestId === req.id}
+                              onClick={() => handleRejectPasswordRequest(req.id)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-700/50 text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Reject</span>
+                            </button>
+                          </div>
+                        )}
+
+                        {req.status === 'APPROVED' && (
+                          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px]">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Saved in Database by {req.reviewed_by || 'secops_admin'}</span>
+                          </div>
+                        )}
+
+                        {req.status === 'REJECTED' && (
+                          <div className="flex items-center gap-1.5 text-rose-400 font-mono text-[11px]">
+                            <XCircle className="w-4 h-4" />
+                            <span>Rejected by {req.reviewed_by || 'secops_admin'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/60">
+                        <div>
+                          <span className="text-slate-500 font-medium">Justification: </span>
+                          <span className="text-slate-300">{req.justification || 'Standard rotation'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 font-medium">Cryptographic Storage: </span>
+                          <span className="text-emerald-400 font-mono">PBKDF2 SHA-512 (Secret masked: ••••••••)</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 2. USERNAME REQUESTS */}
+            {(changeRequestFilter === 'ALL' || changeRequestFilter === 'USERNAME') && usernameRequests.length > 0 && (
+              <div className="space-y-2.5">
+                <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5 px-1">
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Username Change Requests ({usernameRequests.length})</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2.5">
+                  {usernameRequests.map((req) => (
+                    <div
+                      key={req.id}
+                      className="p-4 rounded-xl border border-slate-800 bg-slate-950/80 hover:border-slate-700 transition-all space-y-3 text-xs"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 font-mono font-bold">
+                            <UserCheck className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-sm font-bold text-slate-300 line-through">
+                                {req.current_username}
+                              </span>
+                              <span className="text-slate-400 text-xs">→</span>
+                              <span className="font-mono text-sm font-bold text-purple-300">
+                                {req.requested_username}
+                              </span>
+                              <span
+                                className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
+                                  req.status === 'PENDING'
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    : req.status === 'APPROVED'
+                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                    : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                                }`}
+                              >
+                                {req.status === 'PENDING' ? 'Awaiting Admin Acceptance' : req.status}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              Request ID: {req.id} • Requested {new Date(req.requested_at).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {req.status === 'PENDING' && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={processingRequestId === req.id}
+                              onClick={() => handleApproveUsernameRequest(req.id)}
+                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm shadow-emerald-900/30 cursor-pointer disabled:opacity-50"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{processingRequestId === req.id ? 'Updating DB...' : 'Accept & Save to DB'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={processingRequestId === req.id}
+                              onClick={() => handleRejectUsernameRequest(req.id)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-700/50 text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Reject</span>
+                            </button>
+                          </div>
+                        )}
+
+                        {req.status === 'APPROVED' && (
+                          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px]">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Updated in Database by {req.reviewed_by || 'secops_admin'}</span>
+                          </div>
+                        )}
+
+                        {req.status === 'REJECTED' && (
+                          <div className="flex items-center gap-1.5 text-rose-400 font-mono text-[11px]">
+                            <XCircle className="w-4 h-4" />
+                            <span>Rejected by {req.reviewed_by || 'secops_admin'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/60">
+                        <div>
+                          <span className="text-slate-500 font-medium">Justification: </span>
+                          <span className="text-slate-300">{req.justification || 'Self-service identity update'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 font-medium">Database Action on Approval: </span>
+                          <span className="text-purple-400 font-mono">Updates users.username &amp; invalidates old sessions</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )}
 
         {/* Modal Footer */}
         <div className="p-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs text-slate-400">

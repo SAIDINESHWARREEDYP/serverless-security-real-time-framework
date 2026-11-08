@@ -1,5 +1,6 @@
 import type { UserRecord, SanitizedUser, UserApprovalStatus, UserRoleType } from '../types/index.ts';
 import { hashPassword, verifyPassword } from '../utils/crypto.ts';
+import { generateTotpSecret, generateRecoveryCodes } from '../../src/utils/mfa.ts';
 import { db } from '../db.ts';
 
 class UserRepository {
@@ -74,6 +75,10 @@ class UserRepository {
     const nowIso = new Date().toISOString();
     const isApproved = data.status === 'APPROVED';
 
+    // Generate unique Base32 TOTP secret and 8 single-use recovery codes for this identity
+    const individualTotpSecret = generateTotpSecret(20);
+    const { hashedCodes } = generateRecoveryCodes(8);
+
     // Insert directly into persistent SQLite D1 table
     db.prepare(
       `INSERT INTO users (
@@ -88,16 +93,13 @@ class UserRepository {
       hash,
       data.role || 'Developer',
       typeof data.base_risk_score === 'number' ? data.base_risk_score : 20,
-      data.status || 'PENDING_APPROVAL',
+      data.status || 'APPROVED',
       data.department || 'General Engineering',
       data.email || `${cleanUsername.toLowerCase()}@corp.internal`,
       data.phone || '+1 (555) 019-8392',
-      data.mfa_enabled ? 1 : 1,
-      'JBSWY3DPEHPK3PXP', // Default TOTP enrollment secret
-      JSON.stringify([
-        '28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af',
-        'f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f'
-      ]),
+      data.mfa_enabled !== undefined ? (data.mfa_enabled ? 1 : 0) : 1,
+      individualTotpSecret,
+      JSON.stringify(hashedCodes),
       nowIso,
       isApproved ? nowIso : null,
       isApproved ? data.approved_by || 'SYSTEM' : null,

@@ -219,6 +219,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    if (!regPassword || regPassword.length < 8) {
+      setErrorMsg('Password must be at least 8 characters.');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -230,7 +235,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: cleanName,
-          password: regPassword || 'ZeroTrust_2026',
+          password: regPassword,
           role: regRole,
           base_risk_score: Number(regRisk),
           department: regDept,
@@ -263,7 +268,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       const user: User = {
         id: data.user?.id || `usr_${cleanName}`,
         username: cleanName,
-        password_hash: regPassword || 'ZeroTrust_2026',
+        password_hash: regPassword,
         role: regRole,
         base_risk_score: Number(regRisk),
         status: data.user?.status || 'APPROVED'
@@ -362,58 +367,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // Quick preset login for Admin switch
-  const handleQuickLoginFromRoster = async (targetUser: User) => {
-    setLoading(true);
-    setErrorMsg(null);
+  // Select user identity from roster
+  const handleQuickLoginFromRoster = (targetUser: User) => {
     setUsernameInput(targetUser.username);
-    setPassword('ZeroTrust_2026');
-
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026' })
-      });
-      const data = await res.json();
-
-      if (data.mfaRequired && data.mfaSessionId) {
-        setMfaChallenge({
-          mfaSessionId: data.mfaSessionId,
-          username: data.user?.username || targetUser.username,
-          user: data.user || targetUser,
-          phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
-          emailMasked: data.emailMasked,
-          methods: data.methods || ['authenticator', 'sms'],
-          demoTotpCode: data.demoTotpCode,
-          demoSmsCode: data.demoSmsCode,
-          message: data.message
-        });
-        setLoading(false);
-        return;
-      }
-
-      if (res.ok && data.success && data.token) {
-        const newSession: AuthSession = {
-          user: targetUser,
-          token: data.token,
-          loginTime: new Date().toLocaleTimeString(),
-          expiresInSeconds: data.expiresInSeconds || 3600
-        };
-        onLoginSuccess(newSession);
-        setSuccessMsg(`Session activated for ${targetUser.username}!`);
-        setTimeout(() => {
-          setSuccessMsg(null);
-          onClose();
-        }, 1500);
-      } else {
-        setErrorMsg(data.error || 'Failed authorization.');
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Quick login failed.');
-    } finally {
-      setLoading(false);
-    }
+    setPassword('');
+    setActiveTab('login');
+    setErrorMsg(null);
+    setSuccessMsg(`Identity [${targetUser.username}] selected. Enter password to authenticate.`);
   };
 
   const handleCopyToken = () => {
@@ -908,8 +868,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
                         Password / Authentication Secret
                       </label>
-                      <span className="text-[10px] text-blue-400">
-                        Default: ZeroTrust_2026
+                      <span className="text-[10px] text-slate-400">
+                        Required (Min 8 chars)
                       </span>
                     </div>
                     <div className="relative">

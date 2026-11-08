@@ -241,11 +241,12 @@ export default {
             await sha256Hex(generateRandomHex(8).toUpperCase())
           ]);
 
+          const nowIso = new Date().toISOString();
           await env.DB.prepare(
             `INSERT INTO users (
               id, username, password_salt, password_hash, role, base_risk_score, status, department, mfa_enabled, mfa_secret, mfa_backup_codes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', ?, 1, ?, ?, datetime('now'))`
-          ).bind(`usr_${clean}`, clean, salt, hash, role, base_risk_score, department, generatedSecret, defaultHashedBackupCodes).run();
+            ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', ?, 1, ?, ?, ?)`
+          ).bind(`usr_${clean}`, clean, salt, hash, role, base_risk_score, department, generatedSecret, defaultHashedBackupCodes, nowIso).run();
         }
 
         return jsonResponse({
@@ -1209,14 +1210,15 @@ async function logSecurityEvent(
   eventType: string
 ) {
   if (!db) return;
+  const isoTimestamp = new Date().toISOString();
   try {
     await db.prepare(
-      'INSERT INTO audit_events (username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))'
-    ).bind(username, path, risk, status, reason, latencyMs, eventType).run();
+      'INSERT INTO audit_events (timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(isoTimestamp, username, path, risk, status, reason, latencyMs, eventType, isoTimestamp).run();
 
     await db.prepare(
-      'INSERT INTO security_audit_logs (username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))'
-    ).bind(username, path, risk, status, reason, latencyMs, eventType).run();
+      'INSERT INTO security_audit_logs (timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(isoTimestamp, username, path, risk, status, reason, latencyMs, eventType).run();
   } catch (e) {
     console.error('[D1] Logging error (fail-closed maintained):', e);
   }

@@ -44,7 +44,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   onOpenUserDatabase
 }) => {
   // Default to secure Sign In credentials tab
-  const [activeTab, setActiveTab] = useState<'signin' | 'register' | 'directory'>('signin');
+  const [activeTab, setActiveTab] = useState<'signin' | 'register' | 'directory' | 'password_reset'>('signin');
 
   // Dynamic real-time sign in state - no preset default username
   const [username, setUsername] = useState('');
@@ -59,10 +59,21 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   // Dedicated Register tab state
   const [registerUsername, setRegisterUsername] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
   const [registerRole, setRegisterRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
   const [registerDept, setRegisterDept] = useState('Platform Engineering');
   const [registerRisk, setRegisterRisk] = useState(20);
   const [registerJustification, setRegisterJustification] = useState('');
+
+  // Dedicated Password & Username Change Request state
+  const [credentialTabMode, setCredentialTabMode] = useState<'password' | 'username'>('password');
+  const [resetUsername, setResetUsername] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [resetJustification, setResetJustification] = useState('');
+  const [changeCurrentUsername, setChangeCurrentUsername] = useState('');
+  const [changeNewUsername, setChangeNewUsername] = useState('');
+  const [changeUsernameJustification, setChangeUsernameJustification] = useState('');
 
   // Pending approval live polling state
   const [pendingUser, setPendingUser] = useState<User | null>(null);
@@ -207,6 +218,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
       return;
     }
 
+    const cleanPass = rawPassword !== undefined ? rawPassword : password;
+    if (!cleanPass || cleanPass.length === 0) {
+      setErrorMsg('Password is required.');
+      return;
+    }
+
+    if (cleanPass.length < 8) {
+      setErrorMsg('Password must be at least 8 characters.');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
     setStatusNotice(null);
@@ -214,7 +236,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
     try {
       const payload: any = {
         username: cleanUser,
-        password: rawPassword || password || 'ZeroTrust_2026'
+        password: cleanPass
       };
 
       // If user doesn't exist yet, provide dynamic onboarding parameters
@@ -306,18 +328,30 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   // Dedicated Registration handler
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!registerUsername.trim()) return;
+    const clean = registerUsername.trim();
+    if (!clean) {
+      setErrorMsg('Username is required.');
+      return;
+    }
+    if (!registerPassword || registerPassword.length < 8) {
+      setErrorMsg('Password must be at least 8 characters.');
+      return;
+    }
+    if (registerPassword !== registerConfirmPassword) {
+      setErrorMsg('Passwords do not match. Please re-enter.');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
 
     try {
-      const clean = registerUsername.trim();
       const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: clean,
-          password: registerPassword || 'ZeroTrust_2026',
+          password: registerPassword,
           role: registerRole,
           base_risk_score: registerRisk,
           department: registerDept,
@@ -331,7 +365,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           const pUser: User = data.user || {
             id: `usr_${clean}`,
             username: clean,
-            password_hash: registerPassword || 'ZeroTrust_2026',
+            password_hash: registerPassword,
             role: registerRole,
             base_risk_score: registerRisk,
             status: 'PENDING_APPROVAL',
@@ -339,21 +373,118 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           };
           setPendingUser(pUser);
           onAddTerminalLog?.('alert', `[IAM CLEARANCE] Account registered for [${clean}]. Awaiting SecOps clearance.`);
-        } else if (data.token) {
-          onAddTerminalLog?.('success', `[IAM PROVISIONED] Account auto-approved for [${clean}].`);
-          const session: AuthSession = {
-            user: data.user,
-            token: data.token,
-            loginTime: new Date().toLocaleTimeString(),
-            expiresInSeconds: data.expiresInSeconds || 3600
-          };
-          onLoginSuccess(session, true);
+        } else {
+          onAddTerminalLog?.('success', `[IAM PROVISIONED] Account created for [${clean}]. Initiating real-time authentication...`);
+          // Real-time automatic sign-in transition
+          setUsername(clean);
+          setPassword(registerPassword);
+          setActiveTab('signin');
+          await executeLogin(clean, registerPassword);
         }
       } else {
         setErrorMsg(data.error || 'Registration failed.');
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Registration connection error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Dedicated Password Change Request handler (Zero-Trust: Admin approval required)
+  const handlePasswordChangeRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUser = resetUsername.trim();
+    if (!cleanUser) {
+      setErrorMsg('Username is required.');
+      return;
+    }
+    if (!resetNewPassword || resetNewPassword.length < 8) {
+      setErrorMsg('New password must be at least 8 characters long.');
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setErrorMsg('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMsg(null);
+    setStatusNotice(null);
+
+    try {
+      const res = await fetch('/api/password-requests/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: cleanUser,
+          newPassword: resetNewPassword,
+          justification: resetJustification || 'User submitted password change request'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusNotice(`Password change request for [${cleanUser}] submitted to database. Awaiting SecOps Administrator approval before it is activated.`);
+        onAddTerminalLog?.('alert', `[IAM CREDENTIAL REQUEST] Password change request recorded for principal [${cleanUser}]. Pending Admin acceptance.`);
+        setResetNewPassword('');
+        setResetConfirmPassword('');
+        setResetJustification('');
+        setActiveTab('signin');
+      } else {
+        setErrorMsg(data.error || 'Failed to submit password change request.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error submitting password change request.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Dedicated Username Change Request handler (Zero-Trust: Admin approval required)
+  const handleUsernameChangeRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const curUser = changeCurrentUsername.trim();
+    const newUser = changeNewUsername.trim();
+    if (!curUser) {
+      setErrorMsg('Current username is required.');
+      return;
+    }
+    if (!newUser || newUser.length < 3) {
+      setErrorMsg('Requested username must be at least 3 characters long.');
+      return;
+    }
+    if (curUser.toLowerCase() === newUser.toLowerCase()) {
+      setErrorMsg('Requested username must be different from current username.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMsg(null);
+    setStatusNotice(null);
+
+    try {
+      const res = await fetch('/api/username-requests/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentUsername: curUser,
+          requestedUsername: newUser,
+          justification: changeUsernameJustification || 'User submitted username change request'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusNotice(`Username change request from [${curUser}] to [${newUser}] submitted to database. Awaiting SecOps Administrator approval before it is activated.`);
+        onAddTerminalLog?.('alert', `[IAM IDENTITY REQUEST] Username change request recorded for [${curUser}] -> [${newUser}]. Pending Admin acceptance.`);
+        setChangeCurrentUsername('');
+        setChangeNewUsername('');
+        setChangeUsernameJustification('');
+        setActiveTab('signin');
+      } else {
+        setErrorMsg(data.error || 'Failed to submit username change request.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error submitting username change request.');
     } finally {
       setLoading(false);
     }
@@ -600,14 +731,27 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('directory')}
-              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 activeTab === 'directory'
                   ? 'bg-purple-600/20 text-purple-300 border border-purple-500/30 shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
               <Users className="w-4 h-4 text-purple-400" />
-              <span>Directory Reference ({users.length})</span>
+              <span>Directory ({users.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('password_reset')}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'password_reset'
+                  ? 'bg-amber-600/20 text-amber-300 border border-amber-500/30 shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <KeyRound className="w-4 h-4 text-amber-400" />
+              <span>Change Credentials</span>
             </button>
           </div>
 
@@ -705,8 +849,12 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                   <label className="text-slate-300 font-medium">
                     Password / Access Key <span className="text-rose-400">*</span>
                   </label>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    (Default seed: <code className="text-blue-400">ZeroTrust_2026</code>)
+                  <span className="text-[11px] font-mono">
+                    {matchedExistingUser ? (
+                      <span className="text-emerald-400">Identity Registered</span>
+                    ) : (
+                      <span className="text-cyan-400">Custom Key (Min 8 chars)</span>
+                    )}
                   </span>
                 </div>
 
@@ -725,6 +873,20 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     className="absolute right-3 top-2.5 text-slate-400 hover:text-white"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                <div className="flex justify-end pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetUsername(username);
+                      setActiveTab('password_reset');
+                    }}
+                    className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline cursor-pointer flex items-center gap-1 transition-colors"
+                  >
+                    <KeyRound className="w-3 h-3 text-amber-400" />
+                    <span>Need to change password? Request Admin approval →</span>
                   </button>
                 </div>
               </div>
@@ -850,13 +1012,28 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
                 <div>
                   <label className="block text-slate-300 font-medium mb-1">
-                    Initial Password
+                    Password (Min 8 chars) *
                   </label>
                   <input
-                    type="text"
+                    type="password"
+                    required
                     value={registerPassword}
                     onChange={(e) => setRegisterPassword(e.target.value)}
-                    placeholder="ZeroTrust_2026"
+                    placeholder="Create secure password"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">
+                    Confirm Password *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={registerConfirmPassword}
+                    onChange={(e) => setRegisterConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
                   />
                 </div>
@@ -987,7 +1164,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                       type="button"
                       onClick={() => {
                         setUsername(u.username);
-                        setPassword('ZeroTrust_2026');
+                        setPassword('');
                         setActiveTab('signin');
                       }}
                       className="px-2.5 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-mono transition-colors cursor-pointer shrink-0"
@@ -997,6 +1174,221 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* TAB 4: CREDENTIAL & IDENTITY CHANGE REQUESTS (AWAITING ADMIN ACCEPTANCE) */}
+          {activeTab === 'password_reset' && (
+            <div className="p-6 sm:p-8 space-y-5 max-w-xl mx-auto">
+              {/* Mode Toggle: Password vs Username */}
+              <div className="flex items-center justify-center gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setCredentialTabMode('password')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    credentialTabMode === 'password'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Request Password Change</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCredentialTabMode('username')}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    credentialTabMode === 'username'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Request Username Change</span>
+                </button>
+              </div>
+
+              {/* 1. PASSWORD CHANGE REQUEST FORM */}
+              {credentialTabMode === 'password' ? (
+                <form onSubmit={handlePasswordChangeRequest} className="space-y-4">
+                  <div className="text-center space-y-1 mb-2">
+                    <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
+                      <KeyRound className="w-4 h-4 text-amber-400" />
+                      <span>Request Password Rotation</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Per Zero-Trust policy, all password change requests are submitted to the database and require Administrator approval before being activated.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Username / Principal ID <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={resetUsername}
+                        onChange={(e) => setResetUsername(e.target.value)}
+                        placeholder="Enter account username"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Requested New Password (Min 8 chars) <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={resetNewPassword}
+                        onChange={(e) => setResetNewPassword(e.target.value)}
+                        placeholder="Enter new password"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Confirm New Password <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={resetConfirmPassword}
+                        onChange={(e) => setResetConfirmPassword(e.target.value)}
+                        placeholder="Re-enter new password"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Reason / Justification for Change (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={resetJustification}
+                        onChange={(e) => setResetJustification(e.target.value)}
+                        placeholder="e.g. Scheduled quarterly credential rotation"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                    <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>Zero-Trust Credential Security Notice</span>
+                    </div>
+                    <p>
+                      Your new password is cryptographically pre-hashed (PBKDF2 SHA-512) and salted upon transmission. Plaintext passwords are never displayed on screen or logged. The update will be saved to the database once accepted by an Administrator.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('signin')}
+                      className="w-1/3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                    >
+                      Back to Sign In
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading || !resetUsername.trim() || !resetNewPassword}
+                      className="w-2/3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-lg shadow-amber-900/30 flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {loading ? 'Submitting Request...' : 'Submit Password Change to Admin'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                /* 2. USERNAME CHANGE REQUEST FORM */
+                <form onSubmit={handleUsernameChangeRequest} className="space-y-4">
+                  <div className="text-center space-y-1 mb-2">
+                    <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
+                      <Users className="w-4 h-4 text-purple-400" />
+                      <span>Request Username Change</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Per Zero-Trust policy, all username modification requests are held in pending state until approved by an Administrator. Upon approval, your username is updated in the database and old sessions are revoked.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Current Registered Username <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={changeCurrentUsername}
+                        onChange={(e) => setChangeCurrentUsername(e.target.value)}
+                        placeholder="Enter current username"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Requested New Username (Min 3 chars) <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={changeNewUsername}
+                        onChange={(e) => setChangeNewUsername(e.target.value)}
+                        placeholder="Enter requested new username"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Reason / Access Justification (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={changeUsernameJustification}
+                        onChange={(e) => setChangeUsernameJustification(e.target.value)}
+                        placeholder="e.g. Identity reorganization, legal name change, or role realignment"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                    <div className="flex items-center gap-1.5 text-purple-400 font-medium">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>Zero-Trust Identity Governance Notice</span>
+                    </div>
+                    <p>
+                      The system validates uniqueness and prevents identity spoofing in real-time. Upon Administrator approval, your username is committed to Cloudflare D1 / SQLite, and you will sign in with your new username.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('signin')}
+                      className="w-1/3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                    >
+                      Back to Sign In
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading || !changeCurrentUsername.trim() || !changeNewUsername.trim()}
+                      className="w-2/3 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-lg shadow-purple-900/30 flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {loading ? 'Submitting Request...' : 'Submit Username Change to Admin'}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           )}
         </div>

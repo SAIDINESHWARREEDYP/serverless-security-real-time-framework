@@ -761,7 +761,7 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
           <tbody id="logs" className="divide-y divide-[#1e293b]">
             {filteredLogs.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center text-[#4a5d78] py-12">
+                <td colSpan={7} className="text-center text-[#4a5d78] py-12">
                   {logs.length === 0 ? (
                     'No operational triggers executed yet. Fire the pipeline.'
                   ) : (
@@ -780,7 +780,9 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
             ) : (
               filteredLogs.map((item) => {
                 const isBlocked = item.status === 'BLOCKED';
-                const formattedTime = new Date(item.timestamp).toLocaleTimeString();
+                const parsedDate = new Date(item.timestamp);
+                const isoTimestamp = !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : (item.timestamp || 'N/A');
+                const localFormattedTime = !isNaN(parsedDate.getTime()) ? parsedDate.toLocaleTimeString() : (item.timestamp || 'N/A');
                 const risk = item.calculated_risk;
 
                 // Color tier definitions
@@ -825,7 +827,20 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
                         : 'hover:bg-[#1a273f]/60'
                     }`}
                   >
-                    <td className="p-3 text-[#94a3b8] whitespace-nowrap">{formattedTime}</td>
+                    <td className="p-3 whitespace-nowrap">
+                      <div className="flex flex-col gap-0.5">
+                        <div
+                          className="font-mono text-xs text-cyan-200 flex items-center gap-1.5"
+                          title={`High-Precision ISO 8601 (UTC): ${isoTimestamp}`}
+                        >
+                          <Clock className="w-3 h-3 text-cyan-400 shrink-0" />
+                          <span>{isoTimestamp}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 pl-4.5">
+                          Local: {localFormattedTime}
+                        </span>
+                      </div>
+                    </td>
                     <td className="p-3 font-semibold text-white whitespace-nowrap">
                       <button
                         onClick={() => setFilterPrincipal(item.username)}
@@ -895,20 +910,29 @@ export const AuditLogStream: React.FC<AuditLogStreamProps> = ({
                       )}
                     </td>
                     <td className="p-3 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                          isBlocked
-                            ? 'bg-[#ff4a6b]/15 text-[#ff4a6b] border border-[#ff4a6b]/30'
-                            : 'bg-[#00ff87]/15 text-[#00ff87] border border-[#00ff87]/30'
-                        }`}
-                      >
-                        {isBlocked ? (
-                          <AlertOctagon className="w-2.5 h-2.5" />
-                        ) : (
-                          <CheckCircle className="w-2.5 h-2.5" />
-                        )}
-                        {item.status}
-                      </span>
+                      <div className="flex flex-col gap-1 items-start">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            isBlocked
+                              ? 'bg-[#ff4a6b]/15 text-[#ff4a6b] border border-[#ff4a6b]/30'
+                              : 'bg-[#00ff87]/15 text-[#00ff87] border border-[#00ff87]/30'
+                          }`}
+                        >
+                          {isBlocked ? (
+                            <AlertOctagon className="w-2.5 h-2.5" />
+                          ) : (
+                            <CheckCircle className="w-2.5 h-2.5" />
+                          )}
+                          {item.status}
+                        </span>
+                        <span
+                          className="font-mono text-[10px] text-slate-300 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-800 flex items-center gap-1"
+                          title={`High-Precision ISO 8601 Timestamp (UTC): ${isoTimestamp}`}
+                        >
+                          <Clock className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
+                          <span className="truncate max-w-[145px]">{isoTimestamp}</span>
+                        </span>
+                      </div>
                     </td>
                     <td className="p-3 text-[#a0aec0] leading-relaxed max-w-xs sm:max-w-md">
                       <div className="space-y-1">

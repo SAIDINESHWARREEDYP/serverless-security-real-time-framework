@@ -18,57 +18,77 @@ export const userController = {
   },
 
   approveUser(req: Request, res: Response) {
-    const { id } = req.params;
+    const id = req.params.id || req.body.username || req.body.id;
+    if (!id) {
+      return res.status(400).json({ error: 'Username or user ID is required for approval.' });
+    }
     const user = userRepository.findById(id) || userRepository.findByUsername(id);
     if (!user) {
       return res.status(404).json({ error: `User '${id}' not found.` });
     }
 
     const { role, base_risk_score } = req.body;
-    const caller = req.user?.username || 'secops_admin';
+    const caller = req.user?.username || req.body.approvedBy || 'secops_admin';
+    const nowIso = new Date().toISOString();
 
-    user.status = 'APPROVED';
-    user.approved_at = new Date().toISOString();
-    user.approved_by = caller;
-    if (role) user.role = role;
-    if (typeof base_risk_score === 'number') user.base_risk_score = base_risk_score;
+    const updated = userRepository.update(user.id, {
+      status: 'APPROVED',
+      approved_at: nowIso,
+      approved_by: caller,
+      ...(role ? { role } : {}),
+      ...(typeof base_risk_score === 'number' ? { base_risk_score } : {})
+    });
 
     auditRepository.record({
       username: caller,
       requested_function: `/api/v1/users/${user.username}/approve`,
       calculated_risk: 0,
       status: 'ALLOWED',
-      reason: `[ADMIN CLEARANCE] Approved by ${caller}. Role: ${user.role}, Risk: ${user.base_risk_score}%`,
+      reason: `[ADMIN CLEARANCE] User [${user.username}] APPROVED by ${caller}. Role: ${role || user.role}, Risk: ${base_risk_score ?? user.base_risk_score}%`,
       verification_latency_ms: 0.8,
       event_type: 'USER_APPROVED'
     });
 
-    return res.json({ success: true, user: userRepository.sanitize(user), message: `User [${user.username}] cleared.` });
+    return res.json({
+      success: true,
+      user: userRepository.sanitize(updated || user),
+      message: `User [${user.username}] approved and cleared for login.`
+    });
   },
 
   rejectUser(req: Request, res: Response) {
-    const { id } = req.params;
+    const id = req.params.id || req.body.username || req.body.id;
+    if (!id) {
+      return res.status(400).json({ error: 'Username or user ID is required for rejection.' });
+    }
     const { reason } = req.body;
     const user = userRepository.findById(id) || userRepository.findByUsername(id);
     if (!user) {
       return res.status(404).json({ error: `User '${id}' not found.` });
     }
 
-    const caller = req.user?.username || 'secops_admin';
-    user.status = 'REJECTED';
-    user.request_justification = reason ? `Rejected by ${caller}: ${reason}` : `Rejected by ${caller}`;
+    const caller = req.user?.username || req.body.rejectedBy || 'secops_admin';
+    const justification = reason ? `Rejected by ${caller}: ${reason}` : `Access rejected by ${caller}`;
+
+    const updated = userRepository.update(user.id, {
+      status: 'REJECTED'
+    });
 
     auditRepository.record({
       username: caller,
       requested_function: `/api/v1/users/${user.username}/reject`,
       calculated_risk: user.base_risk_score,
       status: 'BLOCKED',
-      reason: `[ADMIN REJECTED] Access rejected by ${caller}. ${reason || ''}`,
+      reason: `[ADMIN REJECTION] User [${user.username}] access REJECTED by ${caller}. ${reason || ''}`,
       verification_latency_ms: 0.8,
       event_type: 'USER_REJECTED'
     });
 
-    return res.json({ success: true, user: userRepository.sanitize(user), message: `Access request for [${user.username}] rejected.` });
+    return res.json({
+      success: true,
+      user: userRepository.sanitize(updated || user),
+      message: `Access request for [${user.username}] rejected.`
+    });
   },
 
   updateStatus(req: Request, res: Response) {

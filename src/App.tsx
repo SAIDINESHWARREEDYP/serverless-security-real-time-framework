@@ -59,10 +59,10 @@ import {
 export default function App() {
   const { theme } = useTheme();
   const [users, setUsers] = useState<User[]>([
-    { id: 'usr_secops_admin', username: 'secops_admin', password_hash: 'ZeroTrust_2026', role: 'Admin', base_risk_score: 0 },
-    { id: 'usr_cloud_dev', username: 'cloud_dev', password_hash: 'ZeroTrust_2026', role: 'Developer', base_risk_score: 15 },
-    { id: 'usr_auditor_guest', username: 'auditor_guest', password_hash: 'ZeroTrust_2026', role: 'Guest', base_risk_score: 30 },
-    { id: 'usr_threat_actor', username: 'threat_actor', password_hash: 'ZeroTrust_2026', role: 'Guest', base_risk_score: 70 }
+    { id: 'usr_secops_admin', username: 'secops_admin', password_hash: '••••••••', role: 'Admin', base_risk_score: 0 },
+    { id: 'usr_cloud_dev', username: 'cloud_dev', password_hash: '••••••••', role: 'Developer', base_risk_score: 15 },
+    { id: 'usr_auditor_guest', username: 'auditor_guest', password_hash: '••••••••', role: 'Guest', base_risk_score: 30 },
+    { id: 'usr_threat_actor', username: 'threat_actor', password_hash: '••••••••', role: 'Guest', base_risk_score: 70 }
   ]);
 
   const [rules, setRules] = useState<FunctionRule[]>([
@@ -153,6 +153,7 @@ export default function App() {
 
   // IAM inline form state for real-time any user
   const [inlineUsername, setInlineUsername] = useState('');
+  const [inlinePassword, setInlinePassword] = useState('');
   const [inlineRole, setInlineRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
   const [inlineRisk, setInlineRisk] = useState<number>(20);
   const [inlineLoading, setInlineLoading] = useState(false);
@@ -607,6 +608,10 @@ export default function App() {
   const handleInlineRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inlineUsername.trim()) return;
+    if (!inlinePassword || inlinePassword.length < 8) {
+      setInlineMsg({ type: 'error', text: 'Password must be at least 8 characters.' });
+      return;
+    }
     setInlineLoading(true);
     setInlineMsg(null);
 
@@ -617,7 +622,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: clean,
-          password: 'ZeroTrust_2026',
+          password: inlinePassword,
           role: inlineRole,
           base_risk_score: Number(inlineRisk)
         })
@@ -628,7 +633,7 @@ export default function App() {
         const newUser: User = {
           id: data.user?.id || `usr_${clean}`,
           username: clean,
-          password_hash: 'ZeroTrust_2026',
+          password_hash: inlinePassword,
           role: inlineRole,
           base_risk_score: Number(inlineRisk),
           status: data.user?.status || 'APPROVED'
@@ -651,6 +656,7 @@ export default function App() {
 
         setInlineMsg({ type: 'success', text: `Identity [${clean}] provisioned and activated in real-time!` });
         setInlineUsername('');
+        setInlinePassword('');
         addTerminalLog('success', `[IAM] Real-time user [${clean}] (${inlineRole}) provisioned with base risk ${inlineRisk}%.`);
       } else {
         setInlineMsg({ type: 'error', text: data.error || 'Failed to register identity.' });
@@ -1242,6 +1248,20 @@ export default function App() {
 
                         <div>
                           <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+                            Password (Min 8 chars) *
+                          </label>
+                          <input
+                            type="password"
+                            value={inlinePassword}
+                            onChange={(e) => setInlinePassword(e.target.value)}
+                            placeholder="Create account password"
+                            className="w-full p-2.5 bg-slate-950 border border-slate-800 text-white text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">
                             Assigned RBAC Role
                           </label>
                           <select
@@ -1274,7 +1294,7 @@ export default function App() {
 
                       <div className="pt-2 flex items-center justify-between">
                         <div className="text-[11px] text-slate-500">
-                          Auto-provisions password <code className="text-slate-300">ZeroTrust_2026</code>. Instantly usable in simulator and audit logs.
+                          Custom password hashed with cryptographic PBKDF2 &amp; unique salt.
                         </div>
                         <button
                           type="submit"

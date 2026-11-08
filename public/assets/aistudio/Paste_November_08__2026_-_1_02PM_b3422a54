@@ -1,0 +1,923 @@
+Update the UserDatabaseModal to include a 'Pending Requests' section that lists all users with 'PENDING_APPROVAL' status, complete with 'Approve' and 'Reject' buttons that trigger the respective API approval workflows, ensuring each action is audited in the log stream.
+Preserve the existing project and design.
+Create a complete backup before modifications.
+Preserve all existing working pages and components.
+Preserve existing API compatibility wherever possible.
+Avoid unnecessary redesign and rewriting.
+Remove duplicate and unused code safely.
+Establish a clear frontend/backend/cloud architecture.
+Maintain separate development and production configurations.
+Maintain an environment variable example file.
+Document all external dependencies.
+Admin authentication and credential security
+No hardcoded production admin password.
+No shared default administrator credentials.
+No plaintext password storage.
+Server-side password hashing using a suitable password-hashing algorithm.
+Unique cryptographically random salt per password.
+Appropriate password-hashing work factor.
+Password complexity and length validation.
+Secure password change.
+Secure password reset.
+Existing password verification.
+Password reuse policy where required.
+Brute-force protection.
+Account lockout and recovery.
+Secure administrator initialization.
+No password, hash or secret exposure in frontend responses.
+No sensitive credentials in logs.
+Authentication, JWT and sessions
+Secure login.
+Invalid credentials rejected.
+Unknown accounts rejected.
+Disabled accounts rejected.
+Cryptographically signed JWT.
+JWT signature verification.
+JWT expiry validation.
+Issuer and audience validation where applicable.
+Active server-side session validation.
+Session expiry.
+Session revocation.
+Logout invalidates the session.
+Expired sessions rejected.
+Tampered tokens rejected.
+Token replay protection where applicable.
+Secure refresh-token handling if implemented.
+No plain username accepted as a bearer token.
+No fake JWT or legacy token bypass.
+No missing-session authentication bypass.
+Secure cookie settings if cookie-based authentication is used.
+Multi-factor authentication
+Unique MFA secret per user.
+Secure cryptographic secret generation.
+Server-side TOTP verification.
+RFC 6238 compatibility.
+Time-window validation.
+OTP expiry.
+OTP replay prevention.
+MFA challenge expiry.
+MFA challenge single-use enforcement.
+Backup-code generation.
+Hashed backup-code storage.
+Backup codes usable only once.
+Backup-code regeneration.
+MFA failure rate limiting.
+MFA secrets never exposed to frontend.
+OTP values never logged.
+No shared fallback MFA secret.
+No client-side OTP verification.
+No fake SMS notifications.
+Secure MFA enrollment and recovery.
+User and identity governance
+Secure user registration.
+Server-controlled role assignment.
+User approval workflow.
+User rejection workflow.
+Account activation and deactivation.
+User profile management.
+Username change request.
+Username collision prevention.
+Pending username request detection.
+Admin approval of username changes.
+Atomic username updates.
+Existing session invalidation after identity change.
+Password change request.
+Password request pending status.
+Admin approval and rejection.
+Correct password database update after approval.
+Existing session revocation after password change.
+Rejection reason and justification.
+Request history.
+Audit records for all administrative actions.
+Role-based access control
+Implement six canonical roles only if they match your actual project requirements and role design.
+Role definitions.
+Permission definitions.
+Permission-to-role mapping.
+Least-privilege access.
+Server-side authorization.
+Protected administrative routes.
+Protected user management.
+Protected incident management.
+Protected policy management.
+Protected configuration management.
+Protected audit access.
+Privilege escalation prevention.
+Role change authorization.
+Access-denied handling.
+Authorization matrix.
+Tests for every sensitive permission.
+Real-time serverless security verification engine
+This is the central functionality of your project.
+Implement and test the complete verification pipeline:
+Step 1: Request structure validation.
+Step 2: Required field validation.
+Step 3: Authentication verification.
+Step 4: Session verification.
+Step 5: User identity verification.
+Step 6: Role verification.
+Step 7: Permission verification.
+Step 8: Function identity verification.
+Step 9: Function access policy verification.
+Step 10: Invocation authorization.
+Step 11: Input validation.
+Step 12: Suspicious payload detection.
+Step 13: Rate-limit enforcement.
+Step 14: Risk classification and policy evaluation.
+Step 15: Final security decision and audit recording.
+For every invocation, produce:
+ALLOW or DENY decision.
+Actual decision reason.
+Function identifier.
+User or service identity.
+Timestamp.
+Applied security rule.
+Risk classification where implemented.
+Actual processing latency.
+Audit reference.
+Clear error response if verification fails.
+Additional security requirements:
+Fail-closed verification.
+No authorization bypass.
+No frontend-controlled security decisions.
+No unauthorized function execution.
+No excessive permissions.
+No invalid invocation.
+No revoked-session invocation.
+No suspicious requests silently accepted.
+Correct handling of verification-service failures.
+Do not claim a Markov model, AI detection or machine learning unless it is genuinely implemented.
+Security policy and function management
+Create policies.
+Edit policies.
+Delete policies with appropriate authorization.
+Enable and disable policies.
+Policy validation.
+Policy conflict detection.
+Policy versioning or change history.
+Function registration.
+Function update.
+Function removal.
+Function identity validation.
+Function-to-policy mapping.
+Function permission configuration.
+Invocation history.
+Function access control.
+Real-time policy enforcement.
+Security threat detection
+SQL injection detection.
+Command injection detection.
+Cross-site scripting detection.
+Suspicious payload detection.
+Insecure deserialization protection where relevant.
+Authentication bypass detection.
+Privilege escalation detection.
+Unauthorized API access detection.
+Brute-force detection.
+Repeated invocation detection.
+Rate-limit violation detection.
+Suspicious metadata-service access detection.
+Invalid request sequence detection.
+Malformed input detection.
+Security event classification.
+Important: implement contextual validation and safe handling, not just keyword-based blocking. Avoid claiming complete protection against all attacks.
+Cloudflare Workers
+Correct Worker entry point.
+Correct Wrangler configuration.
+Correct D1 binding.
+Actual Cloudflare database ID verified.
+Production environment configuration.
+Secure environment variables.
+JWT secret configured through Cloudflare secrets.
+No production fallback secret.
+CORS restricted to intended origins.
+Request validation.
+Response validation.
+Authentication middleware.
+RBAC middleware.
+Rate limiting.
+Error handling.
+Health-check endpoint.
+Protected administrative APIs.
+Protected policy APIs.
+Protected user APIs.
+Protected incident APIs.
+Protected audit APIs.
+Secure session revocation.
+Actual Worker deployment verified.
+Cloudflare D1 database
+Correct database binding.
+Correct database ID.
+Migration 0001 works.
+Migration 0002 works.
+Migration 0003 works.
+No duplicate-column errors.
+Versioned migration tracking.
+Fresh database migration test.
+Existing database upgrade test.
+Users table.
+Roles and permissions tables.
+Sessions table.
+MFA data storage.
+Password change requests table.
+Username change requests table.
+Functions table.
+Policies table.
+Invocation history table.
+Verification results table.
+Security incidents table.
+Audit events table.
+Foreign keys and constraints.
+Appropriate indexes.
+Safe database transactions.
+Actual insert and read operations verified.
+Data persistence across requests verified.
+No fake database connection status.
+No silent migration error handling.
+Express backend and API integration
+All API routes documented.
+Request validation.
+Response validation.
+Authentication middleware.
+Authorization middleware.
+Error handling.
+Database repository correctness.
+No hardcoded credentials.
+No insecure debug endpoints.
+No sensitive stack traces in production.
+No accidental information disclosure.
+Correct frontend API integration.
+Correct Worker API integration.
+Correct environment-based routing.
+No confusion between local SQLite and Cloudflare D1.
+Audit logging and integrity
+Authentication event logging.
+Login failure logging.
+Session event logging.
+User management logging.
+Password request logging.
+Username request logging.
+Policy change logging.
+Invocation logging.
+Security decision logging.
+Incident lifecycle logging.
+Administrator action logging.
+Previous hash correctly linked.
+Current hash correctly calculated.
+Hash integrity verification.
+Tamper detection.
+Concurrent audit write safety.
+Database failure handling.
+No fabricated audit IDs.
+No secrets or OTPs in audit data.
+Audit history searchable and filterable.
+Security incident management
+Automatic incident creation.
+Incident classification.
+Severity classification.
+Incident status.
+Incident investigation details.
+Incident assignment.
+Incident acknowledgement.
+Incident resolution.
+Incident closure.
+Incident history.
+Incident filtering.
+Incident search.
+Audit trail for incident changes.
+Real-time incident updates where implemented.
+Frontend and UI functionality
+Preserve your existing design and verify every interface.
+Login page.
+MFA verification page.
+Dashboard.
+Security monitoring.
+Function management.
+Invocation verification.
+Policy management.
+Rule management.
+User management.
+Role management.
+Identity and credential requests.
+Password request approval.
+Username request approval.
+Incident management.
+Audit log viewer.
+Reports and analytics.
+Settings.
+Navigation.
+Search.
+Filters.
+Pagination.
+Forms.
+Dialogs and modals.
+Notifications.
+Loading states.
+Empty states.
+Error states.
+Success states.
+Responsive design.
+Accessibility and keyboard navigation.
+No dead buttons.
+No fake data in production.
+No broken links.
+No browser console errors.
+Real-time capabilities
+Actual event generation.
+Real-time security decision updates.
+Live incident notifications.
+Real-time dashboard refresh.
+Correct SSE or WebSocket implementation, if used.
+Authentication for event streams.
+Authorization for event subscriptions.
+Connection error handling.
+Reconnection handling.
+No duplicate events.
+No sensitive data leakage through event streams.
+Persistent event history.
+Google AI Studio application
+Existing application preserved.
+Preview loads.
+Application builds.
+Login works.
+MFA works.
+Navigation works.
+Existing interfaces work.
+Correct API configuration.
+Correct backend connectivity.
+No secrets in client bundles.
+No fake production data.
+No runtime errors.
+Actual deployed application verified.
+Cloudflare deployment and integration
+Cloudflare account configuration verified.
+Worker deployment successful.
+D1 database connected.
+Migrations applied.
+Production secrets configured.
+Correct API origin.
+CORS verified.
+Authentication verified.
+RBAC verified.
+D1 read/write verified.
+Real invocation verification verified.
+Incident persistence verified.
+Audit persistence verified.
+Production error handling verified.
+Frontend-to-Worker integration verified.
+Important: Google AI Studio and Cloudflare are separate deployment targets. Verify each independently; do not claim both are deployed merely because the application preview works.
+Automated testing
+Authentication tests
+Valid login.
+Invalid login.
+Unknown user.
+Disabled user.
+Password verification.
+MFA success.
+MFA failure.
+MFA replay.
+Expired challenge.
+JWT tampering.
+JWT expiry.
+Session revocation.
+Logout.
+RBAC tests
+All required roles.
+All required permissions.
+Unauthorized access.
+Privilege escalation.
+Admin-only endpoints.
+User approval.
+Policy management.
+Incident management.
+Identity workflow tests
+Password request.
+Password approval.
+Password rejection.
+Username request.
+Username approval.
+Username rejection.
+Duplicate username.
+Concurrent username collision.
+Session invalidation.
+Verification tests
+Valid invocation.
+Invalid invocation.
+Unauthorized invocation.
+Excessive permissions.
+Expired session.
+Revoked session.
+Suspicious payload.
+Rate-limit exceeded.
+Invalid policy.
+Fail-closed behavior.
+Database and audit tests
+Fresh migration.
+Upgrade migration.
+Insert and retrieval.
+Concurrent writes.
+Transaction rollback.
+Audit hash verification.
+Tamper detection.
+Persistence after restart.
+Frontend tests
+Login flow.
+MFA flow.
+Preserve the existing project and design.
+Create a complete backup before modifications.
+Preserve all existing working pages and components.
+Preserve existing API compatibility wherever possible.
+Avoid unnecessary redesign and rewriting.
+Remove duplicate and unused code safely.
+Establish a clear frontend/backend/cloud architecture.
+Maintain separate development and production configurations.
+Maintain an environment variable example file.
+Document all external dependencies.
+Admin authentication and credential security
+No hardcoded production admin password.
+No shared default administrator credentials.
+No plaintext password storage.
+Server-side password hashing using a suitable password-hashing algorithm.
+Unique cryptographically random salt per password.
+Appropriate password-hashing work factor.
+Password complexity and length validation.
+Secure password change.
+Secure password reset.
+Existing password verification.
+Password reuse policy where required.
+Brute-force protection.
+Account lockout and recovery.
+Secure administrator initialization.
+No password, hash or secret exposure in frontend responses.
+No sensitive credentials in logs.
+Authentication, JWT and sessions
+Secure login.
+Invalid credentials rejected.
+Unknown accounts rejected.
+Disabled accounts rejected.
+Cryptographically signed JWT.
+JWT signature verification.
+JWT expiry validation.
+Issuer and audience validation where applicable.
+Active server-side session validation.
+Session expiry.
+Session revocation.
+Logout invalidates the session.
+Expired sessions rejected.
+Tampered tokens rejected.
+Token replay protection where applicable.
+Secure refresh-token handling if implemented.
+No plain username accepted as a bearer token.
+No fake JWT or legacy token bypass.
+No missing-session authentication bypass.
+Secure cookie settings if cookie-based authentication is used.
+Multi-factor authentication
+Unique MFA secret per user.
+Secure cryptographic secret generation.
+Server-side TOTP verification.
+RFC 6238 compatibility.
+Time-window validation.
+OTP expiry.
+OTP replay prevention.
+MFA challenge expiry.
+MFA challenge single-use enforcement.
+Backup-code generation.
+Hashed backup-code storage.
+Backup codes usable only once.
+Backup-code regeneration.
+MFA failure rate limiting.
+MFA secrets never exposed to frontend.
+OTP values never logged.
+No shared fallback MFA secret.
+No client-side OTP verification.
+No fake SMS notifications.
+Secure MFA enrollment and recovery.
+User and identity governance
+Secure user registration.
+Server-controlled role assignment.
+User approval workflow.
+User rejection workflow.
+Account activation and deactivation.
+User profile management.
+Username change request.
+Username collision prevention.
+Pending username request detection.
+Admin approval of username changes.
+Atomic username updates.
+Existing session invalidation after identity change.
+Password change request.
+Password request pending status.
+Admin approval and rejection.
+Correct password database update after approval.
+Existing session revocation after password change.
+Rejection reason and justification.
+Request history.
+Audit records for all administrative actions.
+Role-based access control
+Implement six canonical roles only if they match your actual project requirements and role design.
+Role definitions.
+Permission definitions.
+Permission-to-role mapping.
+Least-privilege access.
+Server-side authorization.
+Protected administrative routes.
+Protected user management.
+Protected incident management.
+Protected policy management.
+Protected configuration management.
+Protected audit access.
+Privilege escalation prevention.
+Role change authorization.
+Access-denied handling.
+Authorization matrix.
+Tests for every sensitive permission.
+Real-time serverless security verification engine
+This is the central functionality of your project.
+Implement and test the complete verification pipeline:
+Step 1: Request structure validation.
+Step 2: Required field validation.
+Step 3: Authentication verification.
+Step 4: Session verification.
+Step 5: User identity verification.
+Step 6: Role verification.
+Step 7: Permission verification.
+Step 8: Function identity verification.
+Step 9: Function access policy verification.
+Step 10: Invocation authorization.
+Step 11: Input validation.
+Step 12: Suspicious payload detection.
+Step 13: Rate-limit enforcement.
+Step 14: Risk classification and policy evaluation.
+Step 15: Final security decision and audit recording.
+For every invocation, produce:
+ALLOW or DENY decision.
+Actual decision reason.
+Function identifier.
+User or service identity.
+Timestamp.
+Applied security rule.
+Risk classification where implemented.
+Actual processing latency.
+Audit reference.
+Clear error response if verification fails.
+Additional security requirements:
+Fail-closed verification.
+No authorization bypass.
+No frontend-controlled security decisions.
+No unauthorized function execution.
+No excessive permissions.
+No invalid invocation.
+No revoked-session invocation.
+No suspicious requests silently accepted.
+Correct handling of verification-service failures.
+Do not claim a Markov model, AI detection or machine learning unless it is genuinely implemented.
+Security policy and function management
+Create policies.
+Edit policies.
+Delete policies with appropriate authorization.
+Enable and disable policies.
+Policy validation.
+Policy conflict detection.
+Policy versioning or change history.
+Function registration.
+Function update.
+Function removal.
+Function identity validation.
+Function-to-policy mapping.
+Function permission configuration.
+Invocation history.
+Function access control.
+Real-time policy enforcement.
+Security threat detection
+SQL injection detection.
+Command injection detection.
+Cross-site scripting detection.
+Suspicious payload detection.
+Insecure deserialization protection where relevant.
+Authentication bypass detection.
+Privilege escalation detection.
+Unauthorized API access detection.
+Brute-force detection.
+Repeated invocation detection.
+Rate-limit violation detection.
+Suspicious metadata-service access detection.
+Invalid request sequence detection.
+Malformed input detection.
+Security event classification.
+Important: implement contextual validation and safe handling, not just keyword-based blocking. Avoid claiming complete protection against all attacks.
+Cloudflare Workers
+Correct Worker entry point.
+Correct Wrangler configuration.
+Correct D1 binding.
+Actual Cloudflare database ID verified.
+Production environment configuration.
+Secure environment variables.
+JWT secret configured through Cloudflare secrets.
+No production fallback secret.
+CORS restricted to intended origins.
+Request validation.
+Response validation.
+Authentication middleware.
+RBAC middleware.
+Rate limiting.
+Error handling.
+Health-check endpoint.
+Protected administrative APIs.
+Protected policy APIs.
+Protected user APIs.
+Protected incident APIs.
+Protected audit APIs.
+Secure session revocation.
+Actual Worker deployment verified.
+Cloudflare D1 database
+Correct database binding.
+Correct database ID.
+Migration 0001 works.
+Migration 0002 works.
+Migration 0003 works.
+No duplicate-column errors.
+Versioned migration tracking.
+Fresh database migration test.
+Existing database upgrade test.
+Users table.
+Roles and permissions tables.
+Sessions table.
+MFA data storage.
+Password change requests table.
+Username change requests table.
+Functions table.
+Policies table.
+Invocation history table.
+Verification results table.
+Security incidents table.
+Audit events table.
+Foreign keys and constraints.
+Appropriate indexes.
+Safe database transactions.
+Actual insert and read operations verified.
+Data persistence across requests verified.
+No fake database connection status.
+No silent migration error handling.
+Express backend and API integration
+All API routes documented.
+Request validation.
+Response validation.
+Authentication middleware.
+Authorization middleware.
+Error handling.
+Database repository correctness.
+No hardcoded credentials.
+No insecure debug endpoints.
+No sensitive stack traces in production.
+No accidental information disclosure.
+Correct frontend API integration.
+Correct Worker API integration.
+Correct environment-based routing.
+No confusion between local SQLite and Cloudflare D1.
+Audit logging and integrity
+Authentication event logging.
+Login failure logging.
+Session event logging.
+User management logging.
+Password request logging.
+Username request logging.
+Policy change logging.
+Invocation logging.
+Security decision logging.
+Incident lifecycle logging.
+Administrator action logging.
+Previous hash correctly linked.
+Current hash correctly calculated.
+Hash integrity verification.
+Tamper detection.
+Concurrent audit write safety.
+Database failure handling.
+No fabricated audit IDs.
+No secrets or OTPs in audit data.
+Audit history searchable and filterable.
+Security incident management
+Automatic incident creation.
+Incident classification.
+Severity classification.
+Incident status.
+Incident investigation details.
+Incident assignment.
+Incident acknowledgement.
+Incident resolution.
+Incident closure.
+Incident history.
+Incident filtering.
+Incident search.
+Audit trail for incident changes.
+Real-time incident updates where implemented.
+Frontend and UI functionality
+Preserve your existing design and verify every interface.
+Login page.
+MFA verification page.
+Dashboard.
+Security monitoring.
+Function management.
+Invocation verification.
+Policy management.
+Rule management.
+User management.
+Role management.
+Identity and credential requests.
+Password request approval.
+Username request approval.
+Incident management.
+Audit log viewer.
+Reports and analytics.
+Settings.
+Navigation.
+Search.
+Filters.
+Pagination.
+Forms.
+Dialogs and modals.
+Notifications.
+Loading states.
+Empty states.
+Error states.
+Success states.
+Responsive design.
+Accessibility and keyboard navigation.
+No dead buttons.
+No fake data in production.
+No broken links.
+No browser console errors.
+Real-time capabilities
+Actual event generation.
+Real-time security decision updates.
+Live incident notifications.
+Real-time dashboard refresh.
+Correct SSE or WebSocket implementation, if used.
+Authentication for event streams.
+Authorization for event subscriptions.
+Connection error handling.
+Reconnection handling.
+No duplicate events.
+No sensitive data leakage through event streams.
+Persistent event history.
+Google AI Studio application
+Existing application preserved.
+Preview loads.
+Application builds.
+Login works.
+MFA works.
+Navigation works.
+Existing interfaces work.
+Correct API configuration.
+Correct backend connectivity.
+No secrets in client bundles.
+No fake production data.
+No runtime errors.
+Actual deployed application verified.
+Cloudflare deployment and integration
+Cloudflare account configuration verified.
+Worker deployment successful.
+D1 database connected.
+Migrations applied.
+Production secrets configured.
+Correct API origin.
+CORS verified.
+Authentication verified.
+RBAC verified.
+D1 read/write verified.
+Real invocation verification verified.
+Incident persistence verified.
+Audit persistence verified.
+Production error handling verified.
+Frontend-to-Worker integration verified.
+Important: Google AI Studio and Cloudflare are separate deployment targets. Verify each independently; do not claim both are deployed merely because the application preview works.
+Automated testing
+Authentication tests
+Valid login.
+Invalid login.
+Unknown user.
+Disabled user.
+Password verification.
+MFA success.
+MFA failure.
+MFA replay.
+Expired challenge.
+JWT tampering.
+JWT expiry.
+Session revocation.
+Logout.
+RBAC tests
+All required roles.
+All required permissions.
+Unauthorized access.
+Privilege escalation.
+Admin-only endpoints.
+User approval.
+Policy management.
+Incident management.
+Identity workflow tests
+Password request.
+Password approval.
+Password rejection.
+Username request.
+Username approval.
+Username rejection.
+Duplicate username.
+Concurrent username collision.
+Session invalidation.
+Verification tests
+Valid invocation.
+Invalid invocation.
+Unauthorized invocation.
+Excessive permissions.
+Expired session.
+Revoked session.
+Suspicious payload.
+Rate-limit exceeded.
+Invalid policy.
+Fail-closed behavior.
+Database and audit tests
+Fresh migration.
+Upgrade migration.
+Insert and retrieval.
+Concurrent writes.
+Transaction rollback.
+Audit hash verification.
+Tamper detection.
+Persistence after restart.
+Frontend tests
+Login flow.
+MFA flow.
+User management.
+Admin approval.
+Admin rejection.
+Policy management.
+Incident management.
+Dashboard data.
+Error handling.
+Responsive behavior.
+Code quality and production readiness
+TypeScript compilation passes.
+Lint passes.
+Production build passes.
+Automated tests pass.
+No unused or duplicate dependencies.
+No exposed secrets.
+No unnecessary public ZIP files.
+No production database included in public assets.
+No unnecessary debugging code.
+No fake metrics.
+No misleading health checks.
+No unhandled exceptions.
+No insecure production configuration.
+Clean source directory.
+Clean deployment package.
+Performance and reliability
+Actual verification latency measured.
+API response latency measured.
+Database query latency measured.
+Concurrent request behavior measured.
+Rate-limit behavior measured.
+Error rate measured.
+Database failure handling verified.
+Worker failure handling verified.
+Resource consumption measured where available.
+Performance bottlenecks addressed.
+Benchmark methodology documented.
+Base-paper comparison made only using comparable measurements. and also when having data in cloufalre also add with timestamp
+User management.
+Admin approval.
+Admin rejection.
+Policy management.
+Incident management.
+Dashboard data.
+Error handling.
+Responsive behavior.
+Code quality and production readiness
+TypeScript compilation passes.
+Lint passes.
+Production build passes.
+Automated tests pass.
+No unused or duplicate dependencies.
+No exposed secrets.
+No unnecessary public ZIP files.
+No production database included in public assets.
+No unnecessary debugging code.
+No fake metrics.
+No misleading health checks.
+No unhandled exceptions.
+No insecure production configuration.
+Clean source directory.
+Clean deployment package.
+Performance and reliability
+Actual verification latency measured.
+API response latency measured.
+Database query latency measured.
+Concurrent request behavior measured.
+Rate-limit behavior measured.
+Error rate measured.
+Database failure handling verified.
+Worker failure handling verified.
+Resource consumption measured where available.
+Performance bottlenecks addressed.
+Benchmark methodology documented.
+Base-paper comparison made only using comparable measurements. and also when having data in cloufalre also add with timestamp

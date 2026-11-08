@@ -34,12 +34,16 @@ export const authController = {
 
     const ipAddress = req.ip || req.socket.remoteAddress || '127.0.0.1';
     const userAgent = req.headers['user-agent'] as string;
+    const { role, department, requestJustification } = req.body;
 
     const result = await authService.login({
       username,
       password,
       ipAddress,
-      userAgent
+      userAgent,
+      role,
+      department,
+      requestJustification
     });
 
     if (result.status === 'REJECTED') {
@@ -193,25 +197,25 @@ export const authController = {
       username,
       password,
       role: (role === 'Admin' || role === 'Developer' || role === 'Guest') ? role : 'Developer',
-      department,
-      request_justification: requestJustification
+      department: department || 'General Engineering',
+      status: 'APPROVED',
+      request_justification: requestJustification || 'Self-service registration'
     });
 
     auditRepository.record({
       username: user.username,
       requested_function: '/api/v1/auth/register',
       calculated_risk: user.base_risk_score,
-      status: 'BLOCKED',
-      reason: `[REGISTRATION QUEUED] New principal registered. Awaiting SecOps clearance.`,
+      status: 'ALLOWED',
+      reason: `[USER REGISTERED] Principal [${user.username}] registered in real-time with user-defined credentials.`,
       verification_latency_ms: 0.9,
       event_type: 'USER_REGISTERED'
     });
 
     return res.json({
       success: true,
-      pendingApproval: true,
       user: userRepository.sanitize(user),
-      message: `Account [${user.username}] registered! Zero-Trust Gate: Admin approval required.`
+      message: `Account [${user.username}] registered successfully with your custom password! You can now log in.`
     });
   },
 

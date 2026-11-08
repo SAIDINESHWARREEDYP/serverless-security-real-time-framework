@@ -160,6 +160,43 @@ class PersistentSecurityDatabase {
       } catch {}
     }
 
+    // Guarantee password_change_requests table exists for admin approval workflow
+    try {
+      this.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS password_change_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          username TEXT NOT NULL,
+          new_password_hash TEXT NOT NULL,
+          new_password_salt TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          requested_at TEXT NOT NULL,
+          reviewed_at TEXT,
+          reviewed_by TEXT,
+          justification TEXT,
+          rejection_reason TEXT
+        );
+      `);
+    } catch {}
+
+    // Guarantee username_change_requests table exists for admin approval workflow
+    try {
+      this.sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS username_change_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          current_username TEXT NOT NULL,
+          requested_username TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          requested_at TEXT NOT NULL,
+          reviewed_at TEXT,
+          reviewed_by TEXT,
+          justification TEXT,
+          rejection_reason TEXT
+        );
+      `);
+    } catch {}
+
     // Ensure all seeded users have valid PBKDF2 hash & salt
     try {
       this.sqlite.exec(`
@@ -168,7 +205,18 @@ class PersistentSecurityDatabase {
           password_hash = '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e',
           mfa_secret = 'JBSWY3DPEHPK3PXP'
         WHERE (password_salt IS NULL OR password_salt = '' OR password_hash = 'ZeroTrust_2026')
-          AND username IN ('secops_admin', 'cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor');
+          AND username IN ('cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor');
+      `);
+    } catch {}
+
+    // Configure admin login password to 12345@pro with cryptographic salt & PBKDF2 hash
+    try {
+      this.sqlite.exec(`
+        UPDATE users SET 
+          password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
+          password_hash = 'cc5af848d092362caf2830e08b3e46495ab9cebba694112a0a5025b6cf05bc71d02a8ccbe5a6fa422a7b60bf0f4ce458b14c5af7e9ada0485d73b3397eac5db1',
+          mfa_secret = 'JBSWY3DPEHPK3PXP'
+        WHERE username = 'secops_admin';
       `);
     } catch {}
   }
