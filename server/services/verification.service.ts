@@ -293,10 +293,10 @@ class VerificationService {
     }
 
     // STEP 6: Role-based function execution permission validation
-    let rbacAllowed = true;
+    let rbacAllowed = false;
     if (user && fnRecord) {
       const requiredPerm = fnRecord.required_permission || 'functions:invoke';
-      rbacAllowed = rbacRepository.hasPermission(user.role, requiredPerm) || rbacRepository.hasPermission(user.role, 'functions:invoke');
+      rbacAllowed = rbacRepository.hasPermission(user.role, requiredPerm);
       if (!rbacAllowed) {
         recordStep(6, 'Role-Based Access Control (RBAC)', 'FAILED', `Role [${user.role}] lacks permission [${requiredPerm}] for function.`);
         denialReasons.push(`Role [${user.role}] unauthorized for function.`);
@@ -459,14 +459,18 @@ class VerificationService {
     targetFunction: string;
     payloadStr: string;
     timerStart: number;
+    token?: string;
+    requestId?: string;
+    ipAddress?: string;
   }): VerificationVerdict {
     const detailed = this.execute15StepPipeline({
-      requestId: `req_${Date.now()}`,
+      requestId: params.requestId || `req_${Date.now()}`,
       targetFunction: params.targetFunction,
       payloadStr: params.payloadStr,
       user: params.user,
-      token: 'jwt_valid',
-      timerStart: params.timerStart
+      token: params.token,
+      timerStart: params.timerStart,
+      ipAddress: params.ipAddress
     });
 
     return {

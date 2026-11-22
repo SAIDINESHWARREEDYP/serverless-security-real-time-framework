@@ -25,6 +25,7 @@ export interface UserRecord {
   email?: string;
   phone?: string;
   mfa_enabled: boolean;
+  mfa_enrolled?: boolean;
   mfa_secret?: string; // Stored securely, never returned in API responses
   mfa_backup_codes?: string[]; // Hashed or securely kept
   last_totp_step?: number;
@@ -45,8 +46,8 @@ export interface SanitizedUser {
   email?: string;
   phone?: string;
   mfa_enabled: boolean;
-  mfa_secret?: string;
-  mfa_backup_codes?: string[];
+  mfa_enrolled?: boolean;
+  mfa_backup_codes_remaining?: number;
   created_at: string;
   approved_at?: string;
   approved_by?: string;

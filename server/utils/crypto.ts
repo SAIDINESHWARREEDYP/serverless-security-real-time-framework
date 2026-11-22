@@ -50,7 +50,7 @@ export function hashPassword(password: string, providedSalt?: string): { salt: s
 export function verifyPassword(password: string, salt: string | undefined, expectedHash: string): boolean {
   if (!password || !expectedHash) return false;
   try {
-    if (salt) {
+    if (salt && salt.trim().length > 0) {
       const derivedKey = crypto.pbkdf2Sync(
         password,
         salt,
@@ -59,19 +59,13 @@ export function verifyPassword(password: string, salt: string | undefined, expec
         'sha512'
       );
       const expectedBuf = Buffer.from(expectedHash, 'hex');
-      if (derivedKey.length === expectedBuf.length && crypto.timingSafeEqual(derivedKey, expectedBuf)) {
-        return true;
-      }
+      return derivedKey.length === expectedBuf.length && crypto.timingSafeEqual(derivedKey, expectedBuf);
     }
 
-    // Constant-time check for legacy unhashed or default seed passwords
+    // Legacy unsalted seed records only (upgraded automatically upon successful verification)
     const pwdBuf = Buffer.from(password);
     const expBuf = Buffer.from(expectedHash);
-    if (pwdBuf.length === expBuf.length && crypto.timingSafeEqual(pwdBuf, expBuf)) {
-      return true;
-    }
-
-    return false;
+    return pwdBuf.length === expBuf.length && crypto.timingSafeEqual(pwdBuf, expBuf);
   } catch {
     return false;
   }

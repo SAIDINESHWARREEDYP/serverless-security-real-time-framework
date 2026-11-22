@@ -30,12 +30,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { User, UserApprovalStatus } from '../types.ts';
-import {
-  generateTotpToken,
-  getTotpRemainingSeconds,
-  normalizeBase32Secret,
-  formatTotpKeyUri
-} from '../utils/mfa.ts';
+import { getTotpRemainingSeconds } from '../utils/mfa.ts';
+import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
 
 export interface PasswordChangeRequestItem {
   id: string;
@@ -111,26 +107,25 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   // Development Mode state (facilitates troubleshooting MFA mismatches and viewing credentials)
   const [isDevMode, setIsDevMode] = useState(true);
 
-  // Recovery Codes Modal state
+  // Recovery Codes & MFA Reset state
   const [recoveryCodesModal, setRecoveryCodesModal] = useState<{ username: string; codes: string[] } | null>(null);
   const [isGeneratingRecovery, setIsGeneratingRecovery] = useState<string | null>(null);
+  const [resettingMfaUser, setResettingMfaUser] = useState<string | null>(null);
   const [copiedCodes, setCopiedCodes] = useState(false);
 
-  // Security Credentials View state
+  // Security Credentials View state (Metadata only — never holds raw Base32 secret)
   const [securityCredentialsUser, setSecurityCredentialsUser] = useState<{
     username: string;
     role: string;
-    base32Secret: string;
-    activeTotp: string;
-    keyUri: string;
+    mfa_enabled: boolean;
+    mfaConfigured: boolean;
+    issuer: string;
+    timeStep30s: number;
     secondsRemaining: number;
     backupCodesCount: number;
+    serverTimeIso: string;
   } | null>(null);
   const [isLoadingCredentials, setIsLoadingCredentials] = useState<string | null>(null);
-  const [showSecretRaw, setShowSecretRaw] = useState(false);
-  const [copiedSecret, setCopiedSecret] = useState(false);
-  const [copiedTotp, setCopiedTotp] = useState(false);
-  const [copiedUri, setCopiedUri] = useState(false);
 
   // New user form state
   const [newUsername, setNewUsername] = useState('');
@@ -155,9 +150,10 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const fetchAllChangeRequests = React.useCallback(async () => {
     setIsLoadingRequests(true);
     try {
+      const headers = getAuthRequestHeaders();
       const [pwdRes, usrRes] = await Promise.all([
-        fetch('/api/password-requests'),
-        fetch('/api/username-requests')
+        fetch('/api/password-requests', { headers }),
+        fetch('/api/username-requests', { headers })
       ]);
       if (pwdRes.ok) {
         const data = await pwdRes.json();
@@ -190,7 +186,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     try {
       const res = await fetch(`/api/password-requests/${id}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' })
       });
       const data = await res.json();
       if (data.success) {
@@ -213,7 +209,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     try {
       const res = await fetch(`/api/password-requests/${id}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reason: 'Declined by Administrator' })
       });
       const data = await res.json();
@@ -236,7 +232,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     try {
       const res = await fetch(`/api/username-requests/${id}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' })
       });
       const data = await res.json();
       if (data.success) {
@@ -259,7 +255,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     try {
       const res = await fetch(`/api/username-requests/${id}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reason: 'Declined by Administrator' })
       });
       const data = await res.json();
@@ -310,24 +306,23 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const pendingUsernameRequestsCount = usernameRequests.filter((r) => r.status === 'PENDING').length;
   const totalPendingChangeRequests = pendingPasswordRequestsCount + pendingUsernameRequestsCount;
 
-  // Live timer for Security Credentials Inspector (updates active TOTP and countdown bar every second)
+  // Live timer for TOTP 30-second synchronization window display
   useEffect(() => {
     if (!securityCredentialsUser) return;
     const interval = setInterval(() => {
-      const { secondsRemaining } = getTotpRemainingSeconds();
-      const freshToken = generateTotpToken(securityCredentialsUser.base32Secret);
+      const { secondsRemaining, timeStep } = getTotpRemainingSeconds();
       setSecurityCredentialsUser((prev) =>
         prev
           ? {
               ...prev,
-              activeTotp: freshToken,
+              timeStep30s: timeStep,
               secondsRemaining
             }
           : null
       );
     }, 1000);
     return () => clearInterval(interval);
-  }, [securityCredentialsUser?.base32Secret]);
+  }, [Boolean(securityCredentialsUser)]);
 
   if (!isOpen) return null;
 
@@ -338,7 +333,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     try {
       const res = await fetch(`/api/system/users/${encodeURIComponent(targetUsername)}/recovery-codes`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' })
       });
       const data = await res.json();
       if (data.success && Array.isArray(data.plaintextCodes)) {
@@ -357,54 +352,57 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     }
   };
 
-  // Handle opening Security Credentials view
+  // Handle resetting first-time MFA enrollment so user can re-pair via QR at next sign-in
+  const handleResetMfaEnrollment = async (targetUsername: string) => {
+    setResettingMfaUser(targetUsername);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/system/users/${encodeURIComponent(targetUsername)}/mfa-reset`, {
+        method: 'POST',
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRequestNotice(
+          `MFA pairing reset for [${targetUsername}]. Next sign-in will display a fresh QR code & manual setup key.`
+        );
+        await onRefreshUsers?.();
+      } else {
+        setActionError(data.error || 'Failed to reset MFA pairing');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'Error resetting MFA pairing');
+    } finally {
+      setResettingMfaUser(null);
+    }
+  };
+
+  // Handle opening Security Credentials enrollment metadata view
   const handleOpenSecurityCredentials = async (targetUser: User) => {
     setIsLoadingCredentials(targetUser.username);
     setActionError(null);
-    setShowSecretRaw(false);
     try {
-      const res = await fetch(`/api/system/users/${encodeURIComponent(targetUser.username)}/credentials`);
+      const res = await fetch(`/api/system/users/${encodeURIComponent(targetUser.username)}/credentials`, {
+        headers: getAuthRequestHeaders()
+      });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         setSecurityCredentialsUser({
           username: data.username,
           role: data.role || targetUser.role,
-          base32Secret: data.base32Secret,
-          activeTotp: data.activeTotpToken,
-          keyUri: data.keyUri,
-          secondsRemaining: data.secondsRemaining,
-          backupCodesCount: data.backupCodesCount
+          mfa_enabled: Boolean(data.mfa_enabled),
+          mfaConfigured: Boolean(data.mfaConfigured),
+          issuer: data.issuer || 'Serverless-Sec-Framework',
+          timeStep30s: data.timeStep30s ?? getTotpRemainingSeconds().timeStep,
+          secondsRemaining: data.secondsRemaining ?? getTotpRemainingSeconds().secondsRemaining,
+          backupCodesCount: data.backupCodesCount ?? 0,
+          serverTimeIso: data.serverTimeIso || new Date().toISOString()
         });
       } else {
-        // Fallback using client-side derivation
-        const sec = normalizeBase32Secret(targetUser.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
-        const token = generateTotpToken(sec);
-        const { secondsRemaining } = getTotpRemainingSeconds();
-        const uri = formatTotpKeyUri(targetUser.username, 'ServerlessSecOps', sec);
-        setSecurityCredentialsUser({
-          username: targetUser.username,
-          role: targetUser.role,
-          base32Secret: sec,
-          activeTotp: token,
-          keyUri: uri,
-          secondsRemaining,
-          backupCodesCount: Array.isArray(targetUser.mfa_backup_codes) ? targetUser.mfa_backup_codes.length : 0
-        });
+        setActionError(data.error || 'Failed to retrieve MFA credential metadata.');
       }
     } catch (err: any) {
-      const sec = normalizeBase32Secret(targetUser.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
-      const token = generateTotpToken(sec);
-      const { secondsRemaining } = getTotpRemainingSeconds();
-      const uri = formatTotpKeyUri(targetUser.username, 'ServerlessSecOps', sec);
-      setSecurityCredentialsUser({
-        username: targetUser.username,
-        role: targetUser.role,
-        base32Secret: sec,
-        activeTotp: token,
-        keyUri: uri,
-        secondsRemaining,
-        backupCodesCount: Array.isArray(targetUser.mfa_backup_codes) ? targetUser.mfa_backup_codes.length : 0
-      });
+      setActionError(err?.message || 'Network error retrieving MFA metadata.');
     } finally {
       setIsLoadingCredentials(null);
     }
@@ -1062,9 +1060,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                             </span>
                           )}
 
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30 flex items-center gap-1">
-                            <Smartphone className="w-2.5 h-2.5 text-blue-400" />
-                            MFA Active
+                          <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
+                            user.mfa_enrolled
+                              ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                              : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                          }`}>
+                            <Smartphone className={`w-2.5 h-2.5 ${user.mfa_enrolled ? 'text-blue-400' : 'text-amber-400'}`} />
+                            {user.mfa_enrolled ? 'MFA Enrolled' : 'Pairing Pending (QR Next Login)'}
                           </span>
 
                           {backupCount > 0 && (
@@ -1199,6 +1201,20 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         <LifeBuoy className="w-3.5 h-3.5 text-amber-400" />
                         <span>
                           {isGeneratingRecovery === user.username ? 'Generating...' : 'Recovery Codes'}
+                        </span>
+                      </button>
+
+                      {/* FEATURE 3: Reset MFA Pairing (re-enables first-time QR setup on next sign-in) */}
+                      <button
+                        type="button"
+                        onClick={() => handleResetMfaEnrollment(user.username)}
+                        disabled={resettingMfaUser === user.username}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/60 hover:border-indigo-500 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                        title="Rotate MFA key and enable one-time QR pairing on next login"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${resettingMfaUser === user.username ? 'animate-spin' : ''}`} />
+                        <span>
+                          {resettingMfaUser === user.username ? 'Resetting...' : 'Reset MFA'}
                         </span>
                       </button>
 
@@ -1670,7 +1686,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         </div>
       </div>
 
-      {/* MODAL 1: SECURITY CREDENTIALS INSPECTOR (Dev Mode View) */}
+      {/* MODAL 1: SECURITY CREDENTIALS INSPECTOR (Enrollment & Window Metadata Only) */}
       {securityCredentialsUser && (
         <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-blue-500/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4">
@@ -1681,13 +1697,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <span>Security Credentials Inspector</span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
-                      Dev Mode
+                    <span>Security Credentials Status</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      Protected
                     </span>
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Troubleshoot MFA token alignment and inspect base32 secret for{' '}
+                    Inspect RFC 6238 enrollment posture and 30s time window alignment for{' '}
                     <span className="text-white font-mono font-semibold">[{securityCredentialsUser.username}]</span>.
                   </p>
                 </div>
@@ -1702,12 +1718,12 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               </button>
             </div>
 
-            {/* Live RFC 6238 Token Display */}
+            {/* Synchronized 30s Window Telemetry */}
             <div className="p-4 rounded-xl bg-slate-950 border border-blue-500/30 space-y-2.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-400 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-blue-400" />
-                  Synchronized Live TOTP (30s Window)
+                  TOTP 30-Second Time-Step Window #{securityCredentialsUser.timeStep30s}
                 </span>
                 <span className="text-[11px] font-mono text-blue-400 font-bold">
                   {securityCredentialsUser.secondsRemaining}s remaining
@@ -1721,77 +1737,39 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-2xl font-mono font-bold text-white tracking-widest">
-                  {securityCredentialsUser.activeTotp.slice(0, 3)} {securityCredentialsUser.activeTotp.slice(3, 6)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(securityCredentialsUser.activeTotp);
-                    setCopiedTotp(true);
-                    setTimeout(() => setCopiedTotp(false), 2000);
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-blue-600/30 hover:bg-blue-600/40 border border-blue-500/40 text-blue-300 text-xs font-mono flex items-center gap-1.5 cursor-pointer"
-                >
-                  {copiedTotp ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedTotp ? 'Copied' : 'Copy TOTP'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Base32 Secret Key */}
-            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 font-medium">Shared Base32 Secret Key (RFC 6238):</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowSecretRaw(!showSecretRaw)}
-                    className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    {showSecretRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    <span>{showSecretRaw ? 'Hide' : 'Reveal'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(securityCredentialsUser.base32Secret);
-                      setCopiedSecret(true);
-                      setTimeout(() => setCopiedSecret(false), 2000);
-                    }}
-                    className="text-[11px] text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedSecret ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedSecret ? 'Copied' : 'Copy'}</span>
-                  </button>
+              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                  <span className="text-slate-400 block text-[10px]">MFA Enforcement</span>
+                  <span className={securityCredentialsUser.mfa_enabled ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                    {securityCredentialsUser.mfa_enabled ? 'ENABLED (RFC 6238)' : 'DISABLED'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                  <span className="text-slate-400 block text-[10px]">Secret Enrollment</span>
+                  <span className={securityCredentialsUser.mfaConfigured ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                    {securityCredentialsUser.mfaConfigured ? 'CONFIGURED (SEALED)' : 'NOT ENROLLED'}
+                  </span>
                 </div>
               </div>
-              <div className="font-mono text-xs text-white p-2 bg-slate-900 rounded-lg border border-slate-800 break-all select-all">
-                {showSecretRaw ? securityCredentialsUser.base32Secret : '••••••••••••••••••••••••••••••••'}
-              </div>
             </div>
 
-            {/* OTPAuth URI */}
-            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 font-medium">OTP Authenticator URI:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(securityCredentialsUser.keyUri);
-                    setCopiedUri(true);
-                    setTimeout(() => setCopiedUri(false), 2000);
-                  }}
-                  className="text-[11px] text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  {copiedUri ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedUri ? 'Copied' : 'Copy URI'}</span>
-                </button>
+            {/* Enrollment Issuer & Server Time Metadata */}
+            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Authenticator Issuer:</span>
+                <span className="font-mono text-slate-200">{securityCredentialsUser.issuer}</span>
               </div>
-              <div className="font-mono text-[11px] text-slate-400 p-2 bg-slate-900 rounded-lg border border-slate-800 break-all truncate">
-                {securityCredentialsUser.keyUri}
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Assigned Principal Role:</span>
+                <span className="font-mono text-blue-300">{securityCredentialsUser.role}</span>
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Server Sync Timestamp:</span>
+                <span className="font-mono text-slate-300">{securityCredentialsUser.serverTimeIso}</span>
+              </div>
+              <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-800">
+                For Zero-Trust compliance, shared Base32 TOTP keys and live OTPs remain sealed on the server and are never exposed via API responses. Use Regenerate Recovery Codes if an authenticator device is lost.
+              </p>
             </div>
 
             <div className="flex items-center justify-between text-xs text-slate-400 pt-1">

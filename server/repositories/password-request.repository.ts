@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { db } from '../db.ts';
 import { hashPassword } from '../utils/crypto.ts';
 import { userRepository } from './user.repository.ts';
@@ -47,7 +48,7 @@ export class PasswordRequestRepository {
     }
 
     const { salt, hash } = hashPassword(params.newPasswordPlaintext);
-    const id = `pwd_req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const id = `pwd_req_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
 
     db.prepare(`

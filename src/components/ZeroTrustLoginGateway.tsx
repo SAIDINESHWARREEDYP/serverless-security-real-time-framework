@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { User, AuthSession, UserApprovalStatus, MfaPendingChallenge } from '../types.ts';
 import { MfaVerificationCard } from './MfaVerificationCard.tsx';
+import { MfaEnrollmentPanel, MfaEnrollmentPayload } from './MfaEnrollmentPanel.tsx';
 
 interface ZeroTrustLoginGatewayProps {
   users: User[];
@@ -52,7 +53,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   const [showPassword, setShowPassword] = useState(false);
 
   // Dynamic on-the-fly onboarding options when a new username is entered
-  const [dynamicRole, setDynamicRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
+  const [dynamicRole, setDynamicRole] = useState<'Developer' | 'Guest'>('Developer');
   const [dynamicDept, setDynamicDept] = useState('Cloud Infrastructure Operations');
   const [dynamicJustification, setDynamicJustification] = useState('');
 
@@ -60,7 +61,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   const [registerUsername, setRegisterUsername] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
-  const [registerRole, setRegisterRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
+  const [registerRole, setRegisterRole] = useState<'Developer' | 'Guest'>('Developer');
   const [registerDept, setRegisterDept] = useState('Platform Engineering');
   const [registerRisk, setRegisterRisk] = useState(20);
   const [registerJustification, setRegisterJustification] = useState('');
@@ -80,8 +81,9 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   const [isPollingApproval, setIsPollingApproval] = useState(false);
   const [approvalPollCount, setApprovalPollCount] = useState(0);
 
-  // Multi-Factor Authentication Challenge state
+  // Multi-Factor Authentication Challenge & Registration Enrollment state
   const [mfaChallenge, setMfaChallenge] = useState<MfaPendingChallenge | null>(null);
+  const [registeredEnrollment, setRegisteredEnrollment] = useState<MfaEnrollmentPayload | null>(null);
 
   // Directory filter
   const [dirSearch, setDirSearch] = useState('');
@@ -239,13 +241,6 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         password: cleanPass
       };
 
-      // If user doesn't exist yet, provide dynamic onboarding parameters
-      if (!matchedExistingUser) {
-        payload.role = dynamicRole;
-        payload.department = dynamicDept;
-        payload.requestJustification = dynamicJustification || 'Real-time dynamic identity sign-in';
-      }
-
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -258,14 +253,14 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         const pUser: User = data.user || {
           id: `usr_${cleanUser}`,
           username: cleanUser,
-          password_hash: payload.password,
+          password_hash: '••••••••',
           role: data.role || dynamicRole,
           base_risk_score: data.userRisk ?? 20,
           status: 'PENDING_APPROVAL',
           department: dynamicDept
         };
         setPendingUser(pUser);
-        onAddTerminalLog?.('alert', `[IAM CLEARANCE] Principal ${cleanUser} registered. Held in Zero-Trust gate awaiting Admin verification.`);
+        onAddTerminalLog?.('alert', `[IAM CLEARANCE] Principal ${cleanUser} is held in Zero-Trust gate awaiting Admin verification.`);
         return;
       }
 
@@ -288,12 +283,10 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           mfaSessionId: data.mfaSessionId,
           username: cleanUser,
           user: data.user,
+          enrollmentRequired: Boolean(data.enrollmentRequired),
           phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
           emailMasked: data.emailMasked || `${cleanUser.toLowerCase()}@corp.internal`,
-          methods: data.methods || ['authenticator', 'sms', 'backup_code'],
-          demoTotpCode: data.demoTotpCode,
-          demoSmsCode: data.demoSmsCode,
-          totpSecret: data.totpSecret,
+          methods: data.methods || ['authenticator', 'backup_code'],
           serverTime: data.serverTime,
           stepSeconds: data.stepSeconds || 30,
           clockOffsetSeconds: effectiveDriftSeconds,
@@ -361,11 +354,20 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
       const data = await res.json();
       if (res.ok && data.success) {
+        if (data.mfaEnrollment) {
+          setRegisteredEnrollment({
+            username: clean,
+            secret: data.mfaEnrollment.secret,
+            provisioningUri: data.mfaEnrollment.provisioningUri,
+            backupCodes: data.mfaEnrollment.backupCodes,
+            issuer: data.mfaEnrollment.issuer
+          });
+        }
         if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
           const pUser: User = data.user || {
             id: `usr_${clean}`,
             username: clean,
-            password_hash: registerPassword,
+            password_hash: '',
             role: registerRole,
             base_risk_score: registerRisk,
             status: 'PENDING_APPROVAL',
@@ -684,13 +686,24 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
             </div>
           </div>
 
+          {registeredEnrollment && (
+            <MfaEnrollmentPanel
+              enrollment={registeredEnrollment}
+              title={`Step 1: Add [${registeredEnrollment.username || pendingUser.username}] to Your Authenticator App While Waiting`}
+              subtitle="Scan this QR code now so your Authenticator app is ready as soon as an Administrator approves your account."
+            />
+          )}
+
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs">
             <span className="text-slate-400">
               To approve this user, an Administrator can approve via the SecOps Command Center or User Database.
             </span>
             <button
               type="button"
-              onClick={() => setPendingUser(null)}
+              onClick={() => {
+                setPendingUser(null);
+                setRegisteredEnrollment(null);
+              }}
               className="text-slate-400 hover:text-white font-medium hover:underline cursor-pointer"
             >
               Cancel &amp; Return to Sign In
@@ -891,52 +904,33 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                 </div>
               </div>
 
-              {/* If New Identity is detected, allow quick role & department assignment */}
+              {/* If identity is not yet in directory, offer clean redirect to Register tab */}
               {!matchedExistingUser && username.trim().length > 0 && (
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-3 animate-in fade-in">
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 animate-in fade-in">
                   <div className="flex items-center justify-between text-xs font-semibold text-cyan-300 border-b border-slate-800/80 pb-2">
                     <span className="flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                      Dynamic Real-Time Onboarding Clearance
+                      Identity Not Found in Local Directory
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                      Auto-Provisioning
+                      Onboarding Required
                     </span>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <label className="block text-slate-400 mb-1 font-medium text-[11px]">
-                        Requested Clearance Role
-                      </label>
-                      <select
-                        value={dynamicRole}
-                        onChange={(e) => setDynamicRole(e.target.value as any)}
-                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-cyan-500"
-                      >
-                        <option value="Developer">Developer (Tier 1 &amp; Tier 2)</option>
-                        <option value="Admin">Admin (Full Control)</option>
-                        <option value="Guest">Guest (Tier 1 Read Only)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 mb-1 font-medium text-[11px]">
-                        Department
-                      </label>
-                      <input
-                        type="text"
-                        value={dynamicDept}
-                        onChange={(e) => setDynamicDept(e.target.value)}
-                        placeholder="e.g. Threat Intelligence"
-                        className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 italic">
-                    Note: Newly onboarded non-admin identities will enter the Zero-Trust Gate awaiting Admin verification per active policy.
+                  <p className="text-[11px] text-slate-400">
+                    Unregistered handles cannot sign in directly. Provision this identity through the Registration tab (Admin privilege requires Administrator assignment).
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRegisterUsername(username.trim());
+                      setRegisterRole(dynamicRole);
+                      setRegisterDept(dynamicDept);
+                      setActiveTab('register');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 text-[11px] font-semibold cursor-pointer"
+                  >
+                    Provision [{username.trim()}] in Register Tab →
+                  </button>
                 </div>
               )}
 
@@ -1048,7 +1042,6 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
                   >
                     <option value="Developer">Developer (Tier 1 &amp; Tier 2)</option>
-                    <option value="Admin">Admin (Full Privileged Clearance)</option>
                     <option value="Guest">Guest (Tier 1 Read Only)</option>
                   </select>
                 </div>

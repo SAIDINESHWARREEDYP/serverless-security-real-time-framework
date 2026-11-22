@@ -24,8 +24,13 @@ export interface RecoveryCodesResult {
  * Normalizes base32 secret to meet RFC 6238 and otplib guardrail requirements (>= 26 chars / 16 bytes).
  */
 export function normalizeBase32Secret(secret: string): string {
-  if (!secret) return 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+  if (!secret || !secret.trim()) {
+    throw new Error('Base32 MFA secret is required.');
+  }
   const clean = secret.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  if (!clean) {
+    throw new Error('Base32 MFA secret contains no valid Base32 characters.');
+  }
   if (clean.length < 26) {
     // Pad/repeat up to 32 characters
     return clean.repeat(Math.ceil(32 / clean.length)).slice(0, 32);
@@ -147,7 +152,13 @@ export function generateTotpSecret(length = 20): string {
     if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
       crypto.getRandomValues(bytes);
     } else {
-      for (let i = 0; i < length; i++) bytes[i] = Math.floor(Math.random() * 256);
+      const g = globalThis as any;
+      const req = typeof g.__non_webpack_require__ !== 'undefined' ? g.__non_webpack_require__ : (typeof require === 'function' ? require : null);
+      if (!req) {
+        throw new Error('Cryptographically secure random generator is unavailable.');
+      }
+      const nodeCrypto = req('crypto');
+      bytes.set(nodeCrypto.randomBytes(length));
     }
     for (let i = 0; i < bytes.length; i++) {
       secret += BASE32_ALPHABET[bytes[i] % 32];
@@ -276,12 +287,29 @@ export function generateRecoveryCodes(count = 8): RecoveryCodesResult {
   const hashedCodes: string[] = [];
   const CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Base32 unambiguous charset (no 0/O, 1/I)
 
+  const randomBytesBuffer = new Uint8Array(count * 8);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(randomBytesBuffer);
+  } else {
+    try {
+      const g = globalThis as any;
+      const req = typeof g.__non_webpack_require__ !== 'undefined' ? g.__non_webpack_require__ : (typeof require === 'function' ? require : null);
+      if (req) {
+        const nodeCrypto = req('crypto');
+        randomBytesBuffer.set(nodeCrypto.randomBytes(count * 8));
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  let byteIdx = 0;
   for (let i = 0; i < count; i++) {
     let part1 = '';
     let part2 = '';
     for (let j = 0; j < 4; j++) {
-      part1 += CHARS[Math.floor(Math.random() * CHARS.length)];
-      part2 += CHARS[Math.floor(Math.random() * CHARS.length)];
+      part1 += CHARS[randomBytesBuffer[byteIdx++] % CHARS.length];
+      part2 += CHARS[randomBytesBuffer[byteIdx++] % CHARS.length];
     }
     const formatted = `${part1}-${part2}`;
     const normalized = `${part1}${part2}`;

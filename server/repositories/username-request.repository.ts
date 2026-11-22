@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { db } from '../db.ts';
 import { userRepository } from './user.repository.ts';
 import { sessionRepository } from './session.repository.ts';
@@ -62,7 +63,7 @@ export class UsernameRequestRepository {
       throw new Error(`A pending request for username [${reqClean}] is already awaiting Admin approval.`);
     }
 
-    const id = `usr_req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const id = `usr_req_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
 
     db.prepare(`

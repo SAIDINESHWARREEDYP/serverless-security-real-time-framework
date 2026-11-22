@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -199,7 +200,7 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
       } else {
         const res = await fetch('/api/system/users/approve', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             username,
             approvedBy: currentSession?.user.username || 'secops_admin'
@@ -224,7 +225,7 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
       } else {
         const res = await fetch('/api/system/users/reject', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             username,
             reason: 'SecOps Administrator denied clearance.'
@@ -247,7 +248,10 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
       if (onDeleteUser) {
         await onDeleteUser(username);
       } else {
-        const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+        const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, {
+          method: 'DELETE',
+          headers: getAuthRequestHeaders()
+        });
         if (res.ok) await onRefreshData();
       }
       onAddTerminalLog('info', `[IAM ADMIN] Identity [${username}] deleted from database.`);
@@ -262,7 +266,10 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
       if (onBatchSeedUsers) {
         await onBatchSeedUsers();
       } else {
-        const res = await fetch('/api/system/users/batch-seed', { method: 'POST' });
+        const res = await fetch('/api/system/users/batch-seed', {
+          method: 'POST',
+          headers: getAuthRequestHeaders()
+        });
         if (res.ok) await onRefreshData();
       }
       onAddTerminalLog('success', `[IAM DATABASE] Seeded enterprise multi-department identities.`);
@@ -304,7 +311,7 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
     } else {
       const res = await fetch('/api/system/users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(userData)
       });
       if (!res.ok) {
@@ -322,7 +329,7 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
     try {
       const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(updates)
       });
       if (res.ok) {

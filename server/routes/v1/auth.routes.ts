@@ -8,6 +8,7 @@ const router = Router();
 
 router.post('/login', loginRateLimitMiddleware, authController.login);
 router.post('/mfa/verify', authController.verifyMfa);
+router.post('/mfa/enroll-challenge', authController.enrollChallenge);
 router.post('/mfa/setup', authenticateMiddleware, authController.setupMfa);
 router.post('/register', authController.register);
 router.post('/revoke-session', authenticateMiddleware, authController.revokeSession);

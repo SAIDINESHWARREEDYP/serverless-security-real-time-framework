@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import v1Router from './v1/index.ts';
 import { authController } from '../controllers/auth.controller.ts';
@@ -18,14 +19,28 @@ import { sessionRepository } from '../repositories/session.repository.ts';
 import { passwordRequestRepository } from '../repositories/password-request.repository.ts';
 import { usernameRequestRepository } from '../repositories/username-request.repository.ts';
 import { verificationService } from '../services/verification.service.ts';
+import { authService } from '../services/auth.service.ts';
 import { db } from '../db.ts';
 import {
   generateRecoveryCodes,
-  generateTotpToken,
-  formatTotpKeyUri,
-  getTotpRemainingSeconds,
-  normalizeBase32Secret
+  getTotpRemainingSeconds
 } from '../../src/utils/mfa.ts';
+
+const VALID_ROLES = new Set([
+  'Admin',
+  'Developer',
+  'Guest',
+  'Super Administrator',
+  'Security Administrator',
+  'Security Analyst',
+  'Auditor',
+  'Viewer'
+]);
+const VALID_STATUSES = new Set(['APPROVED', 'PENDING_APPROVAL', 'REJECTED', 'SUSPENDED']);
+const VALID_INCIDENT_SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+const VALID_INCIDENT_STATUSES = new Set(['OPEN', 'INVESTIGATING', 'CONTAINED', 'RESOLVED', 'FALSE_POSITIVE']);
+const ADMIN_ROLES = new Set(['Admin', 'Super Administrator', 'Security Administrator']);
+const OPS_VIEW_ROLES = new Set(['Admin', 'Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor']);
 
 const rootRouter = Router();
 
@@ -69,32 +84,83 @@ rootRouter.get('/realtime/stream', (req, res) => {
   req.on('close', unsub);
 });
 
-rootRouter.get('/incidents', (req: Request, res: Response) => {
+rootRouter.get('/incidents', authenticateMiddleware, (req: Request, res: Response) => {
   res.json({ success: true, incidents: auditRepository.getIncidents() });
 });
 
-rootRouter.post('/incidents', authenticateMiddleware, (req: Request, res: Response) => {
-  const inc = auditRepository.createIncident({
-    title: req.body.title || 'Security Anomaly Event',
-    severity: req.body.severity || 'MEDIUM',
-    status: req.body.status || 'OPEN',
-    root_cause: req.body.root_cause,
-    mitigation_steps: req.body.mitigation_steps,
-    assigned_to: req.user?.username || 'secops_admin'
-  });
-  res.json({ success: true, incident: inc });
-});
+rootRouter.post(
+  '/incidents',
+  authenticateMiddleware,
+  requireRole('Super Administrator', 'Security Administrator', 'Security Analyst', 'Admin'),
+  (req: Request, res: Response) => {
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!title) {
+      return res.status(400).json({ error: 'Incident title is required.' });
+    }
+    const severity = (req.body?.severity || 'MEDIUM').toString().toUpperCase();
+    const status = (req.body?.status || 'OPEN').toString().toUpperCase();
+    if (!VALID_INCIDENT_SEVERITIES.has(severity)) {
+      return res.status(400).json({ error: `Invalid incident severity '${severity}'.` });
+    }
+    if (!VALID_INCIDENT_STATUSES.has(status)) {
+      return res.status(400).json({ error: `Invalid incident status '${status}'.` });
+    }
 
-rootRouter.patch('/incidents/:id', authenticateMiddleware, (req: Request, res: Response) => {
-  const inc = auditRepository.updateIncident(req.params.id, req.body);
-  if (!inc) return res.status(404).json({ error: 'Incident not found' });
-  res.json({ success: true, incident: inc });
-});
+    const inc = auditRepository.createIncident({
+      title,
+      severity: severity as any,
+      status: status as any,
+      root_cause: typeof req.body?.root_cause === 'string' ? req.body.root_cause : undefined,
+      mitigation_steps: typeof req.body?.mitigation_steps === 'string' ? req.body.mitigation_steps : undefined,
+      assigned_to: typeof req.body?.assigned_to === 'string' && req.body.assigned_to.trim()
+        ? req.body.assigned_to.trim()
+        : (req.user?.username || 'secops_admin')
+    });
+    return res.json({ success: true, incident: inc });
+  }
+);
+
+rootRouter.patch(
+  '/incidents/:id',
+  authenticateMiddleware,
+  requireRole('Super Administrator', 'Security Administrator', 'Security Analyst', 'Admin'),
+  (req: Request, res: Response) => {
+    const updates: Record<string, any> = {};
+    if (typeof req.body?.title === 'string' && req.body.title.trim()) {
+      updates.title = req.body.title.trim();
+    }
+    if (req.body?.severity !== undefined) {
+      const severity = String(req.body.severity).toUpperCase();
+      if (!VALID_INCIDENT_SEVERITIES.has(severity)) {
+        return res.status(400).json({ error: `Invalid incident severity '${severity}'.` });
+      }
+      updates.severity = severity;
+    }
+    if (req.body?.status !== undefined) {
+      const status = String(req.body.status).toUpperCase();
+      if (!VALID_INCIDENT_STATUSES.has(status)) {
+        return res.status(400).json({ error: `Invalid incident status '${status}'.` });
+      }
+      updates.status = status;
+    }
+    if (typeof req.body?.root_cause === 'string') updates.root_cause = req.body.root_cause;
+    if (typeof req.body?.mitigation_steps === 'string') updates.mitigation_steps = req.body.mitigation_steps;
+    if (typeof req.body?.assigned_to === 'string') updates.assigned_to = req.body.assigned_to;
+
+    const inc = auditRepository.updateIncident(req.params.id, updates);
+    if (!inc) return res.status(404).json({ error: 'Incident not found' });
+    return res.json({ success: true, incident: inc });
+  }
+);
 
 // 3. System Overview & Security Reporting (Backwards Compatibility)
 rootRouter.get('/system/overview', analyticsController.getOverview);
 
-rootRouter.get('/system/security-report', (req: Request, res: Response) => {
+rootRouter.get(
+  '/system/security-report',
+  authenticateMiddleware,
+  requireRole('Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor', 'Admin'),
+  (req: Request, res: Response) => {
   try {
     const users = userRepository.findAllSanitized();
     const rules = policyRepository.getRules();
@@ -118,7 +184,7 @@ rootRouter.get('/system/security-report', (req: Request, res: Response) => {
       blockRate > 5 || meanThreat > 35 ? 3 :
       criticalBlocks.length > 0 ? 4 : 5;
 
-    const reportId = `SEC-REP-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const reportId = `SEC-REP-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
     const reportData = {
       reportMetadata: {
@@ -179,7 +245,9 @@ rootRouter.get('/system/security-report', (req: Request, res: Response) => {
         'Username,Role,Base Risk (%),Total Requests,Blocked Requests'
       ];
       reportData.principalsRoster.forEach(p => {
-        csvLines.push(`"${p.username}","${p.role}",${p.baseRiskScore},${p.totalRequests},${p.blocked}`);
+        const safeUser = String(p.username).replace(/"/g, '""');
+        const safeRole = String(p.role).replace(/"/g, '""');
+        csvLines.push(`"${safeUser}","${safeRole}",${p.baseRiskScore},${p.totalRequests},${p.blocked}`);
       });
 
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -235,25 +303,82 @@ rootRouter.get('/auth/status', (req: Request, res: Response) => {
 
 // 6. User Management Routes (Protected: Admin clearance required)
 rootRouter.post('/system/users', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
-  const { username, password, role, base_risk_score, department, status, email, requestJustification, approvedBy } = req.body;
-  if (!username || !username.trim()) {
+  const { username, password, role, base_risk_score, department, status, email, requestJustification } = req.body;
+  const cleanUsername = typeof username === 'string' ? username.trim() : '';
+  if (!cleanUsername) {
     return res.status(400).json({ error: 'Username is required.' });
   }
-  if (!password || password.length < 8) {
+  if (!password || typeof password !== 'string' || password.length < 8) {
     return res.status(400).json({ error: 'Password is required and must be at least 8 characters long.' });
   }
+  if (userRepository.findByUsername(cleanUsername)) {
+    return res.status(409).json({ error: `Identity '${cleanUsername}' already exists.` });
+  }
+
+  const normalizedRole = role || 'Developer';
+  if (!VALID_ROLES.has(normalizedRole)) {
+    return res.status(400).json({ error: `Invalid role '${normalizedRole}'.` });
+  }
+  const normalizedStatus = status || 'APPROVED';
+  if (!VALID_STATUSES.has(normalizedStatus)) {
+    return res.status(400).json({ error: `Invalid status '${normalizedStatus}'.` });
+  }
+  let validatedRisk: number | undefined;
+  if (base_risk_score !== undefined) {
+    const parsedRisk = Number(base_risk_score);
+    if (!Number.isFinite(parsedRisk) || parsedRisk < 0 || parsedRisk > 100) {
+      return res.status(400).json({ error: 'base_risk_score must be between 0 and 100.' });
+    }
+    validatedRisk = parsedRisk;
+  }
+
   const user = userRepository.create({
-    username: username.trim(),
+    username: cleanUsername,
     password: password.trim(),
-    role,
-    base_risk_score,
+    role: normalizedRole,
+    base_risk_score: validatedRisk,
     department,
-    status,
+    status: normalizedStatus,
     email,
     request_justification: requestJustification,
-    approved_by: approvedBy
+    approved_by: req.user!.username
   });
   return res.json({ success: true, user: userRepository.sanitize(user), message: `Identity [${user.username}] saved into database.` });
+});
+
+rootRouter.post('/system/users/batch-seed', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req, res) => {
+  const enterpriseSamples: Array<{ username: string; role: 'Developer' | 'Guest'; base_risk_score: number; department: string }> = [
+    { username: 'elena_secops', role: 'Developer', base_risk_score: 10, department: 'Edge Platform Engineering' },
+    { username: 'marcus_sre', role: 'Developer', base_risk_score: 15, department: 'Cloud Reliability SRE' },
+    { username: 'priya_audit', role: 'Guest', base_risk_score: 20, department: 'Compliance & Risk' },
+    { username: 'raj_clouddev', role: 'Developer', base_risk_score: 25, department: 'Serverless Runtime' }
+  ];
+
+  const createdUsers: string[] = [];
+  for (const sample of enterpriseSamples) {
+    if (!userRepository.findByUsername(sample.username)) {
+      const strongGeneratedPassword = crypto.randomBytes(16).toString('hex');
+      userRepository.create({
+        username: sample.username,
+        password: strongGeneratedPassword,
+        role: sample.role,
+        base_risk_score: sample.base_risk_score,
+        department: sample.department,
+        status: 'APPROVED',
+        approved_by: req.user!.username
+      });
+      createdUsers.push(sample.username);
+    }
+  }
+
+  return res.json({
+    success: true,
+    createdCount: createdUsers.length,
+    createdUsers,
+    message: createdUsers.length > 0
+      ? `Provisioned ${createdUsers.length} enterprise identity profiles with unique cryptographic credentials.`
+      : 'All enterprise identity profiles are already present in the database.'
+  });
 });
 
 rootRouter.post('/system/users/approve', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), userController.approveUser);
@@ -273,16 +398,47 @@ rootRouter.patch('/system/users/:username', authenticateMiddleware, requireRole(
   const { username } = req.params;
   const user = userRepository.findByUsername(username);
   if (!user) return res.status(404).json({ error: `User '${username}' not found` });
-  const updated = userRepository.update(user.id, req.body);
+
+  const allowedUpdates: Record<string, any> = {};
+  if (req.body?.role !== undefined) {
+    if (!VALID_ROLES.has(req.body.role)) {
+      return res.status(400).json({ error: `Invalid role '${req.body.role}'.` });
+    }
+    allowedUpdates.role = req.body.role;
+  }
+  if (req.body?.base_risk_score !== undefined) {
+    const parsedRisk = Number(req.body.base_risk_score);
+    if (!Number.isFinite(parsedRisk) || parsedRisk < 0 || parsedRisk > 100) {
+      return res.status(400).json({ error: 'base_risk_score must be between 0 and 100.' });
+    }
+    allowedUpdates.base_risk_score = parsedRisk;
+  }
+  if (req.body?.status !== undefined) {
+    if (!VALID_STATUSES.has(req.body.status)) {
+      return res.status(400).json({ error: `Invalid status '${req.body.status}'.` });
+    }
+    allowedUpdates.status = req.body.status;
+  }
+  if (typeof req.body?.department === 'string' && req.body.department.trim()) {
+    allowedUpdates.department = req.body.department.trim();
+  }
+
+  const updated = userRepository.update(user.id, allowedUpdates);
   return res.json({ success: true, user: updated ? userRepository.sanitize(updated) : null });
 });
 
-// Single-use recovery bypass codes generation for user profile
-rootRouter.post('/system/users/:username/recovery-codes', (req: Request, res: Response) => {
+// Single-use recovery bypass codes generation for user profile (self or Admin only)
+rootRouter.post('/system/users/:username/recovery-codes', authenticateMiddleware, (req: Request, res: Response) => {
   const { username } = req.params;
   const user = userRepository.findByUsername(username);
   if (!user) {
     return res.status(404).json({ error: `User '${username}' not found in database.` });
+  }
+
+  const caller = req.user!;
+  const isSelf = caller.username.toLowerCase() === user.username.toLowerCase();
+  if (!isSelf && !ADMIN_ROLES.has(caller.role)) {
+    return res.status(403).json({ error: 'Forbidden: Only the principal owner or an Administrator may regenerate recovery codes.' });
   }
 
   const { plaintextCodes, hashedCodes } = generateRecoveryCodes(8);
@@ -292,11 +448,11 @@ rootRouter.post('/system/users/:username/recovery-codes', (req: Request, res: Re
   });
 
   auditRepository.record({
-    username: user.username,
-    requested_function: `/api/system/users/${username}/recovery-codes`,
+    username: caller.username,
+    requested_function: `/api/system/users/${user.username}/recovery-codes`,
     calculated_risk: 10,
     status: 'ALLOWED',
-    reason: `[RECOVERY CODES GENERATED] Created 8 single-use bypass codes for ${user.username}. Hashes stored in D1.`,
+    reason: `[RECOVERY CODES GENERATED] Created 8 single-use bypass codes for ${user.username} by ${caller.username}. Hashes stored in D1.`,
     verification_latency_ms: 1.1,
     event_type: 'RECOVERY_CODES_GENERATED'
   });
@@ -307,6 +463,19 @@ rootRouter.post('/system/users/:username/recovery-codes', (req: Request, res: Re
     plaintextCodes,
     codesCount: plaintextCodes.length,
     message: `Generated ${plaintextCodes.length} single-use bypass recovery codes for ${user.username}.`
+  });
+});
+
+// Admin-triggered MFA enrollment reset (allows user to re-pair a new Authenticator on next login)
+rootRouter.post('/system/users/:username/mfa-reset', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
+  const updated = authService.resetMfaEnrollment(req.params.username, req.user!.username);
+  if (!updated) {
+    return res.status(404).json({ error: `User '${req.params.username}' not found in database.` });
+  }
+  return res.json({
+    success: true,
+    user: userRepository.sanitize(updated),
+    message: `MFA pairing reset for [${updated.username}]. They will receive a fresh Authenticator QR setup on their next sign-in.`
   });
 });
 
@@ -337,15 +506,19 @@ rootRouter.post(['/password-requests/submit', '/auth/password-requests/submit'],
   }
 });
 
-rootRouter.get('/password-requests', (req: Request, res: Response) => {
+rootRouter.get('/password-requests', authenticateMiddleware, (req: Request, res: Response) => {
   const status = (req.query.status as string) || 'ALL';
   const requests = passwordRequestRepository.list(status);
-  return res.json({ success: true, requests });
+  const caller = req.user!;
+  const scoped = OPS_VIEW_ROLES.has(caller.role)
+    ? requests
+    : requests.filter((r: any) => String(r.username || '').toLowerCase() === caller.username.toLowerCase());
+  return res.json({ success: true, requests: scoped });
 });
 
 rootRouter.post('/password-requests/:id/approve', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
   const { id } = req.params;
-  const adminUsername = req.user?.username || 'secops_admin';
+  const adminUsername = req.user!.username;
 
   try {
     const result = passwordRequestRepository.approve(id, adminUsername);
@@ -358,7 +531,7 @@ rootRouter.post('/password-requests/:id/approve', authenticateMiddleware, requir
 rootRouter.post('/password-requests/:id/reject', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
   const { id } = req.params;
   const { reason } = req.body;
-  const adminUsername = req.user?.username || 'secops_admin';
+  const adminUsername = req.user!.username;
 
   try {
     const result = passwordRequestRepository.reject(id, adminUsername, reason);
@@ -395,15 +568,19 @@ rootRouter.post(['/username-requests/submit', '/auth/username-requests/submit'],
   }
 });
 
-rootRouter.get('/username-requests', (req: Request, res: Response) => {
+rootRouter.get('/username-requests', authenticateMiddleware, (req: Request, res: Response) => {
   const status = (req.query.status as string) || 'ALL';
   const requests = usernameRequestRepository.list(status);
-  return res.json({ success: true, requests });
+  const caller = req.user!;
+  const scoped = OPS_VIEW_ROLES.has(caller.role)
+    ? requests
+    : requests.filter((r: any) => String(r.current_username || '').toLowerCase() === caller.username.toLowerCase());
+  return res.json({ success: true, requests: scoped });
 });
 
 rootRouter.post('/username-requests/:id/approve', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
   const { id } = req.params;
-  const adminUsername = req.user?.username || 'secops_admin';
+  const adminUsername = req.user!.username;
 
   try {
     const result = usernameRequestRepository.approve(id, adminUsername);
@@ -416,7 +593,7 @@ rootRouter.post('/username-requests/:id/approve', authenticateMiddleware, requir
 rootRouter.post('/username-requests/:id/reject', authenticateMiddleware, requireRole('Super Administrator', 'Security Administrator', 'Admin'), (req: Request, res: Response) => {
   const { id } = req.params;
   const { reason } = req.body;
-  const adminUsername = req.user?.username || 'secops_admin';
+  const adminUsername = req.user!.username;
 
   try {
     const result = usernameRequestRepository.reject(id, adminUsername, reason);
@@ -426,27 +603,29 @@ rootRouter.post('/username-requests/:id/reject', authenticateMiddleware, require
   }
 });
 
-// Security Credentials View: inspect base32 secret, live TOTP code, and OTP URI for Admin / Dev Mode
-rootRouter.get('/system/users/:username/credentials', (req: Request, res: Response) => {
+// Safe MFA enrollment & clock-window status (never exposes raw Base32 secret or active TOTP tokens)
+rootRouter.get('/system/users/:username/credentials', authenticateMiddleware, (req: Request, res: Response) => {
   const { username } = req.params;
   const user = userRepository.findByUsername(username);
   if (!user) {
     return res.status(404).json({ error: `User '${username}' not found in database.` });
   }
 
-  const base32Secret = normalizeBase32Secret(user.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
-  const activeTotpToken = generateTotpToken(base32Secret);
+  const caller = req.user!;
+  const isSelf = caller.username.toLowerCase() === user.username.toLowerCase();
+  if (!isSelf && !ADMIN_ROLES.has(caller.role)) {
+    return res.status(403).json({ error: 'Forbidden: Only the principal owner or an Administrator may inspect MFA enrollment status.' });
+  }
+
   const remaining = getTotpRemainingSeconds();
-  const keyUri = formatTotpKeyUri(user.username, 'ServerlessSecOps', base32Secret);
 
   return res.json({
     success: true,
     username: user.username,
     role: user.role,
     mfa_enabled: Boolean(user.mfa_enabled),
-    base32Secret,
-    keyUri,
-    activeTotpToken,
+    mfaConfigured: Boolean(user.mfa_secret && user.mfa_secret.trim().length > 0),
+    issuer: 'ServerlessSecOps',
     timeStep30s: remaining.timeStep,
     secondsRemaining: remaining.secondsRemaining,
     backupCodesCount: Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes.length : 0,
@@ -490,13 +669,17 @@ rootRouter.delete('/system/rules/:id', authenticateMiddleware, requireRole('Supe
 });
 
 // 10. AI Threat Sentinel Routes
-rootRouter.post('/security/ai-threat-scan', threatController.scanPayload);
-rootRouter.get('/security/ai-threats', threatController.getAlerts);
+rootRouter.post('/security/ai-threat-scan', authenticateMiddleware, threatController.scanPayload);
+rootRouter.get('/security/ai-threats', authenticateMiddleware, threatController.getAlerts);
 
-// 11. Security Viva Drills
-rootRouter.post('/security/fail-closed-drill', async (req: Request, res: Response) => {
+// 11. Security Viva Drills (Authenticated)
+rootRouter.post('/security/fail-closed-drill', authenticateMiddleware, async (req: Request, res: Response) => {
   const timerStart = performance.now();
-  const targetUser = req.body.username || 'secops_admin';
+  const caller = req.user!;
+  const canSpecifyOther = ADMIN_ROLES.has(caller.role) || caller.role === 'Security Analyst';
+  const targetUser = (canSpecifyOther && typeof req.body?.username === 'string' && req.body.username.trim())
+    ? req.body.username.trim()
+    : caller.username;
   const simulatedErrorType = req.body.errorType || 'KMS_SECRET_DECRYPTION_TIMEOUT';
   const latencyMs = Number((performance.now() - timerStart).toFixed(3));
 
@@ -529,9 +712,13 @@ rootRouter.post('/security/fail-closed-drill', async (req: Request, res: Respons
   });
 });
 
-rootRouter.post('/security/rate-limit-drill', async (req: Request, res: Response) => {
+rootRouter.post('/security/rate-limit-drill', authenticateMiddleware, async (req: Request, res: Response) => {
   const timerStart = performance.now();
-  const targetUser = req.body.username || 'cloud_dev';
+  const caller = req.user!;
+  const canSpecifyOther = ADMIN_ROLES.has(caller.role) || caller.role === 'Security Analyst';
+  const targetUser = (canSpecifyOther && typeof req.body?.username === 'string' && req.body.username.trim())
+    ? req.body.username.trim()
+    : caller.username;
 
   // Seed 11 rapid requests in audit ledger
   for (let i = 0; i < 11; i++) {
@@ -585,11 +772,13 @@ rootRouter.post('/security/rate-limit-drill', async (req: Request, res: Response
 rootRouter.post('/register', authController.register);
 rootRouter.post('/login', loginRateLimitMiddleware, authController.login);
 rootRouter.post('/auth/mfa/verify', authController.verifyMfa);
+rootRouter.post('/auth/mfa/enroll-challenge', authController.enrollChallenge);
+rootRouter.post('/auth/mfa/setup', authenticateMiddleware, authController.setupMfa);
 
 rootRouter.post('/auth/mfa/send-sms', (req: Request, res: Response) => {
-  return res.json({
-    success: true,
-    message: 'One-time SMS verification code dispatched via secure SMS carrier gateway to your registered mobile device.'
+  return res.status(501).json({
+    success: false,
+    error: 'SMS carrier gateway is not configured in this deployment. Please use RFC 6238 Authenticator TOTP or single-use recovery codes.'
   });
 });
 
@@ -605,11 +794,17 @@ rootRouter.all('/:route', authenticateMiddleware, async (req: Request, res: Resp
     throw new Error('Simulated hardware security module (HSM) decryption timeout in verification pipeline');
   }
 
-  // Evaluate invocation through verification service
+  // Evaluate invocation through verification service (audit recorded inside Step 14 of pipeline)
+  const rawToken = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice(7).trim()
+    : undefined;
   const verdict = verificationService.evaluateInvocation({
     user,
     targetFunction: path,
     payloadStr: JSON.stringify(req.body || {}),
+    token: rawToken,
+    requestId: (req as any).requestId || (req.headers['x-request-id'] as string | undefined),
+    ipAddress: req.ip,
     timerStart
   });
 
@@ -618,17 +813,7 @@ rootRouter.all('/:route', authenticateMiddleware, async (req: Request, res: Resp
   res.setHeader('X-Verification-Decision', verdict.decision);
   res.setHeader('Server-Timing', `verify;dur=${latencyMs};desc="Security Verification Pipeline"`);
 
-  auditRepository.record({
-    username: user.username,
-    requested_function: path,
-    calculated_risk: verdict.compositeRisk,
-    status: verdict.decision === 'ALLOW' ? 'ALLOWED' : 'BLOCKED',
-    reason: verdict.reason,
-    verification_latency_ms: latencyMs,
-    event_type: verdict.eventType
-  });
-
-  if (verdict.decision === 'DENY') {
+  if (verdict.decision !== 'ALLOW') {
     return res.status(403).json({
       error: `Access Suspended: Risk Metric (${verdict.compositeRisk}%) Exceeds Safe Boundary.`,
       metrics: {

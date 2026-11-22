@@ -4,6 +4,8 @@
  * User-Role assignment, change history ledger, and access-denied logging.
  */
 
+import crypto from 'crypto';
+
 export interface RoleEntity {
   id: string;
   name: string;
@@ -297,7 +299,7 @@ class RbacRepository {
 
     // Record change history
     const changeEntry: PermissionChangeLog = {
-      id: `pch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `pch_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
       target_user: params.targetUsername,
       previous_role: params.previousRole,
       new_role: canonicalNewRole,
@@ -314,7 +316,7 @@ class RbacRepository {
   public recordAccessDenied(event: Omit<AccessDeniedLog, 'id' | 'timestamp'>): void {
     const entry: AccessDeniedLog = {
       ...event,
-      id: `adh_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `adh_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
       timestamp: new Date().toISOString()
     };
     this.accessDeniedHistory.unshift(entry);

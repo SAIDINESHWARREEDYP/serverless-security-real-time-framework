@@ -17,14 +17,14 @@ import {
   LifeBuoy,
   Key,
   Shield,
-  Fingerprint
+  Fingerprint,
+  AlertTriangle
 } from 'lucide-react';
 import { MfaPendingChallenge, AuthSession, User } from '../types.ts';
 import {
-  generateTotpToken,
-  getTotpRemainingSeconds,
-  normalizeBase32Secret
+  getTotpRemainingSeconds
 } from '../utils/mfa.ts';
+import { MfaEnrollmentPanel, MfaEnrollmentPayload } from './MfaEnrollmentPanel.tsx';
 
 interface MfaVerificationCardProps {
   challenge: MfaPendingChallenge;
@@ -49,13 +49,9 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
   const [attemptsLeft, setAttemptsLeft] = useState<number>(challenge.attemptsLeft ?? 5);
   const [copiedCode, setCopiedCode] = useState(false);
   const [resendCooldown, setResendCooldown] = useState<number>(0);
-  const [smsNotification, setSmsNotification] = useState<{
-    code: string;
-    timestamp: string;
-  } | null>({
-    code: challenge.demoSmsCode || '847291',
-    timestamp: 'Just now'
-  });
+  const [enrollmentData, setEnrollmentData] = useState<MfaEnrollmentPayload | null>(null);
+  const [enrollmentLoading, setEnrollmentLoading] = useState(false);
+  const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
 
   // Keep attemptsLeft synchronized with backend challenge state
   useEffect(() => {
@@ -64,19 +60,10 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     }
   }, [challenge.attemptsLeft]);
 
-  // Normalized Base32 secret for genuine RFC 6238 TOTP computation
-  const normalizedSecret = React.useMemo(() => {
-    return normalizeBase32Secret(challenge.totpSecret || (challenge.user as any)?.mfa_secret || 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
-  }, [challenge.totpSecret, challenge.user]);
-
-  // Dynamic TOTP countdown and real-time token calculation (30 second period + clock offset)
+  // Dynamic TOTP countdown (30 second period + clock offset)
   const [totpSecondsLeft, setTotpSecondsLeft] = useState<number>(() => {
     const { secondsRemaining } = getTotpRemainingSeconds(challenge.clockOffsetSeconds || 0);
     return secondsRemaining;
-  });
-
-  const [currentTotpCode, setCurrentTotpCode] = useState<string>(() => {
-    return generateTotpToken(normalizedSecret, challenge.clockOffsetSeconds || 0);
   });
 
   // References to the 6 PIN input boxes
@@ -87,14 +74,12 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     const updateTotp = () => {
       const { secondsRemaining } = getTotpRemainingSeconds(challenge.clockOffsetSeconds || 0);
       setTotpSecondsLeft(secondsRemaining);
-      const code = generateTotpToken(normalizedSecret, challenge.clockOffsetSeconds || 0);
-      setCurrentTotpCode(code);
     };
 
     updateTotp();
     const timer = setInterval(updateTotp, 1000);
     return () => clearInterval(timer);
-  }, [normalizedSecret, challenge.clockOffsetSeconds]);
+  }, [challenge.clockOffsetSeconds]);
 
   // 2. Resend SMS Cooldown Timer
   useEffect(() => {
@@ -111,6 +96,46 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
       inputRefs.current[0]?.focus();
     }
   }, [method]);
+
+  // Automatically load one-time Authenticator QR setup if this identity hasn't paired yet
+  useEffect(() => {
+    if (!challenge.enrollmentRequired || !challenge.mfaSessionId) return;
+    let cancelled = false;
+    setEnrollmentLoading(true);
+    setEnrollmentError(null);
+    fetch('/api/auth/mfa/enroll-challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfaChallengeId: challenge.mfaSessionId })
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Could not load first-time Authenticator setup.');
+        }
+        if (!cancelled) {
+          setEnrollmentData({
+            username: data.username,
+            secret: data.secret,
+            provisioningUri: data.provisioningUri,
+            backupCodes: data.backupCodes,
+            issuer: data.issuer
+          });
+          onAddTerminalLog?.('info', `[MFA PAIRING] Loaded one-time RFC 6238 QR & setup key for unenrolled principal ${challenge.username}.`);
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setEnrollmentError(err?.message || 'Unable to load MFA pairing data.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEnrollmentLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [challenge.enrollmentRequired, challenge.mfaSessionId, challenge.username, onAddTerminalLog]);
 
   // Handle digit typing & auto-advance
   const handleDigitChange = (index: number, val: string) => {
@@ -259,44 +284,6 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     }
   };
 
-  // Resend SMS handler
-  const handleResendSms = async () => {
-    if (resendCooldown > 0) return;
-    setLoading(true);
-    setErrorMsg(null);
-
-    try {
-      const res = await fetch('/api/auth/mfa/send-sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaSessionId: challenge.mfaSessionId, username: challenge.username })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setResendCooldown(30);
-        setSmsNotification({
-          code: data.demoSmsCode || '847291',
-          timestamp: 'Just now'
-        });
-        onAddTerminalLog?.('info', `[MFA SMS] Fresh one-time passcode dispatched to ${challenge.phoneMasked}.`);
-      } else {
-        setErrorMsg(data.error || 'Failed to dispatch new SMS code.');
-      }
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to resend SMS.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 1-Click Auto-fill helper
-  const handleAutoFillCode = (code: string) => {
-    const chars = code.replace(/[\s\-]/g, '').slice(0, 6).split('');
-    setDigits(chars);
-    setErrorMsg(null);
-    submitVerification(code);
-  };
-
   const isComplete =
     method === 'backup_code'
       ? recoveryCodeInput.trim().length >= 8
@@ -442,29 +429,48 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
               />
             </div>
 
-            {/* Authenticator Code Helper Banner */}
-            <div className="p-3 rounded-lg bg-blue-950/30 border border-blue-500/30 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded bg-blue-500/20 text-blue-400">
+            {/* First-Time Authenticator Pairing Panel (Shown ONLY when user hasn't paired yet) */}
+            {challenge.enrollmentRequired ? (
+              enrollmentLoading ? (
+                <div className="p-4 rounded-xl bg-slate-950/80 border border-blue-500/30 text-xs text-blue-300 flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Preparing your one-time Authenticator QR code &amp; backup recovery codes...</span>
+                </div>
+              ) : enrollmentData ? (
+                <MfaEnrollmentPanel
+                  enrollment={enrollmentData}
+                  title="Account Not Paired Yet — Pair Authenticator App Now"
+                  subtitle={`Scan this QR code or enter the setup key in Google/Microsoft Authenticator for ${challenge.username}, then enter the 6-digit code below.`}
+                />
+              ) : enrollmentError ? (
+                <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs">
+                  {enrollmentError}
+                </div>
+              ) : null
+            ) : (
+              /* Authenticator Security Guidance for Already-Paired Users */
+              <div className="p-3 rounded-lg bg-blue-950/30 border border-blue-500/30 flex items-start gap-3">
+                <div className="p-1.5 rounded bg-blue-500/20 text-blue-400 shrink-0 mt-0.5">
                   <KeyRound className="w-4 h-4" />
                 </div>
-                <div>
-                  <div className="text-[10px] uppercase font-mono text-slate-400">Active RFC 6238 Token:</div>
-                  <div className="font-mono text-base font-bold text-white tracking-widest">
-                    {currentTotpCode.slice(0, 3)} {currentTotpCode.slice(3, 6)}
+                <div className="text-xs text-slate-300 leading-relaxed space-y-1">
+                  <div>
+                    <span className="font-semibold text-white">Time-Based One-Time Password:</span> Open your enrolled Authenticator app (e.g. Google Authenticator, Microsoft Authenticator) and enter the current 6-digit code below.
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    New device or didn&apos;t save the QR? Use a saved{' '}
+                    <button
+                      type="button"
+                      onClick={() => setMethod('backup_code')}
+                      className="text-amber-300 hover:underline font-medium cursor-pointer"
+                    >
+                      Recovery Code
+                    </button>
+                    {' '}or ask an Administrator to click <strong>Reset MFA</strong> in User Database.
                   </div>
                 </div>
               </div>
-
-              <button
-                type="button"
-                onClick={() => handleAutoFillCode(currentTotpCode)}
-                className="glossy-btn px-3 py-1.5 rounded-lg text-xs text-blue-300 hover:text-white font-medium flex items-center gap-1.5 border border-blue-500/40 bg-blue-600/30 cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                <span>Auto-fill</span>
-              </button>
-            </div>
+            )}
           </div>
         )}
 
@@ -474,48 +480,39 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-1.5 text-slate-400">
                 <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Code sent to registered mobile:</span>
+                <span>Registered Mobile Device:</span>
               </div>
               <span className="font-mono font-semibold text-white">
                 {challenge.phoneMasked || '+1 (555) •••-4829'}
               </span>
             </div>
 
-            {/* Simulated Incoming SMS Push Banner */}
-            {smsNotification && (
-              <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-500/30 space-y-2">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                    <Send className="w-3 h-3" />
-                    Simulated Carrier SMS Push Alert
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono">{smsNotification.timestamp}</span>
-                </div>
-                <div className="text-xs text-slate-300 font-mono">
-                  &ldquo;[Zero-Trust Security] Your verification code is{' '}
-                  <span className="text-emerald-300 font-bold">{smsNotification.code}</span>. Valid for 5 minutes.&rdquo;
-                </div>
-                <div className="flex items-center justify-between pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleAutoFillCode(smsNotification.code)}
-                    className="text-xs text-emerald-300 hover:text-emerald-200 font-medium underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Auto-fill {smsNotification.code}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={resendCooldown > 0 || loading}
-                    onClick={handleResendSms}
-                    className="text-xs text-slate-400 hover:text-white disabled:opacity-50 flex items-center gap-1 cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-                    <span>{resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend SMS'}</span>
-                  </button>
-                </div>
+            {/* Carrier Status Notice */}
+            <div className="p-3.5 rounded-lg bg-amber-950/20 border border-amber-500/30 space-y-2">
+              <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>SMS 2FA Gateway Unconfigured</span>
               </div>
-            )}
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                Direct telecommunications SMS delivery is not configured in this environment. Please authenticate using your enrolled <strong className="text-blue-300">Authenticator app</strong> or an emergency single-use <strong className="text-amber-300">Recovery Code</strong>.
+              </p>
+              <div className="pt-1 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMethod('authenticator')}
+                  className="px-2.5 py-1 text-xs rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 cursor-pointer"
+                >
+                  Switch to Authenticator
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMethod('backup_code')}
+                  className="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                >
+                  Use Recovery Code
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

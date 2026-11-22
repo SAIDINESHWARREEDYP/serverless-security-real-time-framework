@@ -248,7 +248,11 @@ export function generateSecurityReportData(
 
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const randBytes = new Uint8Array(2);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(randBytes);
+  }
+  const randomSuffix = Array.from(randBytes).map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
   const reportId = `SEC-AUDIT-${dateStr}-${randomSuffix}`;
 
   // Deterministic lightweight checksum representation

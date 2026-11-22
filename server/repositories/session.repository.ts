@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import type { SessionRecord, UserRoleType } from '../types/index.ts';
 import { db } from '../db.ts';
 
@@ -20,7 +21,7 @@ class SessionRepository {
     ipAddress?: string;
     userAgent?: string;
   }): SessionRecord {
-    const id = `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    const id = `sess_${Date.now().toString(36)}_${crypto.randomBytes(6).toString('hex')}`;
     const nowIso = new Date().toISOString();
     const expiresAt = new Date(Date.now() + data.expiresInSeconds * 1000).toISOString();
 

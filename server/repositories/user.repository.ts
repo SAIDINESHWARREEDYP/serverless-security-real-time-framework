@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import type { UserRecord, SanitizedUser, UserApprovalStatus, UserRoleType } from '../types/index.ts';
 import { hashPassword, verifyPassword } from '../utils/crypto.ts';
 import { generateTotpSecret, generateRecoveryCodes } from '../../src/utils/mfa.ts';
@@ -32,6 +33,18 @@ class UserRepository {
   }
 
   public sanitize(u: UserRecord | any): SanitizedUser {
+    let backupCodesCount = 0;
+    if (Array.isArray(u.mfa_backup_codes)) {
+      backupCodesCount = u.mfa_backup_codes.length;
+    } else if (typeof u.mfa_backup_codes === 'string' && u.mfa_backup_codes.trim()) {
+      try {
+        const parsed = JSON.parse(u.mfa_backup_codes);
+        backupCodesCount = Array.isArray(parsed) ? parsed.length : 0;
+      } catch {
+        backupCodesCount = 0;
+      }
+    }
+
     return {
       id: u.id,
       username: u.username,
@@ -42,12 +55,8 @@ class UserRepository {
       email: u.email,
       phone: u.phone,
       mfa_enabled: Boolean(u.mfa_enabled),
-      mfa_secret: u.mfa_secret,
-      mfa_backup_codes: Array.isArray(u.mfa_backup_codes)
-        ? u.mfa_backup_codes
-        : typeof u.mfa_backup_codes === 'string'
-        ? JSON.parse(u.mfa_backup_codes)
-        : [],
+      mfa_enrolled: Boolean(u.mfa_enrolled),
+      mfa_backup_codes_remaining: backupCodesCount,
       created_at: u.created_at || u.createdAt,
       approved_at: u.approved_at || u.approvedAt,
       approved_by: u.approved_by || u.approvedBy,
@@ -71,7 +80,7 @@ class UserRepository {
   }): UserRecord {
     const cleanUsername = data.username.trim();
     const { salt, hash } = hashPassword(data.password);
-    const id = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    const id = `usr_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
     const nowIso = new Date().toISOString();
     const isApproved = data.status === 'APPROVED';
 
@@ -107,6 +116,76 @@ class UserRepository {
     ).run();
 
     return this.findById(id)!;
+  }
+
+  public createWithEnrollment(data: {
+    username: string;
+    password: string;
+    role?: UserRoleType;
+    base_risk_score?: number;
+    status?: UserApprovalStatus;
+    department?: string;
+    email?: string;
+    phone?: string;
+    mfa_enabled?: boolean;
+    request_justification?: string;
+    approved_by?: string;
+  }): {
+    user: UserRecord;
+    mfaEnrollment: {
+      secret: string;
+      provisioningUri: string;
+      backupCodes: string[];
+      issuer: string;
+    };
+  } {
+    const cleanUsername = data.username.trim();
+    const { salt, hash } = hashPassword(data.password);
+    const id = `usr_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+    const nowIso = new Date().toISOString();
+    const isApproved = data.status === 'APPROVED';
+
+    const individualTotpSecret = generateTotpSecret(20);
+    const { plaintextCodes, hashedCodes } = generateRecoveryCodes(8);
+
+    db.prepare(
+      `INSERT INTO users (
+        id, username, password_salt, password_hash, role, base_risk_score,
+        status, department, email, phone, mfa_enabled, mfa_enrolled, mfa_secret, mfa_backup_codes,
+        created_at, approved_at, approved_by, last_totp_step
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id,
+      cleanUsername,
+      salt,
+      hash,
+      data.role || 'Developer',
+      typeof data.base_risk_score === 'number' ? data.base_risk_score : 20,
+      data.status || 'APPROVED',
+      data.department || 'General Engineering',
+      data.email || `${cleanUsername.toLowerCase()}@corp.internal`,
+      data.phone || '+1 (555) 019-8392',
+      data.mfa_enabled !== undefined ? (data.mfa_enabled ? 1 : 0) : 1,
+      0,
+      individualTotpSecret,
+      JSON.stringify(hashedCodes),
+      nowIso,
+      isApproved ? nowIso : null,
+      isApproved ? data.approved_by || 'SYSTEM' : null,
+      0
+    ).run();
+
+    const user = this.findById(id)!;
+    const provisioningUri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${individualTotpSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`;
+    return {
+      user,
+      mfaEnrollment: {
+        secret: individualTotpSecret,
+        provisioningUri,
+        backupCodes: plaintextCodes,
+        issuer: 'ServerlessSecOps'
+      }
+    };
   }
 
   public updatePassword(userId: string, newPlaintext: string): boolean {
@@ -154,6 +233,10 @@ class UserRepository {
       fields.push('mfa_enabled = ?');
       values.push(updates.mfa_enabled ? 1 : 0);
     }
+    if (updates.mfa_enrolled !== undefined) {
+      fields.push('mfa_enrolled = ?');
+      values.push(updates.mfa_enrolled ? 1 : 0);
+    }
     if (updates.mfa_secret !== undefined) {
       fields.push('mfa_secret = ?');
       values.push(updates.mfa_secret);
@@ -194,6 +277,40 @@ class UserRepository {
     return true;
   }
 
+  public recordAdminApproval(record: {
+    id: string;
+    request_type: string;
+    target_id: string;
+    target_identifier: string;
+    action: 'APPROVE' | 'REJECT';
+    admin_id: string;
+    admin_username: string;
+    reason?: string;
+    timestamp: string;
+    ip_address?: string;
+  }): void {
+    try {
+      db.prepare(
+        `INSERT INTO administrative_approval_records (
+          id, request_type, target_id, target_identifier, action, admin_id, admin_username, reason, timestamp, ip_address
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        record.id,
+        record.request_type,
+        record.target_id,
+        record.target_identifier,
+        record.action,
+        record.admin_id,
+        record.admin_username,
+        record.reason || null,
+        record.timestamp,
+        record.ip_address || null
+      ).run();
+    } catch {
+      // Safe fallback
+    }
+  }
+
   private mapToUserRecord(row: any): UserRecord {
     return {
       id: row.id,
@@ -207,6 +324,7 @@ class UserRepository {
       email: row.email,
       phone: row.phone,
       mfa_enabled: Boolean(row.mfa_enabled),
+      mfa_enrolled: Boolean(row.mfa_enrolled),
       mfa_secret: row.mfa_secret,
       mfa_backup_codes: Array.isArray(row.mfa_backup_codes)
         ? row.mfa_backup_codes

@@ -4,6 +4,8 @@ import { userRepository } from '../repositories/user.repository.ts';
 import { validateUsername, validatePassword, validateTotpCode } from '../validators/auth.validator.ts';
 import { auditRepository } from '../repositories/audit.repository.ts';
 
+import { policyRepository } from '../repositories/policy.repository.ts';
+
 export const authController = {
   async login(req: Request, res: Response) {
     const { username, password } = req.body;
@@ -34,16 +36,12 @@ export const authController = {
 
     const ipAddress = req.ip || req.socket.remoteAddress || '127.0.0.1';
     const userAgent = req.headers['user-agent'] as string;
-    const { role, department, requestJustification } = req.body;
 
     const result = await authService.login({
       username,
       password,
       ipAddress,
-      userAgent,
-      role,
-      department,
-      requestJustification
+      userAgent
     });
 
     if (result.status === 'REJECTED') {
@@ -94,20 +92,21 @@ export const authController = {
       return res.json({
         success: true,
         mfaRequired: true,
+        enrollmentRequired: Boolean(result.enrollmentRequired),
         mfaSessionId: result.mfaChallengeId,
         mfaChallengeId: result.mfaChallengeId,
         username: result.user?.username,
         role: result.user?.role,
         phoneMasked: result.phoneMasked,
         emailMasked: result.emailMasked,
-        methods: result.methods || ['authenticator', 'backup_code', 'sms'],
+        methods: result.methods || ['authenticator', 'backup_code'],
         attemptsLeft: result.attemptsLeft,
         serverTime: nowMs,
         stepSeconds: 30,
         user: result.user,
-        totpSecret: (result as any).totpSecret,
-        demoTotpCode: (result as any).demoTotpCode,
-        message: 'Password verified. Enter 6-digit TOTP code or single-use recovery code.'
+        message: result.enrollmentRequired
+          ? 'Password verified. First-time Authenticator setup required — scan the QR code or enter setup key, then enter the 6-digit TOTP code.'
+          : 'Password verified. Enter 6-digit TOTP code or single-use recovery code.'
       });
     }
 
@@ -121,10 +120,10 @@ export const authController = {
 
   async verifyMfa(req: Request, res: Response) {
     const { mfaSessionId, mfaChallengeId, code, method, username } = req.body;
-    const challengeId = mfaChallengeId || mfaSessionId;
+    const challengeId = (mfaChallengeId || mfaSessionId || '').trim();
 
-    if (!challengeId && !username) {
-      return res.status(400).json({ success: false, error: 'Missing mfaChallengeId or username.' });
+    if (!challengeId) {
+      return res.status(400).json({ success: false, error: 'Missing mfaChallengeId.' });
     }
 
     const codeCheck = validateTotpCode(code);
@@ -136,7 +135,7 @@ export const authController = {
     const userAgent = req.headers['user-agent'] as string;
 
     const result = await authService.verifyMfa({
-      mfaChallengeId: challengeId || `mfa_usr_${username}`,
+      mfaChallengeId: challengeId,
       code,
       method,
       username,
@@ -176,6 +175,22 @@ export const authController = {
     }
   },
 
+  async enrollChallenge(req: Request, res: Response) {
+    const challengeId = (req.body?.mfaChallengeId || req.body?.mfaSessionId || '').trim();
+    const out = authService.getChallengeEnrollment(challengeId);
+    if (!out.success) {
+      return res.status(out.status || 400).json({ success: false, error: out.error });
+    }
+    return res.json({
+      success: true,
+      username: out.username,
+      secret: out.secret,
+      provisioningUri: out.provisioningUri,
+      backupCodes: out.backupCodes,
+      issuer: out.issuer || 'ServerlessSecOps'
+    });
+  },
+
   async register(req: Request, res: Response) {
     const { username, password, role, department, requestJustification } = req.body;
     const userCheck = validateUsername(username);
@@ -188,17 +203,30 @@ export const authController = {
       return res.status(400).json({ error: passCheck.error });
     }
 
+    const requestedRole = typeof role === 'string' ? role.trim() : 'Developer';
+    const privilegedRoles = ['Admin', 'Administrator', 'Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor'];
+    if (privilegedRoles.some((r) => r.toLowerCase() === requestedRole.toLowerCase())) {
+      return res.status(403).json({
+        error: 'Zero-Trust Policy Violation: Self-registration is restricted to Developer, Guest, or Viewer roles. Elevated administrative roles require SecOps Administrator provisioning.'
+      });
+    }
+
+    const assignedRole = requestedRole === 'Guest' || requestedRole === 'Viewer' ? requestedRole : 'Developer';
+
     const existing = userRepository.findByUsername(username);
     if (existing) {
       return res.status(409).json({ error: `Identity [${username}] already exists in database.` });
     }
 
-    const user = userRepository.create({
+    const policy = policyRepository.getPolicy();
+    const initialStatus = policy.requireAdminApprovalForNewLogins ? 'PENDING_APPROVAL' : 'APPROVED';
+
+    const { user, mfaEnrollment } = userRepository.createWithEnrollment({
       username,
       password,
-      role: (role === 'Admin' || role === 'Developer' || role === 'Guest') ? role : 'Developer',
+      role: assignedRole,
       department: department || 'General Engineering',
-      status: 'APPROVED',
+      status: initialStatus,
       request_justification: requestJustification || 'Self-service registration'
     });
 
@@ -207,15 +235,20 @@ export const authController = {
       requested_function: '/api/v1/auth/register',
       calculated_risk: user.base_risk_score,
       status: 'ALLOWED',
-      reason: `[USER REGISTERED] Principal [${user.username}] registered in real-time with user-defined credentials.`,
+      reason: `[USER REGISTERED] Principal [${user.username}] registered with role [${assignedRole}] and status [${initialStatus}].`,
       verification_latency_ms: 0.9,
       event_type: 'USER_REGISTERED'
     });
 
     return res.json({
       success: true,
+      pendingApproval: initialStatus === 'PENDING_APPROVAL',
+      status: initialStatus,
       user: userRepository.sanitize(user),
-      message: `Account [${user.username}] registered successfully with your custom password! You can now log in.`
+      mfaEnrollment,
+      message: initialStatus === 'PENDING_APPROVAL'
+        ? `Account [${user.username}] registered and queued at Zero-Trust Gate awaiting Administrator approval. Save your Authenticator QR & recovery codes now.`
+        : `Account [${user.username}] registered successfully! Pair your Authenticator app below before signing in.`
     });
   },
 

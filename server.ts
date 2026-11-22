@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { requestIdMiddleware } from './server/middleware/requestId.ts';
 import { apiBurstRateLimitMiddleware } from './server/middleware/rateLimiter.ts';
 import { errorHandlerMiddleware } from './server/middleware/errorHandler.ts';
@@ -66,6 +65,7 @@ app.use(errorHandlerMiddleware);
 // Vite middleware & Static Serving
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,

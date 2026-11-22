@@ -24,10 +24,11 @@ ALTER TABLE audit_events ADD COLUMN prev_hash TEXT;
 UPDATE users SET 
   password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
   password_hash = '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e',
-  mfa_secret = 'JBSWY3DPEHPK3PXP',
-  mfa_backup_codes = '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f","b2d6d45ffdbd2ec495d69e642343a1b83ec1ed22e58221eae54ac00df1577152","59294c3b8da03511ccba650818e3b885ade07dc3704d4ac3a8dd8a29d0e49124"]',
-  last_totp_step = 0
-WHERE username IN ('secops_admin', 'cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor');
+  mfa_secret = COALESCE(NULLIF(mfa_secret, ''), 'JBSWY3DPEHPK3PXP'),
+  mfa_backup_codes = COALESCE(NULLIF(mfa_backup_codes, ''), '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f","b2d6d45ffdbd2ec495d69e642343a1b83ec1ed22e58221eae54ac00df1577152","59294c3b8da03511ccba650818e3b885ade07dc3704d4ac3a8dd8a29d0e49124"]'),
+  last_totp_step = COALESCE(last_totp_step, 0)
+WHERE username IN ('secops_admin', 'cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor')
+  AND (password_salt IS NULL OR password_salt = '');
 
 -- 3. Ensure Incidents Table exists and has required forensic fields
 CREATE TABLE IF NOT EXISTS incidents (
@@ -67,3 +68,74 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+
+-- 5. Persistent MFA Challenges Registry (RFC 6238 TOTP Session Challenges)
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  challenge_token TEXT UNIQUE NOT NULL,
+  expires_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  consumed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_token ON mfa_challenges(challenge_token);
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_user ON mfa_challenges(user_id);
+
+-- 6. Identity & Credential Governance: Password Change Requests
+CREATE TABLE IF NOT EXISTS password_change_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  new_password_hash TEXT NOT NULL,
+  new_password_salt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  requested_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  reviewed_by TEXT,
+  justification TEXT,
+  rejection_reason TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_req_status ON password_change_requests(status);
+CREATE INDEX IF NOT EXISTS idx_password_req_user ON password_change_requests(user_id);
+
+-- 7. Identity & Credential Governance: Username Change Requests
+CREATE TABLE IF NOT EXISTS username_change_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  current_username TEXT NOT NULL,
+  requested_username TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  requested_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  reviewed_by TEXT,
+  justification TEXT,
+  rejection_reason TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_username_req_status ON username_change_requests(status);
+CREATE INDEX IF NOT EXISTS idx_username_req_user ON username_change_requests(user_id);
+
+-- 8. High-Assurance Administrative Decision & Approval Records
+CREATE TABLE IF NOT EXISTS administrative_approval_records (
+  id TEXT PRIMARY KEY,
+  request_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_identifier TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('APPROVE', 'REJECT')),
+  admin_id TEXT NOT NULL,
+  admin_username TEXT NOT NULL,
+  reason TEXT,
+  timestamp TEXT NOT NULL,
+  ip_address TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_approvals_target ON administrative_approval_records(target_id);
+CREATE INDEX IF NOT EXISTS idx_admin_approvals_admin ON administrative_approval_records(admin_username);
+

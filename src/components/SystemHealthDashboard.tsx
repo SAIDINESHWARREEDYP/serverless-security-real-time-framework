@@ -879,10 +879,10 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
             <Zap className="w-3.5 h-3.5 text-emerald-500" />
           </div>
           <div className="text-xl font-bold text-emerald-500 mt-1">
-            99.98%
+            {latencyStats.slaCompliance}%
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5">
-            Latency &lt; 4.2ms avg
+            Avg: {logs.length > 0 ? latencyStats.avg : d1Health.d1LatencyMs} ms (≤5ms SLA)
           </div>
         </div>
       </div>

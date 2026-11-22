@@ -15,6 +15,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext.tsx';
+import { getActiveAuthToken } from '../utils/authTokenStore.ts';
 
 const ATTACK_PRESETS = [
   {
@@ -116,7 +117,7 @@ export const ApiTestingConsole: React.FC = () => {
 
     const t0 = performance.now();
     try {
-      const token = localStorage.getItem('auth_jwt_token');
+      const token = getActiveAuthToken();
       const reqHeaders: Record<string, string> = { ...headersList };
       if (token && !reqHeaders['Authorization']) {
         reqHeaders['Authorization'] = `Bearer ${token}`;

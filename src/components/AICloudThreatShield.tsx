@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -122,7 +123,9 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
 
   const fetchThreatHistory = async () => {
     try {
-      const res = await fetch('/api/security/ai-threats');
+      const res = await fetch('/api/security/ai-threats', {
+        headers: getAuthRequestHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         if (data && Array.isArray(data.threats)) {
@@ -146,7 +149,7 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
     try {
       const res = await fetch('/api/security/ai-threat-scan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           payload: text,
           sourceUser: currentUsername

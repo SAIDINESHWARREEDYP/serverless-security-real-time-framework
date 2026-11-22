@@ -26,6 +26,7 @@ export interface User {
   email?: string;
   phone?: string;
   mfa_enabled?: boolean;
+  mfa_enrolled?: boolean;
   mfa_secret?: string;
   mfa_backup_codes?: string[];
   last_totp_step?: number;
@@ -86,7 +87,149 @@ export interface IncidentRecord {
   resolved_by?: string;
 }
 
-class PersistentSecurityDatabase {
+/**
+ * Comment- and string-aware SQL statement splitter for SQLite migrations.
+ * Preserves multiline SQL statements that follow line or block comments
+ * and only emits non-empty executable statements.
+ */
+export function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = '';
+  let hasExecutableSql = false;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let inBracketIdent = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+
+    if (inLineComment) {
+      if (ch === '\n') {
+        inLineComment = false;
+        current += ch;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (inSingleQuote) {
+      current += ch;
+      if (ch === "'" && next === "'") {
+        current += next;
+        i++;
+      } else if (ch === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      current += ch;
+      if (ch === '"' && next === '"') {
+        current += next;
+        i++;
+      } else if (ch === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+
+    if (inBacktick) {
+      current += ch;
+      if (ch === '`' && next === '`') {
+        current += next;
+        i++;
+      } else if (ch === '`') {
+        inBacktick = false;
+      }
+      continue;
+    }
+
+    if (inBracketIdent) {
+      current += ch;
+      if (ch === ']') {
+        inBracketIdent = false;
+      }
+      continue;
+    }
+
+    // Outside quotes/comments
+    if (ch === '-' && next === '-') {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingleQuote = true;
+      hasExecutableSql = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"') {
+      inDoubleQuote = true;
+      hasExecutableSql = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '`') {
+      inBacktick = true;
+      hasExecutableSql = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '[') {
+      inBracketIdent = true;
+      hasExecutableSql = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === ';') {
+      const trimmed = current.trim();
+      if (trimmed.length > 0 && hasExecutableSql) {
+        statements.push(trimmed);
+      }
+      current = '';
+      hasExecutableSql = false;
+      continue;
+    }
+
+    if (!/\s/.test(ch)) {
+      hasExecutableSql = true;
+    }
+    current += ch;
+  }
+
+  const trailing = current.trim();
+  if (trailing.length > 0 && hasExecutableSql) {
+    statements.push(trailing);
+  }
+
+  return statements;
+}
+
+export class PersistentSecurityDatabase {
   private sqlite: DatabaseSync;
   private dbPath: string;
 
@@ -95,130 +238,131 @@ class PersistentSecurityDatabase {
       this.dbPath = ':memory:';
       this.sqlite = new DatabaseSync(':memory:');
     } else {
-      const dataDir = path.resolve(process.cwd(), 'server/data');
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
+      const resolvedPath = filePath || path.join(path.resolve(process.cwd(), 'server/data'), 'security_framework.sqlite');
+      const parentDir = path.dirname(resolvedPath);
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
       }
-      this.dbPath = filePath || path.join(dataDir, 'security_framework.sqlite');
+      this.dbPath = resolvedPath;
       this.sqlite = new DatabaseSync(this.dbPath);
     }
 
     this.initDatabase();
   }
 
+  private getTableColumns(tableName: string): Set<string> {
+    const safeName = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+    const rows = this.sqlite.prepare(`PRAGMA table_info(${safeName})`).all() as { name: string }[];
+    return new Set(rows.map((r) => r.name.toLowerCase()));
+  }
+
   private initDatabase() {
     this.sqlite.exec('PRAGMA foreign_keys = ON;');
 
-    // Execute migrations in order if needed
-    const migrationFiles = [
-      'migrations/0001_initial_schema.sql',
-      'migrations/0002_normalized_d1_schema.sql',
-      'migrations/0003_secure_auth_and_persistence.sql'
-    ];
+    // 1. Establish migration version tracking table
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+    `);
 
-    for (const file of migrationFiles) {
-      const fullPath = path.resolve(process.cwd(), file);
-      if (fs.existsSync(fullPath)) {
-        const sql = fs.readFileSync(fullPath, 'utf-8');
-        // Split by statement to ensure a single statement failure (e.g. duplicate column)
-        // does not abort the remainder of the migration file
-        const statements = sql
-          .split(/;\s*(?:\r?\n|$)/)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0 && !s.startsWith('--'));
+    const appliedVersions = new Set(
+      (this.sqlite.prepare('SELECT version FROM schema_migrations').all() as { version: string }[]).map((r) => r.version)
+    );
 
-        for (const stmt of statements) {
+    // 2. Discover migration files deterministically in numeric filename order
+    const migrationsDir = path.resolve(process.cwd(), 'migrations');
+    const migrationFiles = fs.existsSync(migrationsDir)
+      ? fs
+          .readdirSync(migrationsDir)
+          .filter((f) => /^\d+.*\.sql$/i.test(f))
+          .sort((a, b) => a.localeCompare(b))
+          .map((f) => path.join(migrationsDir, f))
+      : [];
+
+    for (const fullPath of migrationFiles) {
+      const versionKey = path.basename(fullPath);
+      if (appliedVersions.has(versionKey)) {
+        continue;
+      }
+
+      const sql = fs.readFileSync(fullPath, 'utf-8');
+      const statements = splitSqlStatements(sql);
+
+      this.sqlite.exec('BEGIN IMMEDIATE;');
+      try {
+        for (let idx = 0; idx < statements.length; idx++) {
+          const stmt = statements[idx];
+
+          // PRAGMA foreign_keys cannot be toggled meaningfully inside a transaction; safe to skip if already set
+          if (/^PRAGMA\s+foreign_keys\s*=/i.test(stmt)) {
+            continue;
+          }
+
+          // Explicit schema inspection for ALTER TABLE ... ADD COLUMN ...
+          const alterColMatch = stmt.match(
+            /^ALTER\s+TABLE\s+["'`\[]?([a-zA-Z0-9_]+)["'`\]]?\s+ADD\s+COLUMN\s+["'`\[]?([a-zA-Z0-9_]+)["'`\]]?/i
+          );
+          if (alterColMatch) {
+            const tableName = alterColMatch[1];
+            const colName = alterColMatch[2].toLowerCase();
+            const existingCols = this.getTableColumns(tableName);
+            if (existingCols.size === 0) {
+              throw new Error(
+                `Migration failure in [${versionKey}] statement #${idx + 1}: target table [${tableName}] does not exist for "${stmt.slice(0, 120)}"`
+              );
+            }
+            if (existingCols.has(colName)) {
+              continue; // Column already exists in schema; safe skip via explicit PRAGMA check
+            }
+          }
+
           try {
             this.sqlite.exec(stmt);
           } catch (err: any) {
-            // Ignore expected duplicate column or object already exists errors
-            if (
-              !err.message.includes('duplicate column') &&
-              !err.message.includes('already exists')
-            ) {
-              // Non-breaking migration notice
-            }
+            throw new Error(
+              `Migration failure in [${versionKey}] statement #${idx + 1}: "${stmt.slice(0, 140)}" -> ${err.message}`
+            );
           }
         }
+
+        this.sqlite
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(versionKey, new Date().toISOString());
+
+        this.sqlite.exec('COMMIT;');
+      } catch (err) {
+        try {
+          this.sqlite.exec('ROLLBACK;');
+        } catch {
+          // ignore rollback error if transaction already aborted
+        }
+        throw err;
       }
     }
 
-    // Explicit safeguards to guarantee integrity_hash & prev_hash exist on audit tables
-    for (const col of ['integrity_hash', 'prev_hash']) {
-      try {
-        this.sqlite.exec(`ALTER TABLE audit_events ADD COLUMN ${col} TEXT;`);
-      } catch {}
-      try {
-        this.sqlite.exec(`ALTER TABLE security_audit_logs ADD COLUMN ${col} TEXT;`);
-      } catch {}
-    }
+    // 3. Non-destructive upgrade ONLY for unmigrated/legacy seed passwords (never overwrite rotated passwords or secrets)
+    const legacySeedHash =
+      '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e';
 
-    // Guarantee user security fields exist
-    for (const col of ['password_salt TEXT', 'mfa_secret TEXT', 'mfa_backup_codes TEXT', 'last_totp_step INTEGER DEFAULT 0']) {
-      try {
-        this.sqlite.exec(`ALTER TABLE users ADD COLUMN ${col};`);
-      } catch {}
-    }
+    this.sqlite.exec(`
+      UPDATE users SET
+        password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
+        password_hash = '${legacySeedHash}',
+        mfa_secret = COALESCE(NULLIF(mfa_secret, ''), 'JBSWY3DPEHPK3PXP')
+      WHERE (password_salt IS NULL OR password_salt = '' OR password_hash = 'ZeroTrust_2026')
+        AND username IN ('cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor');
+    `);
 
-    // Guarantee password_change_requests table exists for admin approval workflow
-    try {
-      this.sqlite.exec(`
-        CREATE TABLE IF NOT EXISTS password_change_requests (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          username TEXT NOT NULL,
-          new_password_hash TEXT NOT NULL,
-          new_password_salt TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'PENDING',
-          requested_at TEXT NOT NULL,
-          reviewed_at TEXT,
-          reviewed_by TEXT,
-          justification TEXT,
-          rejection_reason TEXT
-        );
-      `);
-    } catch {}
-
-    // Guarantee username_change_requests table exists for admin approval workflow
-    try {
-      this.sqlite.exec(`
-        CREATE TABLE IF NOT EXISTS username_change_requests (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          current_username TEXT NOT NULL,
-          requested_username TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'PENDING',
-          requested_at TEXT NOT NULL,
-          reviewed_at TEXT,
-          reviewed_by TEXT,
-          justification TEXT,
-          rejection_reason TEXT
-        );
-      `);
-    } catch {}
-
-    // Ensure all seeded users have valid PBKDF2 hash & salt
-    try {
-      this.sqlite.exec(`
-        UPDATE users SET 
-          password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
-          password_hash = '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e',
-          mfa_secret = 'JBSWY3DPEHPK3PXP'
-        WHERE (password_salt IS NULL OR password_salt = '' OR password_hash = 'ZeroTrust_2026')
-          AND username IN ('cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor');
-      `);
-    } catch {}
-
-    // Configure admin login password to 12345@pro with cryptographic salt & PBKDF2 hash
-    try {
-      this.sqlite.exec(`
-        UPDATE users SET 
-          password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
-          password_hash = 'cc5af848d092362caf2830e08b3e46495ab9cebba694112a0a5025b6cf05bc71d02a8ccbe5a6fa422a7b60bf0f4ce458b14c5af7e9ada0485d73b3397eac5db1',
-          mfa_secret = 'JBSWY3DPEHPK3PXP'
-        WHERE username = 'secops_admin';
-      `);
-    } catch {}
+    this.sqlite.exec(`
+      UPDATE users SET
+        password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
+        password_hash = 'cc5af848d092362caf2830e08b3e46495ab9cebba694112a0a5025b6cf05bc71d02a8ccbe5a6fa422a7b60bf0f4ce458b14c5af7e9ada0485d73b3397eac5db1',
+        mfa_secret = COALESCE(NULLIF(mfa_secret, ''), 'JBSWY3DPEHPK3PXP')
+      WHERE username = 'secops_admin'
+        AND (password_salt IS NULL OR password_salt = '' OR password_hash = 'ZeroTrust_2026' OR password_hash = '${legacySeedHash}');
+    `);
   }
 
   /**
@@ -289,6 +433,10 @@ class PersistentSecurityDatabase {
    */
   public reset(): void {
     const tables = [
+      'mfa_challenges',
+      'password_change_requests',
+      'username_change_requests',
+      'administrative_approval_records',
       'verification_results',
       'invocation_history',
       'security_alerts',
@@ -301,7 +449,8 @@ class PersistentSecurityDatabase {
       'user_roles',
       'users',
       'function_rules',
-      'policies'
+      'policies',
+      'schema_migrations'
     ];
 
     for (const table of tables) {
@@ -340,6 +489,7 @@ class PersistentSecurityDatabase {
       email: r.email,
       phone: r.phone,
       mfa_enabled: Boolean(r.mfa_enabled),
+      mfa_enrolled: Boolean(r.mfa_enrolled),
       mfa_secret: r.mfa_secret,
       mfa_backup_codes: r.mfa_backup_codes ? JSON.parse(r.mfa_backup_codes) : [],
       last_totp_step: r.last_totp_step || 0,
@@ -369,6 +519,7 @@ class PersistentSecurityDatabase {
       email: row.email,
       phone: row.phone,
       mfa_enabled: Boolean(row.mfa_enabled),
+      mfa_enrolled: Boolean(row.mfa_enrolled),
       mfa_secret: row.mfa_secret,
       mfa_backup_codes: row.mfa_backup_codes ? JSON.parse(row.mfa_backup_codes) : [],
       last_totp_step: row.last_totp_step || 0,

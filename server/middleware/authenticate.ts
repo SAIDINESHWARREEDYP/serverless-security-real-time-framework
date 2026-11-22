@@ -48,69 +48,77 @@ export async function authenticateMiddleware(req: Request, res: Response, next: 
 
   const rawToken = authHeader.split(' ')[1].trim();
 
-  // 1. Verify token: check if it's a real signed JWT
-  let claims: JwtClaims | undefined;
-  let username: string | undefined;
-
+  // 1. Strict Cryptographic JWT Verification (No legacy tokens or username fallbacks)
   const jwtResult = verifyJwt(rawToken);
-  if (jwtResult.valid && jwtResult.claims) {
-    claims = jwtResult.claims;
-    username = claims.username;
-    req.tokenClaims = claims;
-  } else {
-    // Check backwards compatibility token (e.g. zt_jwt_<user>_<hash>)
-    if (rawToken.startsWith('zt_jwt_') || rawToken.startsWith('mbu_jwt_')) {
-      const parts = rawToken.split('_');
-      if (parts.length >= 3) {
-        username = parts.slice(2, -1).join('_');
-      }
-    } else {
-      // Direct username token for developer testing
-      username = rawToken;
-    }
+  if (!jwtResult.valid || !jwtResult.claims) {
+    const latencyMs = Number((performance.now() - timerStart).toFixed(3));
+    res.setHeader('X-Verification-Latency-MS', latencyMs.toString());
 
-    // If it was supposed to be a JWT (contains dots) but failed signature/claims
-    if (rawToken.includes('.')) {
-      const latencyMs = Number((performance.now() - timerStart).toFixed(3));
-      res.setHeader('X-Verification-Latency-MS', latencyMs.toString());
+    auditRepository.record({
+      username: 'unknown',
+      requested_function: req.originalUrl,
+      calculated_risk: 100,
+      status: 'BLOCKED',
+      reason: `Cryptographic token verification failed: ${jwtResult.error || 'TOKEN_INVALID'}`,
+      verification_latency_ms: latencyMs,
+      event_type: 'TOKEN_INVALID'
+    });
 
-      auditRepository.record({
-        username: username || 'unknown',
-        requested_function: req.originalUrl,
-        calculated_risk: 100,
-        status: 'BLOCKED',
-        reason: `Cryptographic token validation failed: ${jwtResult.error}`,
-        verification_latency_ms: latencyMs,
-        event_type: 'TOKEN_INVALID'
-      });
-
-      return res.status(401).json({
-        type: 'https://serverless-securityverification.ai.studio/errors/AUTH_TOKEN_INVALID',
-        title: 'Invalid Token',
-        status: 401,
-        detail: `Token verification failed: ${jwtResult.error}`,
-        instance: req.originalUrl,
-        errorCode: `AUTH_${jwtResult.error || 'TOKEN_INVALID'}`,
-        traceId: req.traceId
-      });
-    }
+    return res.status(401).json({
+      type: 'https://serverless-securityverification.ai.studio/errors/AUTH_TOKEN_INVALID',
+      title: 'Invalid Token',
+      status: 401,
+      detail: `Token verification failed: ${jwtResult.error || 'TOKEN_INVALID'}`,
+      instance: req.originalUrl,
+      errorCode: `AUTH_${jwtResult.error || 'TOKEN_INVALID'}`,
+      traceId: req.traceId
+    });
   }
+
+  const claims: JwtClaims = jwtResult.claims;
+  const username = claims.username;
+  req.tokenClaims = claims;
 
   if (!username) {
     return res.status(401).json({
       type: 'https://serverless-securityverification.ai.studio/errors/AUTH_IDENTITY_INVALID',
       title: 'Invalid Identity',
       status: 401,
-      detail: 'Unable to resolve identity from presented token.',
+      detail: 'Unable to resolve identity claim from token.',
       instance: req.originalUrl,
       errorCode: 'AUTH_IDENTITY_INVALID',
       traceId: req.traceId
     });
   }
 
-  // 2. Check Session Status & Revocation Registry in D1
+  // 2. Strict Session Registry Enforcement in D1/SQLite
   const session = sessionRepository.findByToken(rawToken);
-  if (session && session.status === 'revoked') {
+  if (!session) {
+    const latencyMs = Number((performance.now() - timerStart).toFixed(3));
+    res.setHeader('X-Verification-Latency-MS', latencyMs.toString());
+
+    auditRepository.record({
+      username,
+      requested_function: req.originalUrl,
+      calculated_risk: 100,
+      status: 'BLOCKED',
+      reason: `[SESSION MISSING] No active session found corresponding to presented JWT for ${username}.`,
+      verification_latency_ms: latencyMs,
+      event_type: 'SESSION_MISSING'
+    });
+
+    return res.status(401).json({
+      type: 'https://serverless-securityverification.ai.studio/errors/AUTH_SESSION_MISSING',
+      title: 'Session Not Found',
+      status: 401,
+      detail: 'No active session found corresponding to presented token.',
+      instance: req.originalUrl,
+      errorCode: 'AUTH_SESSION_MISSING',
+      traceId: req.traceId
+    });
+  }
+
+  if (session.status === 'revoked') {
     const latencyMs = Number((performance.now() - timerStart).toFixed(3));
     res.setHeader('X-Verification-Latency-MS', latencyMs.toString());
 
@@ -131,6 +139,43 @@ export async function authenticateMiddleware(req: Request, res: Response, next: 
       detail: 'The presented token has been revoked by an administrator.',
       instance: req.originalUrl,
       errorCode: 'AUTH_TOKEN_REVOKED',
+      traceId: req.traceId
+    });
+  }
+
+  if (session.status === 'expired' || (session.expires_at && new Date(session.expires_at).getTime() <= Date.now())) {
+    const latencyMs = Number((performance.now() - timerStart).toFixed(3));
+    res.setHeader('X-Verification-Latency-MS', latencyMs.toString());
+
+    auditRepository.record({
+      username,
+      requested_function: req.originalUrl,
+      calculated_risk: 100,
+      status: 'BLOCKED',
+      reason: `[SESSION EXPIRED] Session for ${username} has expired.`,
+      verification_latency_ms: latencyMs,
+      event_type: 'SESSION_EXPIRED'
+    });
+
+    return res.status(401).json({
+      type: 'https://serverless-securityverification.ai.studio/errors/AUTH_SESSION_EXPIRED',
+      title: 'Session Expired',
+      status: 401,
+      detail: 'The presented session has expired. Please authenticate again.',
+      instance: req.originalUrl,
+      errorCode: 'AUTH_SESSION_EXPIRED',
+      traceId: req.traceId
+    });
+  }
+
+  if (session.username.toLowerCase() !== username.toLowerCase()) {
+    return res.status(401).json({
+      type: 'https://serverless-securityverification.ai.studio/errors/AUTH_SESSION_MISMATCH',
+      title: 'Session Identity Mismatch',
+      status: 401,
+      detail: 'Session user does not match token claim.',
+      instance: req.originalUrl,
+      errorCode: 'AUTH_SESSION_MISMATCH',
       traceId: req.traceId
     });
   }

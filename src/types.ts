@@ -21,6 +21,7 @@ export interface User {
   email?: string;
   phone?: string;
   mfa_enabled?: boolean;
+  mfa_enrolled?: boolean;
   mfa_secret?: string;
   mfa_backup_codes?: string[];
   createdAt?: string;
@@ -37,8 +38,9 @@ export interface MfaPendingChallenge {
   phoneMasked: string;
   emailMasked?: string;
   methods: Array<'authenticator' | 'sms' | 'backup_code'>;
-  demoTotpCode: string;
-  demoSmsCode: string;
+  enrollmentRequired?: boolean;
+  demoTotpCode?: string;
+  demoSmsCode?: string;
   totpSecret?: string;
   serverTime?: string;
   stepSeconds?: number;

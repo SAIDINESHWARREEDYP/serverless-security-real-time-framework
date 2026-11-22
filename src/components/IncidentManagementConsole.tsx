@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
 import {
   ShieldAlert,
   AlertTriangle,
@@ -60,7 +61,9 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
   const fetchIncidents = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/v1/incidents');
+      const res = await fetch('/api/v1/incidents', {
+        headers: getAuthRequestHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setIncidents(data.incidents || []);
@@ -83,9 +86,7 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
     setActionMsg(null);
 
     try {
-      const token = localStorage.getItem('auth_jwt_token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const headers = getAuthRequestHeaders({ 'Content-Type': 'application/json' });
 
       const res = await fetch('/api/v1/incidents', {
         method: 'POST',
@@ -115,9 +116,7 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
 
   const handleUpdateStatus = async (id: string, newStatus: string) => {
     try {
-      const token = localStorage.getItem('auth_jwt_token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const headers = getAuthRequestHeaders({ 'Content-Type': 'application/json' });
 
       const res = await fetch(`/api/v1/incidents/${id}`, {
         method: 'PATCH',

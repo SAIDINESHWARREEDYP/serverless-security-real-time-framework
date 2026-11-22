@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { User } from '../types.ts';
 import { useTheme } from '../context/ThemeContext.tsx';
+import { getActiveAuthToken } from '../utils/authTokenStore.ts';
 
 interface RbacManagementModalProps {
   isOpen: boolean;
@@ -111,7 +112,7 @@ export const RbacManagementModal: React.FC<RbacManagementModalProps> = ({
     setIsLoading(true);
     setErrorMsg(null);
     try {
-      const token = localStorage.getItem('auth_jwt_token');
+      const token = getActiveAuthToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -158,7 +159,7 @@ export const RbacManagementModal: React.FC<RbacManagementModalProps> = ({
     setSuccessMsg(null);
 
     try {
-      const token = localStorage.getItem('auth_jwt_token');
+      const token = getActiveAuthToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 

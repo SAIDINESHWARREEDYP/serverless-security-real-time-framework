@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
 import {
   X,
   Key,
@@ -19,10 +20,13 @@ import {
   Clock,
   RefreshCw,
   Lock,
-  ArrowRight
+  ArrowRight,
+  QrCode,
+  Smartphone
 } from 'lucide-react';
 import { User, AuthSession, MfaPendingChallenge } from '../types.ts';
 import { MfaVerificationCard } from './MfaVerificationCard.tsx';
+import { MfaEnrollmentPanel, MfaEnrollmentPayload } from './MfaEnrollmentPanel.tsx';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -83,7 +87,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // New user registration / real-time identity state
   const [regUsername, setRegUsername] = useState('');
-  const [regRole, setRegRole] = useState<'Admin' | 'Developer' | 'Guest'>('Developer');
+  const [regRole, setRegRole] = useState<'Developer' | 'Guest'>('Developer');
   const [regRisk, setRegRisk] = useState<number>(20);
   const [regDept, setRegDept] = useState('Cloud Platform Engineering');
   const [regPassword, setRegPassword] = useState('');
@@ -99,6 +103,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   } | null>(null);
   const [isCheckingApproval, setIsCheckingApproval] = useState(false);
   const [approvalFeedback, setApprovalFeedback] = useState<string | null>(null);
+  const [registeredEnrollment, setRegisteredEnrollment] = useState<MfaEnrollmentPayload | null>(null);
+
+  // Logged-in Authenticator Setup / Re-Key State
+  const [accountMfaSetup, setAccountMfaSetup] = useState<MfaEnrollmentPayload | null>(null);
+  const [setupMfaLoading, setSetupMfaLoading] = useState(false);
+  const [setupMfaError, setSetupMfaError] = useState<string | null>(null);
 
   // Live validation calculations
   const loginUsernameRules = useMemo(() => validateUsernameRules(usernameInput), [usernameInput]);
@@ -162,9 +172,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           },
           phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
           emailMasked: data.emailMasked,
-          methods: data.methods || ['authenticator', 'sms'],
-          demoTotpCode: data.demoTotpCode,
-          demoSmsCode: data.demoSmsCode,
+          methods: data.methods || ['authenticator', 'backup_code'],
+          enrollmentRequired: Boolean(data.enrollmentRequired),
           message: data.message
         });
         setLoading(false);
@@ -252,6 +261,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // Check if registration was queued for Admin Approval (Default Zero-Trust rule)
       if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
+        setRegisteredEnrollment(data.mfaEnrollment || null);
         setPendingApprovalUser({
           username: cleanName,
           role: regRole,
@@ -259,7 +269,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           department: regDept,
           createdAt: new Date().toISOString()
         });
-        setSuccessMsg(`Identity [${cleanName}] submitted to database. Awaiting SecOps Admin validation.`);
+        setSuccessMsg(`Identity [${cleanName}] submitted to database. Scan the Authenticator QR & save recovery codes while awaiting SecOps Admin validation.`);
         setLoading(false);
         return;
       }
@@ -347,7 +357,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       const res = await fetch('/api/system/users/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           username,
           approvedBy: currentSession?.user.username || 'secops_admin'
@@ -579,6 +589,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               </div>
 
+              {registeredEnrollment && (
+                <MfaEnrollmentPanel
+                  enrollment={registeredEnrollment}
+                  title="Pair Your Authenticator App Before Approval"
+                  subtitle="Scan this QR code in Google Authenticator or Microsoft Authenticator right now and save your 8 recovery codes so you are ready as soon as an Admin approves your account."
+                />
+              )}
+
               {approvalFeedback && (
                 <div className="p-3 rounded-lg text-xs font-mono bg-slate-900 border border-slate-700 text-slate-300">
                   {approvalFeedback}
@@ -610,8 +628,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setPendingApprovalUser(null)}
-                  className="w-full sm:w-auto px-3 py-2 text-xs text-slate-400 hover:text-white transition-colors"
+                  onClick={() => {
+                    setPendingApprovalUser(null);
+                    setRegisteredEnrollment(null);
+                  }}
+                  className="w-full sm:w-auto px-3 py-2 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
                 >
                   Back to Sign In
                 </button>
@@ -781,6 +802,72 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       {pwChangeLoading ? 'Hashing with PBKDF2...' : 'Update Password & Re-key'}
                     </button>
                   </form>
+
+                  {/* Authenticator App Pairing / Re-Key Panel */}
+                  <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <QrCode className="w-4 h-4 text-blue-400" />
+                          Authenticator App Pairing (RFC 6238 TOTP)
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Generate a fresh TOTP secret, scannable QR code, and 8 recovery codes to pair or switch Google Authenticator / Microsoft Authenticator.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={setupMfaLoading}
+                        onClick={async () => {
+                          setSetupMfaLoading(true);
+                          setSetupMfaError(null);
+                          try {
+                            const res = await fetch('/api/v1/auth/mfa/setup', {
+                              method: 'POST',
+                              headers: getAuthRequestHeaders({
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${currentSession.token}`
+                              })
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.success && data.secret && data.provisioningUri) {
+                              setAccountMfaSetup({
+                                username: currentSession.user.username,
+                                secret: data.secret,
+                                provisioningUri: data.provisioningUri,
+                                backupCodes: data.backupCodes || [],
+                                issuer: data.issuer || 'ServerlessSecOps'
+                              });
+                            } else {
+                              setSetupMfaError(data.error || 'Failed to generate authenticator pairing key.');
+                            }
+                          } catch (err: any) {
+                            setSetupMfaError(err?.message || 'Network exception while generating pairing key.');
+                          } finally {
+                            setSetupMfaLoading(false);
+                          }
+                        }}
+                        className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                      >
+                        <Smartphone className="w-3.5 h-3.5" />
+                        <span>{setupMfaLoading ? 'Generating Key...' : accountMfaSetup ? 'Re-Key Authenticator' : 'Pair / Re-Key Authenticator App'}</span>
+                      </button>
+                    </div>
+
+                    {setupMfaError && (
+                      <div className="p-2.5 rounded bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs">
+                        {setupMfaError}
+                      </div>
+                    )}
+
+                    {accountMfaSetup && (
+                      <MfaEnrollmentPanel
+                        enrollment={accountMfaSetup}
+                        title={`Authenticator Key for ${currentSession.user.username}`}
+                        subtitle="Scan this QR code in your Authenticator app right away and store the recovery codes safely. Your previous key has been replaced."
+                      />
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -998,7 +1085,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       >
                         <option value="Developer">Developer (Deploy, Invocations, Logs)</option>
                         <option value="Guest">Guest (Read-Only Metrics &amp; Topology)</option>
-                        <option value="Admin">Admin (Requires Root Approval)</option>
                       </select>
                     </div>
 

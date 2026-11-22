@@ -55,6 +55,7 @@ import {
   Bot,
   FileText
 } from 'lucide-react';
+import { setActiveAuthToken, getAuthRequestHeaders } from './utils/authTokenStore.ts';
 
 export default function App() {
   const { theme } = useTheme();
@@ -103,8 +104,9 @@ export default function App() {
   // Authenticated session state - initialized to null so Zero-Trust Login Gateway is displayed first
   const [currentSession, setCurrentSession] = useState<AuthSession | null>(null);
 
-  // Granular logging & state transition monitor for authentication lifecycle
+  // Keep in-memory auth token store synchronized and log lifecycle transitions
   useEffect(() => {
+    setActiveAuthToken(currentSession?.token || null);
     if (currentSession) {
       console.log('%c[AUTH_STATE_TRANSITION] ✅ Authenticated Session Active', 'color: #10b981; font-weight: bold;', {
         username: currentSession.user.username,
@@ -139,7 +141,7 @@ export default function App() {
     setTerminalLogs(prev => [
       ...prev,
       {
-        id: Math.random().toString(36).substring(2, 9),
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sse_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString(),
         type: newLog.status === 'ALLOWED' ? 'success' : 'alert',
         text: `[SSE LIVE] ${newLog.status}: ${newLog.username} -> ${newLog.requested_function} (Risk: ${newLog.calculated_risk}%)`
@@ -249,12 +251,15 @@ export default function App() {
     try {
       const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ base_risk_score: 100 })
       });
       if (res.ok) {
         await fetchOverview();
         addTerminalLog('alert', `[SECOPS] Principal [${username}] has been quarantined (Base Risk: 100%).`);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        addTerminalLog('error', `[SECOPS] Quarantine action rejected: ${d.error || res.statusText}`);
       }
     } catch (e: any) {
       addTerminalLog('error', `[SECOPS] Quarantine action failed: ${e?.message || String(e)}`);
@@ -287,35 +292,31 @@ export default function App() {
     }
   };
 
-  // 2. Enterprise Drill: Lateral Movement Exploit (out of order sequence)
+  // 2. Enterprise Drill: Lateral Movement Exploit (executes using current verified session token)
   const handleRunLateralMovementDrill = async () => {
     addTerminalLog('alert', '[DRILL] 🔀 Testing Lateral Movement & Markov Sequence Anomaly detection...');
     try {
-      addTerminalLog('post', '[DRILL] Authenticating as Tier 1 Guest [auditor_guest]...');
-      const authRes = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'auditor_guest', password: 'ZeroTrust_2026' })
-      });
-      const authData = await authRes.json();
-      if (!authData.token) {
-        addTerminalLog('error', '[DRILL] Auth failed for guest.');
+      if (!currentSession?.token) {
+        addTerminalLog('error', '[DRILL] Active authenticated session token required to run verified drill.');
+        setIsAuthModalOpen(true);
         return;
       }
-      addTerminalLog('alert', '[DRILL] Invariant Violation Attempt: Guest calling /api/purgeColdStorageBackups (Skipping login -> metrics sequence)...');
+      addTerminalLog('alert', '[DRILL] Invariant Violation Attempt: Direct jump to /api/purgeColdStorageBackups using active session token...');
       const exploitRes = await fetch('/api/purgeColdStorageBackups', {
         method: 'GET',
-        headers: { Authorization: `Bearer ${authData.token}` }
+        headers: { Authorization: `Bearer ${currentSession.token}` }
       });
       const exploitData = await exploitRes.json();
       if (exploitRes.status !== 200) {
         addTerminalLog('alert', `[DRILL INTERCEPTED] Edge Interceptor blocked lateral jump: ${exploitData.error}`);
         if (exploitData.metrics) {
-          addTerminalLog('metric', `[DRILL PENALTY] Composite Risk: ${exploitData.metrics.riskScore}% (Markov Drift + RBAC breach detected).`);
+          addTerminalLog('metric', `[DRILL PENALTY] Composite Risk: ${exploitData.metrics.riskScore}% (Markov Drift / RBAC policy enforced).`);
         }
+      } else {
+        addTerminalLog('info', `[DRILL TELEMETRY] Authorized invocation evaluated cleanly (Risk: ${exploitData.metrics?.riskScore ?? 0}%).`);
       }
       await fetchOverview();
-      addTerminalLog('success', '[DRILL COMPLETED] Autonomous Markov Interceptor successfully contained lateral movement.');
+      addTerminalLog('success', '[DRILL COMPLETED] Autonomous Markov & RBAC Interceptor telemetry recorded.');
     } catch (err: any) {
       addTerminalLog('error', `[DRILL FAILED] ${err?.message || String(err)}`);
     }
@@ -345,7 +346,7 @@ export default function App() {
     setTerminalLogs((prev) => [
       ...prev,
       {
-        id: Math.random().toString(36).substring(2, 9),
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `term_${Date.now()}_${prev.length}`,
         timestamp: new Date().toLocaleTimeString(),
         type,
         text
@@ -405,13 +406,16 @@ export default function App() {
     try {
       const res = await fetch('/api/system/policy-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(newConfig)
       });
       if (res.ok) {
         const data = await res.json();
         setPolicyConfig(data.policyConfig);
         addTerminalLog('success', `[POLICY] Security rule parameters updated: Max Risk Cutoff = ${data.policyConfig.maxRiskThreshold}%, Sequence Penalty = +${data.policyConfig.sequenceViolationPenalty}%`);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        addTerminalLog('error', `[POLICY] Update denied: ${d.error || res.statusText}`);
       }
     } catch (err: any) {
       addTerminalLog('error', `[POLICY] Failed to update parameters: ${err?.message || String(err)}`);
@@ -426,34 +430,17 @@ export default function App() {
     addTerminalLog('info', `[INFO] Request initiated for principal [${user}] via edge security interceptor...`);
 
     try {
-      addTerminalLog('post', `[POST] Acquiring verified Bearer token for principal [${user}]...`);
-
-      let bearerToken = currentSession && currentSession.user.username === user ? currentSession.token : null;
+      const bearerToken = currentSession?.token || null;
 
       if (!bearerToken) {
-        if (currentSession && currentSession.token) {
-          bearerToken = currentSession.token;
-        } else {
-          const authResponse = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: user, password: 'ZeroTrust_2026' })
-          });
+        addTerminalLog('error', `[AUTH REQUIRED] No active Bearer JWT for [${user}]. Please sign in via Password + MFA first.`);
+        setIsAuthModalOpen(true);
+        setIsFiring(false);
+        return;
+      }
 
-          const authData = await authResponse.json();
-
-          if (authData.success && authData.token) {
-            bearerToken = authData.token;
-          }
-
-          if (!bearerToken) {
-            const reason = authData.error || (authData.mfaRequired ? 'Multi-Factor Authentication required for principal' : 'Access Denied');
-            addTerminalLog('error', `[ERROR] Identity token signature rejected: ${reason}`);
-            setIsFiring(false);
-            fetchOverview();
-            return;
-          }
-        }
+      if (currentSession && currentSession.user.username !== user) {
+        addTerminalLog('info', `[SESSION] Submitting pipeline check under active authenticated session [${currentSession.user.username}] (sign in as [${user}] to test their token).`);
       }
 
       addTerminalLog(
@@ -541,12 +528,16 @@ export default function App() {
   const handleReset = async () => {
     setIsResetting(true);
     try {
-      const res = await fetch('/api/system/reset', { method: 'POST' });
+      const res = await fetch('/api/system/reset', {
+        method: 'POST',
+        headers: getAuthRequestHeaders()
+      });
       if (res.ok) {
-        addTerminalLog('info', `[SYSTEM] Database reset to initial baseline schema & mock data.`);
+        addTerminalLog('info', `[SYSTEM] Database reset to initial baseline schema & data.`);
         await fetchOverview();
       } else {
-        addTerminalLog('error', `[SYSTEM] Failed to reset baseline state.`);
+        const d = await res.json().catch(() => ({}));
+        addTerminalLog('error', `[SYSTEM] Reset denied: ${d.error || 'Failed to reset baseline state.'}`);
       }
     } catch (err: any) {
       addTerminalLog('error', `[SYSTEM] Reset operation failed: ${err?.message || String(err)}`);
@@ -558,12 +549,16 @@ export default function App() {
   // Clear audit logs
   const handleClearLogs = async () => {
     try {
-      const res = await fetch('/api/system/clearLogs', { method: 'POST' });
+      const res = await fetch('/api/system/clearLogs', {
+        method: 'POST',
+        headers: getAuthRequestHeaders()
+      });
       if (res.ok) {
         setLogs([]);
         addTerminalLog('info', `[SYSTEM] Audit logs cleared.`);
       } else {
-        addTerminalLog('error', `[SYSTEM] Failed to clear audit ledger.`);
+        const d = await res.json().catch(() => ({}));
+        addTerminalLog('error', `[SYSTEM] Clear logs denied: ${d.error || 'Failed to clear audit ledger.'}`);
       }
     } catch (err: any) {
       addTerminalLog('error', `[SYSTEM] Clear logs operation failed: ${err?.message || String(err)}`);
@@ -575,14 +570,15 @@ export default function App() {
     try {
       const res = await fetch('/api/system/rules', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ current_function: current, allowed_next_function: next })
       });
       if (res.ok) {
         await fetchOverview();
         addTerminalLog('success', `[SYSTEM] Added sequential execution rule: ${current} -> ${next}`);
       } else {
-        addTerminalLog('error', `[SYSTEM] Failed to add sequential rule.`);
+        const d = await res.json().catch(() => ({}));
+        addTerminalLog('error', `[SYSTEM] Failed to add sequential rule: ${d.error || res.statusText}`);
       }
     } catch (err: any) {
       addTerminalLog('error', `[SYSTEM] Add rule failed: ${err?.message || String(err)}`);
@@ -592,19 +588,23 @@ export default function App() {
   // Delete rule
   const handleDeleteRule = async (id: number) => {
     try {
-      const res = await fetch(`/api/system/rules/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/system/rules/${id}`, {
+        method: 'DELETE',
+        headers: getAuthRequestHeaders()
+      });
       if (res.ok) {
         await fetchOverview();
         addTerminalLog('info', `[SYSTEM] Rule ID #${id} removed from architectural policy.`);
       } else {
-        addTerminalLog('error', `[SYSTEM] Failed to remove rule #${id}.`);
+        const d = await res.json().catch(() => ({}));
+        addTerminalLog('error', `[SYSTEM] Failed to remove rule #${id}: ${d.error || res.statusText}`);
       }
     } catch (err: any) {
       addTerminalLog('error', `[SYSTEM] Rule removal failed: ${err?.message || String(err)}`);
     }
   };
 
-  // Inline Real-Time Dynamic User Registration & Login
+  // Inline Identity Provisioning (Admin creates via /api/system/users; non-admin uses /api/register)
   const handleInlineRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inlineUsername.trim()) return;
@@ -617,47 +617,47 @@ export default function App() {
 
     try {
       const clean = inlineUsername.trim().toLowerCase().replace(/\s+/g, '_');
-      const res = await fetch('/api/register', {
+      const isAdminCaller = currentSession?.user?.role === 'Admin' || currentSession?.user?.role === 'Super Administrator' || currentSession?.user?.role === 'Security Administrator';
+      const targetEndpoint = isAdminCaller ? '/api/system/users' : '/api/register';
+      const res = await fetch(targetEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           username: clean,
           password: inlinePassword,
           role: inlineRole,
-          base_risk_score: Number(inlineRisk)
+          base_risk_score: Number(inlineRisk),
+          status: isAdminCaller ? 'APPROVED' : undefined
         })
       });
       const data = await res.json();
 
       if (res.ok && data.success) {
+        const statusValue = data.status || data.user?.status || (isAdminCaller ? 'APPROVED' : 'PENDING_APPROVAL');
         const newUser: User = {
           id: data.user?.id || `usr_${clean}`,
           username: clean,
-          password_hash: inlinePassword,
+          password_hash: '••••••••',
           role: inlineRole,
           base_risk_score: Number(inlineRisk),
-          status: data.user?.status || 'APPROVED'
+          status: statusValue
         };
 
-        if (data.token) {
-          const newSession: AuthSession = {
-            user: newUser,
-            token: data.token,
-            loginTime: new Date().toLocaleTimeString(),
-            expiresInSeconds: data.expiresInSeconds || 3600
-          };
-          setCurrentSession(newSession);
-        }
-        setSelectedUser(clean);
         setUsers(prev => {
           if (prev.some(u => u.username === clean)) return prev;
           return [...prev, newUser];
         });
 
-        setInlineMsg({ type: 'success', text: `Identity [${clean}] provisioned and activated in real-time!` });
+        setInlineMsg({
+          type: 'success',
+          text: statusValue === 'PENDING_APPROVAL'
+            ? `Identity [${clean}] registered and queued for Administrator approval.`
+            : `Identity [${clean}] provisioned and persisted in database!`
+        });
         setInlineUsername('');
         setInlinePassword('');
-        addTerminalLog('success', `[IAM] Real-time user [${clean}] (${inlineRole}) provisioned with base risk ${inlineRisk}%.`);
+        await fetchOverview();
+        addTerminalLog('success', `[IAM] User [${clean}] (${inlineRole}) provisioned (${statusValue}).`);
       } else {
         setInlineMsg({ type: 'error', text: data.error || 'Failed to register identity.' });
       }
@@ -669,42 +669,13 @@ export default function App() {
   };
 
   const handleQuickSwitchUser = async (targetUser: User) => {
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: targetUser.username, password: 'ZeroTrust_2026' })
-      });
-      const data = await res.json();
-      if (res.ok && data.success && data.token) {
-        const session: AuthSession = {
-          user: targetUser,
-          token: data.token,
-          loginTime: new Date().toLocaleTimeString(),
-          expiresInSeconds: data.expiresInSeconds || 3600
-        };
-        setCurrentSession(session);
-        setSelectedUser(targetUser.username);
-        addTerminalLog('info', `[IAM] Active session switched to: ${targetUser.username} (${targetUser.role})`);
-
-        // Automatically guide the user to their role-appropriate tab if current tab is forbidden
-        if (targetUser.role === 'Guest' && (activeTab === 'admin' || activeTab === 'developer' || activeTab === 'iam' || activeTab === 'architecture' || activeTab === 'overview' || activeTab === 'interceptor' || activeTab === 'health')) {
-          setActiveTab('guest');
-        } else if (targetUser.role === 'Developer' && (activeTab === 'admin' || activeTab === 'iam' || activeTab === 'overview' || activeTab === 'guest' || activeTab === 'health' || activeTab === 'interceptor')) {
-          setActiveTab('developer');
-        } else if (targetUser.role === 'Admin' && (activeTab === 'guest' || activeTab === 'developer')) {
-          setActiveTab('admin');
-        }
-      } else if (data.mfaRequired) {
-        setCurrentSession(null);
-        setSelectedUser(targetUser.username);
-        addTerminalLog('alert', `[IAM MFA] Principal ${targetUser.username} requires Multi-Factor Authentication.`);
-      } else {
-        addTerminalLog('error', `[IAM] Failed to authenticate principal: ${data?.error || 'Unknown error'}`);
-      }
-    } catch (e: any) {
-      addTerminalLog('error', `[IAM] Quick switch failed: ${e?.message || String(e)}`);
+    setSelectedUser(targetUser.username);
+    if (currentSession && currentSession.user.username.toLowerCase() === targetUser.username.toLowerCase()) {
+      addTerminalLog('info', `[IAM] Already authenticated as ${targetUser.username} (${targetUser.role}).`);
+      return;
     }
+    addTerminalLog('info', `[IAM] Selected principal [${targetUser.username}]. Opening Authentication Gateway for Password + MFA verification.`);
+    setIsAuthModalOpen(true);
   };
 
   // Real-time Session Revocation Endpoint Call (Admin Only)
@@ -795,50 +766,57 @@ export default function App() {
 
   const handleApproveUser = async (username: string) => {
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (currentSession?.token) {
+        headers['Authorization'] = `Bearer ${currentSession.token}`;
+      }
       const res = await fetch('/api/system/users/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          approvedBy: currentSession?.user.username || 'secops_admin'
-        })
+        headers,
+        body: JSON.stringify({ username })
       });
+      const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const d = await res.json();
         throw new Error(d.error || 'Failed to approve user');
       }
       await fetchOverview();
       addTerminalLog('success', `[IAM CLEARANCE] Principal [${username}] has been APPROVED.`);
     } catch (err: any) {
       addTerminalLog('error', `[IAM CLEARANCE] Approval failed: ${err?.message || String(err)}`);
+      throw err;
     }
   };
 
   const handleRejectUser = async (username: string, reason?: string) => {
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (currentSession?.token) {
+        headers['Authorization'] = `Bearer ${currentSession.token}`;
+      }
       const res = await fetch('/api/system/users/reject', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           username,
           reason: reason || 'Access denied by SecOps Administrator.'
         })
       });
+      const d = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const d = await res.json();
         throw new Error(d.error || 'Failed to reject user');
       }
       await fetchOverview();
       addTerminalLog('alert', `[IAM CLEARANCE] Principal [${username}] access request REJECTED.`);
     } catch (err: any) {
       addTerminalLog('error', `[IAM CLEARANCE] Rejection failed: ${err?.message || String(err)}`);
+      throw err;
     }
   };
 
   const handleAddUser = async (userData: any) => {
     const res = await fetch('/api/system/users', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(userData)
     });
     if (!res.ok) {
@@ -851,7 +829,10 @@ export default function App() {
 
   const handleDeleteUser = async (username: string) => {
     if (username === 'secops_admin') return;
-    const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/system/users/${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+      headers: getAuthRequestHeaders()
+    });
     if (res.ok) {
       await fetchOverview();
       addTerminalLog('info', `[IAM DATABASE] Identity [${username}] removed.`);
@@ -859,7 +840,10 @@ export default function App() {
   };
 
   const handleBatchSeedUsers = async () => {
-    const res = await fetch('/api/system/users/batch-seed', { method: 'POST' });
+    const res = await fetch('/api/system/users/batch-seed', {
+      method: 'POST',
+      headers: getAuthRequestHeaders()
+    });
     if (res.ok) {
       await fetchOverview();
       addTerminalLog('success', `[IAM DATABASE] Seeded enterprise multi-department identities.`);

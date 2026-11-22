@@ -258,7 +258,13 @@ class AuditRepository {
   }
 
   public getAlerts(): SecurityAlert[] {
-    const rows = db.prepare('SELECT * FROM security_alerts ORDER BY created_at DESC LIMIT 100').all<any>();
+    const rows = db.prepare(`
+      SELECT a.*, u.username AS resolved_username
+      FROM security_alerts a
+      LEFT JOIN users u ON a.user_id = u.id
+      ORDER BY a.created_at DESC
+      LIMIT 100
+    `).all<any>();
     return (rows.results || []).map((r) => ({
       id: r.id,
       timestamp: r.created_at,
@@ -267,15 +273,15 @@ class AuditRepository {
       threat_vector: r.threat_vector,
       details: r.details_json,
       ip_address: r.ip_address,
-      username: r.user_id || 'anonymous',
+      username: r.resolved_username || r.user_id || 'anonymous',
       acknowledged: Boolean(r.acknowledged_at)
     }));
   }
 
-  public acknowledgeAlert(id: string): boolean {
+  public acknowledgeAlert(id: string, acknowledgedBy = 'secops_admin'): boolean {
     const res = db.prepare(
-      "UPDATE security_alerts SET acknowledged_at = datetime('now', 'utc'), acknowledged_by = 'secops_admin' WHERE id = ?"
-    ).bind(id).run();
+      "UPDATE security_alerts SET acknowledged_at = datetime('now', 'utc'), acknowledged_by = ? WHERE id = ?"
+    ).bind(acknowledgedBy, id).run();
     return (res.changes || 0) > 0;
   }
 
@@ -320,7 +326,7 @@ class AuditRepository {
     mitigation_steps?: string;
     assigned_to?: string;
   }): IncidentCase {
-    const id = `INC-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    const id = `INC-${new Date().getFullYear()}-${crypto.randomInt(100, 1000)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const nowIso = new Date().toISOString();
     const status = data.status || 'OPEN';
 

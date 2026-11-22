@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
 import { 
   Play, 
   Terminal, 
@@ -117,7 +118,7 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
         setIsCustom(false);
         await fetch('/api/security/rate-limit-drill', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ username: 'cloud_dev' })
         });
         await onFire('cloud_dev', 'getDashboardMetrics');
@@ -127,7 +128,7 @@ export const SimulationControl: React.FC<SimulationControlProps> = ({
         setIsCustom(false);
         await fetch('/api/security/fail-closed-drill', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthRequestHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ username: 'secops_admin', errorType: 'EDGE_POLICY_EVAL_TIMEOUT' })
         });
         await onFire('secops_admin', 'getDashboardMetrics');
