@@ -1,13 +1,14 @@
 /**
  * Automated Identity & Credential Governance Test Suite
- * Evaluates Admin Password Enforcement (12345@pro), Zero-Plaintext Masking,
- * Admin Approval Workflow for Password and Username Change Requests, and Cloudflare D1/SQLite Persistence.
+ * Evaluates CSPRNG PBKDF2 Zero-Plaintext Storage,
+ * Admin Approval Workflow for Password and Username Change Requests, and SQLite Persistence.
  */
 
 import { userRepository } from '../server/repositories/user.repository.ts';
 import { passwordRequestRepository } from '../server/repositories/password-request.repository.ts';
 import { usernameRequestRepository } from '../server/repositories/username-request.repository.ts';
 import { verifyPassword } from '../server/utils/crypto.ts';
+import { db } from '../server/db.ts';
 
 interface TestResult {
   name: string;
@@ -27,135 +28,176 @@ function assert(condition: boolean, name: string, details: string) {
 
 async function runTestSuite() {
   console.log('================================================================');
-  console.log('STARTING ADMIN CREDENTIALS & IDENTITY WORKFLOW TEST SUITE');
+  console.log('STARTING IDENTITY & CREDENTIAL WORKFLOW TEST SUITE');
   console.log('================================================================\n');
 
-  // Test 1: Admin Password is 12345@pro and Plaintext is Never Stored
+  const cleanupUserIds: string[] = [];
+  const cleanupPasswordReqIds: string[] = [];
+  const cleanupUsernameReqIds: string[] = [];
+  const cleanupUsernames: string[] = [];
+
   try {
-    const admin = userRepository.findByUsername('secops_admin');
-    const isPwValid = admin ? verifyPassword('12345@pro', admin.password_salt, admin.password_hash) : false;
-    const isOtherPwInvalid = admin ? !verifyPassword('ZeroTrust_2026', admin.password_salt, admin.password_hash) : false;
-    const noPlaintextInHash = admin ? !admin.password_hash.includes('12345@pro') : false;
-    const noPlaintextInSalt = admin ? !admin.password_salt.includes('12345@pro') : false;
-
-    assert(
-      Boolean(admin && isPwValid && isOtherPwInvalid && noPlaintextInHash && noPlaintextInSalt),
-      '1. Admin Password Enforcement & Zero-Plaintext Storage',
-      'secops_admin password verified with 12345@pro; PBKDF2 hash & salt contain zero plaintext.'
-    );
-  } catch (err: any) {
-    assert(false, '1. Admin Password Enforcement & Zero-Plaintext Storage', err.message);
-  }
-
-  // Test 2: Password Change Request Workflow (Pending -> Approved -> DB Updated)
-  try {
-    const testUsername = `UserPw_${Date.now()}`;
-    const initialPwd = 'InitialPassword_2026!';
-
-    const user = userRepository.create({
-      username: testUsername,
-      password: initialPwd,
-      role: 'Developer',
-      base_risk_score: 20,
-      status: 'APPROVED',
-      department: 'Platform Security'
-    });
-
-    const newPwd = 'NewSecurePassword_999!';
-    const req = await passwordRequestRepository.create({
-      username: testUsername,
-      newPasswordPlaintext: newPwd,
-      justification: 'Quarterly compliance rotation'
-    });
-
-    const isPending = req && req.status === 'PENDING';
-
-    // Verify before approval: old password still valid, new password invalid
-    const userBefore = userRepository.findByUsername(testUsername);
-    const oldValidBefore = userBefore ? verifyPassword(initialPwd, userBefore.password_salt, userBefore.password_hash) : false;
-    const newValidBefore = userBefore ? verifyPassword(newPwd, userBefore.password_salt, userBefore.password_hash) : false;
-
-    // Approve
-    const approveRes = await passwordRequestRepository.approve(req.id, 'secops_admin');
-
-    // Verify after approval: new password valid, old password invalid
-    const userAfter = userRepository.findByUsername(testUsername);
-    const newValidAfter = userAfter ? verifyPassword(newPwd, userAfter.password_salt, userAfter.password_hash) : false;
-    const oldValidAfter = userAfter ? verifyPassword(initialPwd, userAfter.password_salt, userAfter.password_hash) : false;
-
-    assert(
-      Boolean(isPending && oldValidBefore && !newValidBefore && approveRes.success && newValidAfter && !oldValidAfter),
-      '2. Password Change Request Admin Approval Workflow',
-      'Request held in PENDING; approved by Admin; PBKDF2 hash & salt committed to D1/SQLite.'
-    );
-  } catch (err: any) {
-    assert(false, '2. Password Change Request Admin Approval Workflow', err.message);
-  }
-
-  // Test 3: Username Change Request Workflow (Pending -> Approved -> DB Updated)
-  try {
-    const origUsername = `OriginUser_${Date.now()}`;
-    const newUsername = `RenamedUser_${Date.now()}`;
-    const testPwd = 'UserAuth_2026!';
-
-    const user = userRepository.create({
-      username: origUsername,
-      password: testPwd,
-      role: 'Developer',
-      base_risk_score: 25,
-      status: 'APPROVED',
-      department: 'Cloud Security'
-    });
-
-    // Submit username change request
-    const req = await usernameRequestRepository.create({
-      currentUsername: origUsername,
-      requestedUsername: newUsername,
-      justification: 'Reorganization update'
-    });
-
-    const isPending = req && req.status === 'PENDING';
-    const beforeOrigExists = userRepository.findByUsername(origUsername) !== null;
-    const beforeNewExists = userRepository.findByUsername(newUsername) !== null;
-
-    // Approve
-    const approveRes = await usernameRequestRepository.approve(req.id, 'secops_admin');
-
-    const afterOrigExists = userRepository.findByUsername(origUsername) !== null;
-    const afterUser = userRepository.findByUsername(newUsername);
-    const afterNewValid = afterUser ? verifyPassword(testPwd, afterUser.password_salt, afterUser.password_hash) : false;
-
-    assert(
-      Boolean(isPending && beforeOrigExists && !beforeNewExists && approveRes.success && !afterOrigExists && afterUser && afterNewValid),
-      '3. Username Change Request Admin Approval Workflow',
-      'Request held in PENDING; approved by Admin; users table updated; user authenticates under new username.'
-    );
-  } catch (err: any) {
-    assert(false, '3. Username Change Request Admin Approval Workflow', err.message);
-  }
-
-  // Test 4: Username Collision Prevention
-  try {
-    let collisionThrew = false;
-    let collisionError = '';
+    // Test 1: CSPRNG PBKDF2 Enforcement & Zero-Plaintext Storage
     try {
-      usernameRequestRepository.create({
-        currentUsername: 'auditor_guest',
-        requestedUsername: 'secops_admin', // duplicate
-        justification: 'Unauthorized spoof'
+      const uniquePwd = `GovPass_${Date.now()}_!Z`;
+      const govUname = `GovCheck_${Date.now()}`;
+      cleanupUsernames.push(govUname);
+      const govUser = userRepository.create({
+        username: govUname,
+        password: uniquePwd,
+        role: 'Developer',
+        base_risk_score: 15,
+        status: 'APPROVED',
+        department: 'Governance QA'
       });
+      cleanupUserIds.push(govUser.id);
+
+      const isPwValid = verifyPassword(uniquePwd, govUser.password_salt, govUser.password_hash);
+      const isOtherPwInvalid = !verifyPassword('WrongPass_2026!', govUser.password_salt, govUser.password_hash);
+      const noPlaintextInHash = !govUser.password_hash.includes(uniquePwd) && govUser.password_hash.length >= 64;
+      const noPlaintextInSalt = !govUser.password_salt.includes(uniquePwd) && govUser.password_salt.length >= 32;
+
+      const admin = userRepository.findByUsername('secops_admin');
+      const adminSecure = Boolean(
+        admin &&
+          admin.password_salt.length >= 32 &&
+          admin.password_hash.length >= 64 &&
+          !admin.password_hash.startsWith('!')
+      );
+
+      assert(
+        Boolean(adminSecure && isPwValid && isOtherPwInvalid && noPlaintextInHash && noPlaintextInSalt),
+        '1. CSPRNG PBKDF2 Enforcement & Zero-Plaintext Storage',
+        'CSPRNG salt & PBKDF2 SHA-512 hash verified with zero plaintext; seeded admin uses non-placeholder credentials.'
+      );
     } catch (err: any) {
-      collisionThrew = true;
-      collisionError = err.message;
+      assert(false, '1. CSPRNG PBKDF2 Enforcement & Zero-Plaintext Storage', err.message);
     }
 
-    assert(
-      Boolean(collisionThrew && collisionError.includes('already registered')),
-      '4. Username Collision Prevention & Conflict Detection',
-      `Duplicate username request blocked fail-closed with conflict error: ${collisionError}`
-    );
-  } catch (err: any) {
-    assert(false, '4. Username Collision Prevention & Conflict Detection', err.message);
+    // Test 2: Password Change Request Workflow (Pending -> Approved -> DB Updated)
+    try {
+      const testUsername = `UserPw_${Date.now()}`;
+      cleanupUsernames.push(testUsername);
+      const initialPwd = `InitialPassword_${Date.now()}!`;
+
+      const user = userRepository.create({
+        username: testUsername,
+        password: initialPwd,
+        role: 'Developer',
+        base_risk_score: 20,
+        status: 'APPROVED',
+        department: 'Platform Security'
+      });
+      cleanupUserIds.push(user.id);
+
+      const newPwd = `NewSecurePassword_${Date.now()}!`;
+      const req = await passwordRequestRepository.create({
+        username: testUsername,
+        newPasswordPlaintext: newPwd,
+        justification: 'Quarterly compliance rotation'
+      });
+      cleanupPasswordReqIds.push(req.id);
+
+      const isPending = req && req.status === 'PENDING';
+
+      const userBefore = userRepository.findByUsername(testUsername);
+      const oldValidBefore = userBefore ? verifyPassword(initialPwd, userBefore.password_salt, userBefore.password_hash) : false;
+      const newValidBefore = userBefore ? verifyPassword(newPwd, userBefore.password_salt, userBefore.password_hash) : false;
+
+      const approveRes = await passwordRequestRepository.approve(req.id, 'secops_admin');
+
+      const userAfter = userRepository.findByUsername(testUsername);
+      const newValidAfter = userAfter ? verifyPassword(newPwd, userAfter.password_salt, userAfter.password_hash) : false;
+      const oldValidAfter = userAfter ? verifyPassword(initialPwd, userAfter.password_salt, userAfter.password_hash) : false;
+
+      assert(
+        Boolean(isPending && oldValidBefore && !newValidBefore && approveRes.success && newValidAfter && !oldValidAfter),
+        '2. Password Change Request Admin Approval Workflow',
+        'Request held in PENDING; approved by Admin; PBKDF2 hash & salt committed to SQLite.'
+      );
+    } catch (err: any) {
+      assert(false, '2. Password Change Request Admin Approval Workflow', err.message);
+    }
+
+    // Test 3: Username Change Request Workflow (Pending -> Approved -> DB Updated)
+    try {
+      const origUsername = `OriginUser_${Date.now()}`;
+      const newUsername = `RenamedUser_${Date.now()}`;
+      cleanupUsernames.push(origUsername, newUsername);
+      const testPwd = `UserAuth_${Date.now()}!`;
+
+      const user = userRepository.create({
+        username: origUsername,
+        password: testPwd,
+        role: 'Developer',
+        base_risk_score: 25,
+        status: 'APPROVED',
+        department: 'Cloud Security'
+      });
+      cleanupUserIds.push(user.id);
+
+      const req = await usernameRequestRepository.create({
+        currentUsername: origUsername,
+        requestedUsername: newUsername,
+        justification: 'Reorganization update'
+      });
+      cleanupUsernameReqIds.push(req.id);
+
+      const isPending = req && req.status === 'PENDING';
+      const beforeOrigExists = userRepository.findByUsername(origUsername) !== null;
+      const beforeNewExists = userRepository.findByUsername(newUsername) !== null;
+
+      const approveRes = await usernameRequestRepository.approve(req.id, 'secops_admin');
+
+      const afterOrigExists = userRepository.findByUsername(origUsername) !== null;
+      const afterUser = userRepository.findByUsername(newUsername);
+      const afterNewValid = afterUser ? verifyPassword(testPwd, afterUser.password_salt, afterUser.password_hash) : false;
+
+      assert(
+        Boolean(isPending && beforeOrigExists && !beforeNewExists && approveRes.success && !afterOrigExists && afterUser && afterNewValid),
+        '3. Username Change Request Admin Approval Workflow',
+        'Request held in PENDING; approved by Admin; users table updated; user authenticates under new username.'
+      );
+    } catch (err: any) {
+      assert(false, '3. Username Change Request Admin Approval Workflow', err.message);
+    }
+
+    // Test 4: Username Collision Prevention
+    try {
+      let collisionThrew = false;
+      let collisionError = '';
+      try {
+        usernameRequestRepository.create({
+          currentUsername: 'auditor_guest',
+          requestedUsername: 'secops_admin',
+          justification: 'Unauthorized spoof'
+        });
+      } catch (err: any) {
+        collisionThrew = true;
+        collisionError = err.message;
+      }
+
+      assert(
+        Boolean(collisionThrew && collisionError.includes('already registered')),
+        '4. Username Collision Prevention & Conflict Detection',
+        `Duplicate username request blocked fail-closed with conflict error: ${collisionError}`
+      );
+    } catch (err: any) {
+      assert(false, '4. Username Collision Prevention & Conflict Detection', err.message);
+    }
+  } finally {
+    for (const id of cleanupPasswordReqIds) {
+      try { db.prepare('DELETE FROM password_change_requests WHERE id = ?').bind(id).run(); } catch { /* ignore */ }
+    }
+    for (const id of cleanupUsernameReqIds) {
+      try { db.prepare('DELETE FROM username_change_requests WHERE id = ?').bind(id).run(); } catch { /* ignore */ }
+    }
+    for (const uname of cleanupUsernames) {
+      try { db.prepare('DELETE FROM audit_events WHERE username = ?').bind(uname).run(); } catch { /* ignore */ }
+    }
+    for (const uid of cleanupUserIds) {
+      try { db.prepare('DELETE FROM users WHERE id = ?').bind(uid).run(); } catch { /* ignore */ }
+    }
   }
 
   console.log('--- TEST RESULTS SUMMARY ---');

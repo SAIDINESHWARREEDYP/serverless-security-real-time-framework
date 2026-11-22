@@ -53,6 +53,8 @@ function resolveAllowedOrigin(origin: string, env?: Env): string | null {
   return null;
 }
 
+let ephemeralWorkerDevSecret = '';
+
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
     const url = new URL(request.url);
@@ -60,13 +62,16 @@ export default {
     const method = request.method;
     const origin = request.headers.get('Origin') || '';
 
-    // Determine JWT Secret from Environment Binding with resilient validation
+    // Determine JWT Secret from Environment Binding with strict validation
     let jwtSecret = env.JWT_SECRET?.trim() || '';
     if (!jwtSecret) {
       if (env.ENVIRONMENT === 'production') {
         return jsonResponse({ error: 'Fatal security configuration: JWT_SECRET must be configured in production.' }, 500, origin, undefined, env);
       }
-      jwtSecret = 'dev_zt_secops_verification_secret_key_minimum_32_characters_2026_local_only';
+      if (!ephemeralWorkerDevSecret) {
+        ephemeralWorkerDevSecret = generateRandomHex(32);
+      }
+      jwtSecret = ephemeralWorkerDevSecret;
     }
     if (jwtSecret.length < 32) {
       jwtSecret = await sha256Hex(jwtSecret);
@@ -194,73 +199,77 @@ export default {
 
     // 4. System Overview & Dashboard Telemetry
     if (path === '/api/system/overview' || path === '/api/v1/analytics/overview') {
-      let users: any[] = [];
-      let rules: any[] = [];
-      let logs: any[] = [];
-      let policy: any = { maxRiskThreshold: 75, sequenceViolationPenalty: 40, enforceStrictSequence: true, globalLockdown: false, requireAdminApprovalForNewLogins: true };
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
 
-      if (env.DB) {
-        try {
-          const uRes = await env.DB.prepare('SELECT id, username, role, base_risk_score, status, department, email, phone, mfa_enabled FROM users').all();
-          users = uRes?.results || [];
+      try {
+        const uRes = await env.DB.prepare(
+          'SELECT id, username, role, base_risk_score, status, department, mfa_enabled, mfa_enrolled FROM users'
+        ).all();
+        const users = uRes?.results || [];
 
-          const rRes = await env.DB.prepare('SELECT id, current_function, allowed_next_function FROM function_rules').all();
-          rules = rRes?.results || [];
+        const rRes = await env.DB.prepare('SELECT id, current_function, allowed_next_function FROM function_rules').all();
+        const rules = rRes?.results || [];
 
-          const lRes = await env.DB.prepare('SELECT * FROM audit_events ORDER BY id DESC LIMIT 100').all();
-          logs = lRes?.results || [];
+        const lRes = await env.DB.prepare('SELECT * FROM audit_events ORDER BY id DESC LIMIT 100').all();
+        const logs: any[] = lRes?.results || [];
 
-          const pRes = await env.DB.prepare('SELECT * FROM policies LIMIT 1').first();
-          if (pRes) {
-            policy = {
+        const pRes = await env.DB.prepare('SELECT * FROM policies LIMIT 1').first();
+        const policy = pRes
+          ? {
               maxRiskThreshold: pRes.max_risk_threshold ?? 75,
               sequenceViolationPenalty: pRes.sequence_violation_penalty ?? 40,
               enforceStrictSequence: Boolean(pRes.enforce_strict_sequence),
               globalLockdown: Boolean(pRes.global_lockdown),
               requireAdminApprovalForNewLogins: Boolean(pRes.require_admin_approval)
+            }
+          : {
+              maxRiskThreshold: 75,
+              sequenceViolationPenalty: 40,
+              enforceStrictSequence: true,
+              globalLockdown: false,
+              requireAdminApprovalForNewLogins: true
             };
+
+        const blockedCount = logs.filter(l => l.status === 'BLOCKED').length;
+        const allowedCount = logs.filter(l => l.status === 'ALLOWED').length;
+        const avgVerificationLatencyMs = logs.length > 0
+          ? Number((logs.reduce((acc, l) => acc + Number(l.verification_latency_ms || 0), 0) / logs.length).toFixed(3))
+          : 0;
+
+        return jsonResponse({
+          users,
+          rules,
+          logs,
+          auditEvents: logs,
+          policyConfig: policy,
+          stats: {
+            totalUsers: users.length,
+            totalRules: rules.length,
+            totalLogs: logs.length,
+            totalAuditEvents: logs.length,
+            blockedCount,
+            allowedCount,
+            avgVerificationLatencyMs
           }
-        } catch (e) {
-          console.error('[Worker D1 Overview error]', e);
-        }
+        }, 200, origin, undefined, env);
+      } catch (e: any) {
+        return jsonResponse({ error: 'Overview database query failed: ' + (e?.message || 'D1 error') }, 503, origin, undefined, env);
       }
-
-      const blockedCount = logs.filter(l => l.status === 'BLOCKED').length;
-      const allowedCount = logs.filter(l => l.status === 'ALLOWED').length;
-      const avgVerificationLatencyMs = logs.length > 0
-        ? Number((logs.reduce((acc, l) => acc + Number(l.verification_latency_ms || 0), 0) / logs.length).toFixed(3))
-        : 0;
-
-      return jsonResponse({
-        users,
-        rules,
-        logs,
-        auditEvents: logs,
-        policyConfig: policy,
-        stats: {
-          totalUsers: users.length,
-          totalRules: rules.length,
-          totalLogs: logs.length,
-          totalAuditEvents: logs.length,
-          blockedCount,
-          allowedCount,
-          avgVerificationLatencyMs
-        }
-      }, 200, origin, undefined, env);
     }
 
     // 5. Auth Status & Clearance Check (/api/auth/status)
     if (path === '/api/auth/status') {
-      const qUser = (url.searchParams.get('username') || '').trim();
-      if (!qUser) return jsonResponse({ error: 'Username query parameter required' }, 400, origin);
-
-      let user: any = null;
-      if (env.DB) {
-        user = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(qUser).first();
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
       }
+      const qUser = (url.searchParams.get('username') || '').trim();
+      if (!qUser) return jsonResponse({ error: 'Username query parameter required' }, 400, origin, undefined, env);
 
+      const user = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(qUser).first();
       if (!user) {
-        return jsonResponse({ error: `Identity [${qUser}] not registered in database`, found: false }, 404, origin);
+        return jsonResponse({ error: `Identity [${qUser}] not registered in database`, found: false }, 404, origin, undefined, env);
       }
 
       return jsonResponse({
@@ -278,11 +287,14 @@ export default {
         },
         role: user.role,
         userRisk: user.base_risk_score
-      }, 200, origin);
+      }, 200, origin, undefined, env);
     }
 
     // 6. Identity Registration (/api/register & /api/v1/auth/register)
     if (path === '/api/register' || path === '/api/v1/auth/register') {
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
       try {
         const body: any = await request.json();
         const { username, password, role = 'Developer', base_risk_score = 20, department = 'Cloud Platform' } = body;
@@ -302,42 +314,34 @@ export default {
           return jsonResponse({ error: 'base_risk_score must be between 0 and 100.' }, 400, origin, undefined, env);
         }
         const clean = username.trim();
-        let accountStatus: 'PENDING_APPROVAL' | 'APPROVED' = 'PENDING_APPROVAL';
 
-        let mfaEnrollment: { secret: string; provisioningUri: string; backupCodes: string[]; issuer: string } | undefined;
-
-        // Check if user already exists
-        if (env.DB) {
-          const existing = await env.DB.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').bind(clean).first();
-          if (existing) {
-            return jsonResponse({ error: `Identity [${clean}] already exists in database.` }, 409, origin, undefined, env);
-          }
-
-          const policyRow = await env.DB.prepare('SELECT require_admin_approval FROM policies LIMIT 1').first();
-          const requireApproval = policyRow ? Boolean(policyRow.require_admin_approval) : true;
-          accountStatus = requireApproval ? 'PENDING_APPROVAL' : 'APPROVED';
-
-          // Generate PBKDF2 salt and hash
-          const salt = generateRandomHex(16);
-          const hash = await derivePbkdf2Hex(password, salt);
-          // Generate cryptographically random 32-character base32 TOTP secret (20 bytes entropy) & 8 recovery codes
-          const generatedSecret = generateBase32SecretWeb(20);
-          const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
-
-          const nowIso = new Date().toISOString();
-          await env.DB.prepare(
-            `INSERT INTO users (
-              id, username, password_salt, password_hash, role, base_risk_score, status, department, mfa_enabled, mfa_enrolled, mfa_secret, mfa_backup_codes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`
-          ).bind(`usr_${clean}`, clean, salt, hash, safeRole, numericRisk, accountStatus, department, generatedSecret, JSON.stringify(hashedCodes), nowIso).run();
-
-          mfaEnrollment = {
-            secret: generatedSecret,
-            provisioningUri: `otpauth://totp/ServerlessSecOps:${encodeURIComponent(clean)}?secret=${generatedSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`,
-            backupCodes: plaintextCodes,
-            issuer: 'ServerlessSecOps'
-          };
+        const existing = await env.DB.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').bind(clean).first();
+        if (existing) {
+          return jsonResponse({ error: `Identity [${clean}] already exists in database.` }, 409, origin, undefined, env);
         }
+
+        const policyRow = await env.DB.prepare('SELECT require_admin_approval FROM policies LIMIT 1').first();
+        const requireApproval = policyRow ? Boolean(policyRow.require_admin_approval) : true;
+        const accountStatus: 'PENDING_APPROVAL' | 'APPROVED' = requireApproval ? 'PENDING_APPROVAL' : 'APPROVED';
+
+        const salt = generateRandomHex(16);
+        const hash = await derivePbkdf2Hex(password, salt);
+        const generatedSecret = generateBase32SecretWeb(20);
+        const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
+
+        const nowIso = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO users (
+            id, username, password_salt, password_hash, role, base_risk_score, status, department, mfa_enabled, mfa_enrolled, mfa_secret, mfa_backup_codes, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`
+        ).bind(`usr_${clean}`, clean, salt, hash, safeRole, numericRisk, accountStatus, department, generatedSecret, JSON.stringify(hashedCodes), nowIso).run();
+
+        const mfaEnrollment = {
+          secret: generatedSecret,
+          provisioningUri: `otpauth://totp/ServerlessSecOps:${encodeURIComponent(clean)}?secret=${generatedSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`,
+          backupCodes: plaintextCodes,
+          issuer: 'ServerlessSecOps'
+        };
 
         const pendingApproval = accountStatus === 'PENDING_APPROVAL';
         return jsonResponse({
@@ -354,7 +358,7 @@ export default {
           },
           mfaEnrollment,
           message: pendingApproval
-            ? `Identity [${clean}] registered in D1. Zero-Trust gate: Pending SecOps Administrator verification. Save your Authenticator QR & recovery codes now.`
+            ? `Identity [${clean}] registered in D1. Zero-Trust gate: Pending SecOps Administrator verification. Save your recovery codes or Authenticator QR now.`
             : `Identity [${clean}] registered and approved for MFA sign-in.`
         }, 200, origin, undefined, env);
       } catch (err: any) {
@@ -364,69 +368,76 @@ export default {
 
     // 7. SECURE AUTHENTICATION: Login & Genuine Password Verification (/api/login & /api/v1/auth/login)
     if (path === '/api/login' || path === '/api/v1/auth/login') {
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
       try {
         const body: any = await request.json();
         const { username, password } = body;
         if (!username || !password) {
-          return jsonResponse({ error: 'Username and password required.' }, 400, origin);
+          return jsonResponse({ error: 'Username and password required.' }, 400, origin, undefined, env);
         }
 
-        let user: any = null;
-        if (env.DB) {
-          user = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(username.trim()).first();
-        }
-
-        // Generic error on nonexistent user (Anti-enumeration)
+        const user: any = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(username.trim()).first();
         if (!user) {
-          return jsonResponse({ error: 'Invalid credentials or unapproved account.' }, 401, origin);
+          return jsonResponse({ error: 'Invalid credentials or unapproved account.' }, 401, origin, undefined, env);
         }
 
-        // GENUINE CRYPTOGRAPHIC PASSWORD VERIFICATION (PBKDF2 SHA-512)
-        // No universal passwords, plaintext comparisons, or bypasses permitted
         let isPasswordCorrect = false;
         if (user.password_salt && user.password_hash) {
           isPasswordCorrect = await verifyPasswordSubtle(password, user.password_salt, user.password_hash);
         }
 
         if (!isPasswordCorrect) {
-          return jsonResponse({ error: 'Invalid credentials or unapproved account.' }, 401, origin);
+          return jsonResponse({ error: 'Invalid credentials or unapproved account.' }, 401, origin, undefined, env);
         }
 
-        // Account status verification
         if (user.status === 'PENDING_APPROVAL') {
           return jsonResponse({
+            success: false,
+            pendingApproval: true,
             error: 'Zero-Trust Gate: Account pending Administrator verification and clearance.',
             status: 'PENDING_APPROVAL',
             user: { username: user.username, role: user.role, status: user.status }
-          }, 403, origin);
+          }, 403, origin, undefined, env);
         }
 
         if (user.status === 'SUSPENDED') {
-          return jsonResponse({ error: 'Account suspended by SecOps Security Policy.', status: 'SUSPENDED' }, 403, origin);
+          return jsonResponse({ error: 'Account suspended by SecOps Security Policy.', status: 'SUSPENDED' }, 403, origin, undefined, env);
         }
 
         if (user.status === 'REJECTED') {
-          return jsonResponse({ error: 'Access Denied: Account clearance was rejected by SecOps Administration.' }, 401, origin);
+          return jsonResponse({ error: 'Access Denied: Account clearance was rejected by SecOps Administration.' }, 401, origin, undefined, env);
         }
 
-        // MFA CHALLENGE: Mandatory when mfa_enabled is true
-        // Persisted in D1 mfa_challenges table with expiry, attempts, and replay protection
         if (user.mfa_enabled) {
-          if (!user.mfa_secret && env.DB) {
+          if (!user.mfa_secret) {
             const enrolledSecret = generateBase32SecretWeb(20);
             user.mfa_secret = enrolledSecret;
             await env.DB.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?').bind(enrolledSecret, user.id).run();
           }
           const mfaSessionId = `mfa_${generateRandomHex(16)}`;
           const challengeToken = generateRandomHex(24);
-          if (env.DB) {
-            await env.DB.prepare(
-              `INSERT INTO mfa_challenges (id, user_id, challenge_token, expires_at, attempts, max_attempts, consumed, created_at)
-               VALUES (?, ?, ?, datetime('now', '+5 minutes'), 0, 5, 0, datetime('now'))`
-            ).bind(mfaSessionId, user.id, challengeToken).run();
-          }
+          await env.DB.prepare(
+            `INSERT INTO mfa_challenges (id, user_id, challenge_token, expires_at, attempts, max_attempts, consumed, created_at)
+             VALUES (?, ?, ?, datetime('now', '+5 minutes'), 0, 5, 0, datetime('now'))`
+          ).bind(mfaSessionId, user.id, challengeToken).run();
 
-          const enrollmentRequired = !Boolean(user.mfa_enrolled) && Number(user.last_totp_step || 0) === 0;
+          const hasTotpEnrolled = Number(user.last_totp_step || 0) > 0;
+          const enrollmentRequired = !Boolean(user.mfa_enrolled) && !hasTotpEnrolled;
+          const preferredMethod = enrollmentRequired || !hasTotpEnrolled ? 'backup_code' : 'authenticator';
+
+          let recoveryCodesRemaining = 0;
+          try {
+            const parsed = typeof user.mfa_backup_codes === 'string'
+              ? JSON.parse(user.mfa_backup_codes)
+              : Array.isArray(user.mfa_backup_codes)
+              ? user.mfa_backup_codes
+              : [];
+            recoveryCodesRemaining = Array.isArray(parsed) ? parsed.length : 0;
+          } catch {
+            recoveryCodesRemaining = 0;
+          }
 
           return jsonResponse({
             success: true,
@@ -436,7 +447,9 @@ export default {
             mfaChallengeId: mfaSessionId,
             phoneMasked: maskPhone(user.phone),
             emailMasked: maskEmail(user.email, user.username),
-            methods: ['authenticator', 'backup_code'],
+            methods: ['backup_code', 'authenticator'],
+            preferredMethod,
+            recoveryCodesRemaining,
             attemptsLeft: 5,
             user: {
               id: user.id,
@@ -444,15 +457,16 @@ export default {
               role: user.role,
               base_risk_score: user.base_risk_score,
               status: user.status,
-              department: user.department
+              department: user.department,
+              mfa_enrolled: Boolean(user.mfa_enrolled),
+              mfa_backup_codes_remaining: recoveryCodesRemaining
             },
             message: enrollmentRequired
-              ? 'Password verified. First-time Authenticator setup required — scan QR or enter setup key, then enter the 6-digit TOTP code.'
-              : 'Password verified. Enter 6-digit TOTP code or backup code.'
+              ? 'Password verified. First-time MFA setup required — generate and confirm a single-use recovery code (no phone needed) or pair an Authenticator app.'
+              : 'Password verified. Enter a single-use recovery code or 6-digit Authenticator TOTP code.'
           }, 200, origin, undefined, env);
         }
 
-        // Issue Cryptographically Signed HMAC-SHA256 JWT
         const token = await signJwtWeb({
           sub: user.id,
           username: user.username,
@@ -461,19 +475,16 @@ export default {
           expiresInSeconds: 3600
         }, jwtSecret);
 
-        // Record persistent session in D1 SQLite
-        if (env.DB) {
-          const sessionId = `sess_${generateRandomHex(12)}`;
-          await env.DB.prepare(
-            "INSERT OR REPLACE INTO active_sessions (id, token, username, role, created_at, expires_at, revoked) VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+1 hour'), 0)"
-          ).bind(sessionId, token, user.username, user.role).run();
+        const sessionId = `sess_${generateRandomHex(12)}`;
+        await env.DB.prepare(
+          "INSERT OR REPLACE INTO active_sessions (id, token, username, role, created_at, expires_at, revoked) VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+1 hour'), 0)"
+        ).bind(sessionId, token, user.username, user.role).run();
 
-          await env.DB.prepare(
-            "INSERT OR REPLACE INTO sessions (id, user_id, session_token, status, created_at, expires_at) VALUES (?, ?, ?, 'active', datetime('now'), datetime('now', '+1 hour'))"
-          ).bind(sessionId, user.id, token).run();
+        await env.DB.prepare(
+          "INSERT OR REPLACE INTO sessions (id, user_id, session_token, status, created_at, expires_at) VALUES (?, ?, ?, 'active', datetime('now'), datetime('now', '+1 hour'))"
+        ).bind(sessionId, user.id, token).run();
 
-          await env.DB.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").bind(user.id).run();
-        }
+        await env.DB.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").bind(user.id).run();
 
         return jsonResponse({
           success: true,
@@ -495,11 +506,11 @@ export default {
       }
     }
 
-    // 8. STRICT MULTI-FACTOR VERIFICATION: D1 Challenge + RFC 6238 TOTP & Hashed Backup Codes
+    // 8. STRICT MULTI-FACTOR VERIFICATION: D1 Challenge + RFC 6238 TOTP & Atomic CAS Hashed Recovery Codes
     if (path === '/api/auth/mfa/verify' || path === '/api/v1/auth/mfa/verify') {
       try {
         const body: any = await request.json();
-        const { mfaSessionId, mfaChallengeId, code, username } = body;
+        const { mfaSessionId, mfaChallengeId, code, method: mfaMethodInput, username } = body;
         const cid = String(mfaChallengeId || mfaSessionId || '').trim();
         const clean = (code || '').trim().replace(/[\s\-]/g, '');
 
@@ -552,15 +563,19 @@ export default {
 
         const userSecret = user.mfa_secret;
         if (!userSecret) {
-          return jsonResponse({ success: false, error: 'MFA is not enrolled for this principal.' }, 400, origin, undefined, env);
+          return jsonResponse({ success: false, error: 'MFA is not configured for this principal.' }, 400, origin, undefined, env);
         }
 
         let isCodeValid = false;
         let matchedStep: number | undefined;
         let replayDetected = false;
+        let consumedRecoveryCode = false;
+        let exhaustedRecoveryCodes = false;
+        let rawBackupCodesColumn = '';
+        let remainingHashedCodes: string[] = [];
 
         // A. Verify RFC 6238 TOTP with +/- 1 window (30s clock skew) and replay prevention
-        if (/^\d{6}$/.test(clean)) {
+        if (mfaMethodInput !== 'backup_code' && /^\d{6}$/.test(clean)) {
           const totpCheck = await verifyTotpWeb(clean, userSecret, 1, user.last_totp_step || 0);
           if (totpCheck.valid) {
             isCodeValid = true;
@@ -570,25 +585,44 @@ export default {
           }
         }
 
-        // B. Verify Single-Use Backup Codes (Stored as SHA-256 Hashes)
-        if (!isCodeValid && !replayDetected && clean.length >= 8) {
+        // B. Verify Single-Use Recovery Codes (Constant-Time across SHA-256 Hashes + CAS consumption)
+        if (!isCodeValid && !replayDetected && (mfaMethodInput === 'backup_code' || clean.length >= 8)) {
+          rawBackupCodesColumn = typeof user.mfa_backup_codes === 'string'
+            ? user.mfa_backup_codes
+            : JSON.stringify(Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes : []);
+
           let hashedBackupCodes: string[] = [];
           try {
-            hashedBackupCodes = typeof user.mfa_backup_codes === 'string'
-              ? JSON.parse(user.mfa_backup_codes)
-              : Array.isArray(user.mfa_backup_codes)
-              ? user.mfa_backup_codes
-              : [];
+            const parsed = JSON.parse(rawBackupCodesColumn);
+            hashedBackupCodes = Array.isArray(parsed) ? parsed : [];
           } catch {
             hashedBackupCodes = [];
           }
 
-          const candidateHash = await sha256Hex(clean.toUpperCase());
-          if (hashedBackupCodes.includes(candidateHash)) {
-            isCodeValid = true;
-            const remainingHashedCodes = hashedBackupCodes.filter(h => h !== candidateHash);
-            await env.DB.prepare('UPDATE users SET mfa_backup_codes = ? WHERE id = ?')
-              .bind(JSON.stringify(remainingHashedCodes), user.id).run();
+          if (hashedBackupCodes.length === 0) {
+            exhaustedRecoveryCodes = true;
+          } else {
+            const unhyphenated = clean.toUpperCase();
+            const hyphenated = unhyphenated.length === 8 ? `${unhyphenated.slice(0, 4)}-${unhyphenated.slice(4)}` : unhyphenated;
+            const cand1 = (await sha256Hex(unhyphenated)).toLowerCase();
+            const cand2 = (await sha256Hex(hyphenated)).toLowerCase();
+
+            let matchedHash: string | undefined;
+            for (const h of hashedBackupCodes) {
+              if (typeof h !== 'string') continue;
+              const hl = h.toLowerCase();
+              const eq1 = timingSafeEqualStr(hl, cand1);
+              const eq2 = timingSafeEqualStr(hl, cand2);
+              if ((eq1 || eq2) && !matchedHash) {
+                matchedHash = h;
+              }
+            }
+
+            if (matchedHash) {
+              isCodeValid = true;
+              consumedRecoveryCode = true;
+              remainingHashedCodes = hashedBackupCodes.filter(h => h !== matchedHash);
+            }
           }
         }
 
@@ -596,6 +630,22 @@ export default {
           const nextAttempts = currentAttempts + 1;
           await env.DB.prepare('UPDATE mfa_challenges SET attempts = ? WHERE id = ?').bind(nextAttempts, challengeRow.id).run();
           const attemptsLeft = Math.max(0, maxAttempts - nextAttempts);
+
+          await logSecurityEvent(
+            env.DB,
+            user.username,
+            '/api/v1/auth/mfa/verify',
+            Math.min(100, (user.base_risk_score || 0) + 25),
+            'BLOCKED',
+            exhaustedRecoveryCodes
+              ? `[RECOVERY CODES EXHAUSTED] ${user.username} attempted recovery-code verification with 0 codes remaining (${attemptsLeft} attempts left).`
+              : replayDetected
+              ? `[MFA REPLAY BLOCKED] TOTP time-step replay rejected for ${user.username}.`
+              : `[MFA REJECTED] Invalid verification code for ${user.username} (${attemptsLeft} attempts left).`,
+            1.1,
+            attemptsLeft === 0 ? 'MFA_LOCKOUT' : replayDetected ? 'MFA_REPLAY_BLOCKED' : 'MFA_VERIFICATION_FAILURE'
+          );
+
           if (attemptsLeft === 0) {
             return jsonResponse({
               success: false,
@@ -609,28 +659,77 @@ export default {
             attemptsLeft,
             error: replayDetected
               ? 'Replay Attack Prevention: This TOTP time-step was already consumed. Please wait for the next 30-second token.'
-              : 'Invalid verification code. Arbitrary passcodes are rejected.'
+              : exhaustedRecoveryCodes
+              ? `No valid recovery codes remain for this account (0 remaining). Contact an Administrator to reset MFA or regenerate recovery codes. ${attemptsLeft} attempts remaining.`
+              : `Invalid verification code. ${attemptsLeft} attempts remaining.`
           }, 401, origin, undefined, env);
         }
 
-        // Atomically mark challenge consumed
+        // Atomically mark challenge consumed FIRST (CAS: AND consumed = 0)
         const consumeRes: any = await env.DB.prepare(
           'UPDATE mfa_challenges SET consumed = 1 WHERE id = ? AND consumed = 0'
         ).bind(challengeRow.id).run();
-        const consumedChanges = consumeRes?.meta?.changes ?? consumeRes?.changes ?? 1;
+        const consumedChanges = consumeRes?.meta?.changes ?? consumeRes?.changes ?? 0;
         if (consumedChanges === 0) {
           return jsonResponse({ success: false, error: 'MFA challenge has already been consumed.' }, 401, origin, undefined, env);
         }
 
-        if (typeof matchedStep === 'number') {
+        const wasFirstEnrollment = !Boolean(user.mfa_enrolled);
+
+        if (consumedRecoveryCode) {
+          // CAS recovery-code update: ensure the exact same mfa_backup_codes JSON row was not concurrently modified
+          const casUserRes: any = await env.DB.prepare(
+            "UPDATE users SET mfa_backup_codes = ?, mfa_enrolled = 1, last_login_at = datetime('now') WHERE id = ? AND mfa_backup_codes = ?"
+          ).bind(JSON.stringify(remainingHashedCodes), user.id, rawBackupCodesColumn).run();
+          const casUserChanges = casUserRes?.meta?.changes ?? casUserRes?.changes ?? 0;
+          if (casUserChanges === 0) {
+            return jsonResponse({ success: false, error: 'Recovery code was concurrently consumed or invalidated. Please retry with another code.' }, 401, origin, undefined, env);
+          }
+
+          await logSecurityEvent(
+            env.DB,
+            user.username,
+            '/api/v1/auth/mfa/verify',
+            15,
+            'ALLOWED',
+            `[RECOVERY CODE CONSUMED] Single-use recovery code verified & invalidated for ${user.username} (${remainingHashedCodes.length} remaining).`,
+            1.1,
+            'BACKUP_CODE_CONSUMED'
+          );
+
+          if (wasFirstEnrollment) {
+            await logSecurityEvent(
+              env.DB,
+              user.username,
+              '/api/v1/auth/mfa/verify',
+              user.base_risk_score || 0,
+              'ALLOWED',
+              `[RECOVERY ENROLLMENT COMPLETED] Laptop-only recovery-code MFA activated for ${user.username}.`,
+              1.0,
+              'RECOVERY_CODE_ENROLLMENT_COMPLETED'
+            );
+          }
+        } else if (typeof matchedStep === 'number') {
           await env.DB.prepare("UPDATE users SET last_totp_step = ?, mfa_enrolled = 1, last_login_at = datetime('now') WHERE id = ?")
             .bind(matchedStep, user.id).run();
         } else {
-          await env.DB.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?")
+          await env.DB.prepare("UPDATE users SET mfa_enrolled = 1, last_login_at = datetime('now') WHERE id = ?")
             .bind(user.id).run();
         }
 
-        // Issue Cryptographically Signed HMAC-SHA256 JWT
+        await logSecurityEvent(
+          env.DB,
+          user.username,
+          '/api/v1/auth/mfa/verify',
+          user.base_risk_score || 0,
+          'ALLOWED',
+          consumedRecoveryCode
+            ? `[MFA AUTHORIZED] Single-use recovery code verified (${remainingHashedCodes.length} remaining). JWT session issued.`
+            : `[MFA AUTHORIZED] RFC 6238 TOTP verified. JWT session issued.`,
+          1.1,
+          'MFA_SUCCESS'
+        );
+
         const token = await signJwtWeb({
           sub: user.id,
           username: user.username,
@@ -651,13 +750,20 @@ export default {
         return jsonResponse({
           success: true,
           token,
+          mfaMethod: consumedRecoveryCode ? 'backup_code' : 'authenticator',
+          recoveryCodesRemaining: consumedRecoveryCode
+            ? remainingHashedCodes.length
+            : (typeof user.mfa_backup_codes === 'string'
+                ? (() => { try { return JSON.parse(user.mfa_backup_codes).length; } catch { return 0; } })()
+                : Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes.length : 0),
           user: {
             id: user.id || `usr_${user.username}`,
             username: user.username,
             role: user.role,
             base_risk_score: user.base_risk_score || 0,
             status: user.status || 'APPROVED',
-            department: user.department || 'SecOps Core Operations'
+            department: user.department || 'SecOps Core Operations',
+            mfa_enrolled: true
           },
           expiresInSeconds: 3600,
           message: 'MFA verified successfully. High-assurance Zero-Trust token issued.'
@@ -671,6 +777,7 @@ export default {
       try {
         const body: any = await request.json().catch(() => ({}));
         const cid = String(body.mfaChallengeId || body.mfaSessionId || '').trim();
+        const mode = body.mode === 'recovery_codes' ? 'recovery_codes' : 'authenticator';
         if (!cid) {
           return jsonResponse({ success: false, error: 'MFA challenge identifier is required.' }, 400, origin, undefined, env);
         }
@@ -699,8 +806,34 @@ export default {
         if (Boolean(user.mfa_enrolled) || Number(user.last_totp_step || 0) > 0) {
           return jsonResponse({
             success: false,
-            error: 'Authenticator app is already enrolled for this identity. Enter your 6-digit code, use a recovery code, or contact an Administrator to reset MFA.'
+            error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
           }, 403, origin, undefined, env);
+        }
+
+        const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
+
+        if (mode === 'recovery_codes') {
+          await env.DB.prepare('UPDATE users SET mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ?')
+            .bind(JSON.stringify(hashedCodes), user.id).run();
+
+          await logSecurityEvent(
+            env.DB,
+            user.username,
+            '/api/auth/mfa/enroll-challenge',
+            user.base_risk_score || 0,
+            'ALLOWED',
+            `[RECOVERY ENROLLMENT ISSUED] Issued 8 single-use hashed recovery codes for laptop-only MFA setup (${user.username}).`,
+            0.9,
+            'RECOVERY_CODE_ENROLLMENT_STARTED'
+          );
+
+          return jsonResponse({
+            success: true,
+            mode: 'recovery_codes',
+            username: user.username,
+            backupCodes: plaintextCodes,
+            issuer: 'ServerlessSecOps'
+          }, 200, origin, undefined, env);
         }
 
         let cleanSecret = String(user.mfa_secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
@@ -709,13 +842,24 @@ export default {
         } else if (cleanSecret.length < 26) {
           cleanSecret = cleanSecret.repeat(Math.ceil(32 / cleanSecret.length)).slice(0, 32);
         }
-        const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
         await env.DB.prepare('UPDATE users SET mfa_secret = ?, mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ?')
           .bind(cleanSecret, JSON.stringify(hashedCodes), user.id).run();
+
+        await logSecurityEvent(
+          env.DB,
+          user.username,
+          '/api/auth/mfa/enroll-challenge',
+          user.base_risk_score || 0,
+          'ALLOWED',
+          `[FIRST-TIME MFA PAIRING] Issued one-time Authenticator QR & recovery codes for ${user.username}.`,
+          0.9,
+          'MFA_PAIRING_ISSUED'
+        );
 
         const provisioningUri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${cleanSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`;
         return jsonResponse({
           success: true,
+          mode: 'authenticator',
           username: user.username,
           secret: cleanSecret,
           provisioningUri,
@@ -777,14 +921,16 @@ export default {
           return jsonResponse({ error: 'Invalid or expired caller token: ' + (jwtCheck.error || 'INVALID') }, 401, origin);
         }
 
+        if (!env.DB) {
+          return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+        }
+
         // Check caller session active & unexpired in D1
-        if (env.DB) {
-          const sessionRow = await env.DB.prepare(
-            "SELECT * FROM active_sessions WHERE token = ? AND revoked = 0 AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1"
-          ).bind(callerToken).first();
-          if (!sessionRow) {
-            return jsonResponse({ error: 'Caller session has been revoked or expired.' }, 401, origin, undefined, env);
-          }
+        const sessionRow = await env.DB.prepare(
+          "SELECT * FROM active_sessions WHERE token = ? AND revoked = 0 AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1"
+        ).bind(callerToken).first();
+        if (!sessionRow) {
+          return jsonResponse({ error: 'Caller session has been revoked or expired.' }, 401, origin, undefined, env);
         }
 
         const caller = jwtCheck.claims;
@@ -808,26 +954,24 @@ export default {
 
         // Persist revocation in D1
         let revokedCount = 0;
-        if (env.DB) {
-          if (targetToken) {
-            const r1: any = await env.DB.prepare(
-              "UPDATE active_sessions SET revoked = 1, revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE token = ? AND revoked = 0"
-            ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetToken).run();
-            const r2: any = await env.DB.prepare(
-              "UPDATE sessions SET status = 'revoked', revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE session_token = ? AND status = 'active'"
-            ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetToken).run();
-            revokedCount = Math.max(r1?.meta?.changes || r1?.changes || 0, r2?.meta?.changes || r2?.changes || 0, 1);
-          }
+        if (targetToken) {
+          const r1: any = await env.DB.prepare(
+            "UPDATE active_sessions SET revoked = 1, revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE token = ? AND revoked = 0"
+          ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetToken).run();
+          const r2: any = await env.DB.prepare(
+            "UPDATE sessions SET status = 'revoked', revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE session_token = ? AND status = 'active'"
+          ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetToken).run();
+          revokedCount = Math.max(r1?.meta?.changes || r1?.changes || 0, r2?.meta?.changes || r2?.changes || 0, 1);
+        }
 
-          if (targetUsername) {
-            const r1: any = await env.DB.prepare(
-              "UPDATE active_sessions SET revoked = 1, revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE LOWER(username) = LOWER(?) AND revoked = 0"
-            ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetUsername).run();
-            const r2: any = await env.DB.prepare(
-              "UPDATE sessions SET status = 'revoked', revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE LOWER(user_id) = LOWER(?) AND status = 'active'"
-            ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetUsername).run();
-            revokedCount = Math.max(r1?.meta?.changes || r1?.changes || 0, r2?.meta?.changes || r2?.changes || 0, 1);
-          }
+        if (targetUsername) {
+          const r1: any = await env.DB.prepare(
+            "UPDATE active_sessions SET revoked = 1, revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE LOWER(username) = LOWER(?) AND revoked = 0"
+          ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetUsername).run();
+          const r2: any = await env.DB.prepare(
+            "UPDATE sessions SET status = 'revoked', revoked_at = datetime('now'), revoked_by = ?, revocation_reason = ? WHERE LOWER(user_id) = LOWER(?) AND status = 'active'"
+          ).bind(caller.username, body.reason || 'Terminated via SecOps Console', targetUsername).run();
+          revokedCount = Math.max(r1?.meta?.changes || r1?.changes || 0, r2?.meta?.changes || r2?.changes || 0, 1);
         }
 
         return jsonResponse({
@@ -847,6 +991,9 @@ export default {
     if (path === '/api/incidents' || path === '/api/v1/incidents') {
       const auth = await authenticateUserWorker(request, env, jwtSecret, origin);
       if ('response' in auth) return auth.response;
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
 
       try {
         if (method === 'POST') {
@@ -876,22 +1023,20 @@ export default {
           let assignedTo: string | null = null;
           const nowIso = new Date().toISOString();
 
-          if (env.DB) {
-            try {
-              const userRow: any = await env.DB.prepare('SELECT id FROM users WHERE id = ? OR LOWER(username) = LOWER(?) LIMIT 1').bind(rawAssignee, rawAssignee).first();
-              if (userRow?.id) {
-                assignedTo = userRow.id;
-              }
-            } catch {
-              assignedTo = null;
+          try {
+            const userRow: any = await env.DB.prepare('SELECT id FROM users WHERE id = ? OR LOWER(username) = LOWER(?) LIMIT 1').bind(rawAssignee, rawAssignee).first();
+            if (userRow?.id) {
+              assignedTo = userRow.id;
             }
-
-            await env.DB.prepare(
-              `INSERT INTO incidents (
-                id, title, severity, status, root_cause, mitigation_steps, assigned_to, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-            ).bind(id, title, severity, status, rootCause, mitigationSteps, assignedTo, nowIso).run();
+          } catch {
+            assignedTo = null;
           }
+
+          await env.DB.prepare(
+            `INSERT INTO incidents (
+              id, title, severity, status, root_cause, mitigation_steps, assigned_to, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(id, title, severity, status, rootCause, mitigationSteps, assignedTo, nowIso).run();
 
           return jsonResponse({
             success: true,
@@ -909,11 +1054,8 @@ export default {
         }
 
         // GET: Fetch persistent incidents from D1 (authenticated)
-        let incidentsList: any[] = [];
-        if (env.DB) {
-          const res = await env.DB.prepare('SELECT * FROM incidents ORDER BY created_at DESC LIMIT 100').all();
-          incidentsList = res?.results || [];
-        }
+        const res = await env.DB.prepare('SELECT * FROM incidents ORDER BY created_at DESC LIMIT 100').all();
+        const incidentsList = res?.results || [];
 
         return jsonResponse({
           success: true,
@@ -1011,6 +1153,45 @@ export default {
       }, 200, origin, undefined, env);
     }
 
+    const recoveryGenMatch = path.match(/^\/api\/system\/users\/([^/]+)\/recovery-codes$/);
+    if (recoveryGenMatch && method === 'POST') {
+      const auth = await authenticateUserWorker(request, env, jwtSecret, origin);
+      if ('response' in auth) return auth.response;
+      if (!env.DB) return jsonResponse({ error: 'Database unavailable.' }, 503, origin, undefined, env);
+      const targetUsername = decodeURIComponent(recoveryGenMatch[1]).trim();
+      const targetUser: any = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1').bind(targetUsername).first();
+      if (!targetUser) return jsonResponse({ error: `User '${targetUsername}' not found.` }, 404, origin, undefined, env);
+
+      const isSelf = targetUser.username.toLowerCase() === String(auth.caller.username).toLowerCase();
+      const isAdmin = auth.caller.role === 'Admin' || auth.caller.role === 'Super Administrator' || auth.caller.role === 'Security Administrator';
+      if (!isSelf && !isAdmin) {
+        return jsonResponse({ error: 'Forbidden: Only the principal owner or an Administrator may regenerate recovery codes.' }, 403, origin, undefined, env);
+      }
+
+      const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
+      await env.DB.prepare('UPDATE users SET mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ?')
+        .bind(JSON.stringify(hashedCodes), targetUser.id).run();
+
+      await logSecurityEvent(
+        env.DB,
+        auth.caller.username,
+        `/api/system/users/${targetUser.username}/recovery-codes`,
+        10,
+        'ALLOWED',
+        `[RECOVERY CODES GENERATED] Created 8 single-use recovery codes for ${targetUser.username} by ${auth.caller.username}.`,
+        1.1,
+        'RECOVERY_CODES_GENERATED'
+      );
+
+      return jsonResponse({
+        success: true,
+        username: targetUser.username,
+        plaintextCodes,
+        codesCount: plaintextCodes.length,
+        message: `Generated ${plaintextCodes.length} single-use recovery codes for ${targetUser.username}.`
+      }, 200, origin, undefined, env);
+    }
+
     const mfaResetMatch = path.match(/^\/api\/system\/users\/([^/]+)\/mfa-reset$/);
     if (mfaResetMatch && method === 'POST') {
       const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
@@ -1021,146 +1202,160 @@ export default {
       if (!targetUser) return jsonResponse({ error: `User '${targetUsername}' not found.` }, 404, origin, undefined, env);
       const newSecret = generateBase32SecretWeb(20);
       const { hashedCodes } = await generateBackupCodesWeb(8);
+
+      // Revoke existing sessions and consume pending MFA challenges
+      await env.DB.prepare(
+        "UPDATE active_sessions SET revoked = 1, revoked_at = datetime('now'), revoked_by = ?, revocation_reason = 'MFA enrollment reset by Administrator' WHERE LOWER(username) = LOWER(?) AND revoked = 0"
+      ).bind(auth.caller.username, targetUser.username).run();
+      await env.DB.prepare(
+        "UPDATE sessions SET status = 'revoked', revoked_at = datetime('now'), revoked_by = ?, revocation_reason = 'MFA enrollment reset by Administrator' WHERE (user_id = ? OR LOWER(user_id) = LOWER(?)) AND status = 'active'"
+      ).bind(auth.caller.username, targetUser.id, targetUser.username).run();
+      await env.DB.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE user_id = ? AND consumed = 0')
+        .bind(targetUser.id).run();
+
       await env.DB.prepare('UPDATE users SET mfa_secret = ?, mfa_backup_codes = ?, mfa_enabled = 1, mfa_enrolled = 0, last_totp_step = 0 WHERE id = ?')
         .bind(newSecret, JSON.stringify(hashedCodes), targetUser.id).run();
+
+      await logSecurityEvent(
+        env.DB,
+        auth.caller.username,
+        `/api/system/users/${targetUser.username}/mfa-reset`,
+        15,
+        'ALLOWED',
+        `[ADMIN MFA RESET] MFA enrollment & recovery codes reset for ${targetUser.username} by ${auth.caller.username} at ${new Date().toISOString()}; existing sessions revoked. Outcome: RESET_COMPLETED.`,
+        1.0,
+        'MFA_ENROLLMENT_RESET'
+      );
+
       return jsonResponse({
         success: true,
-        message: `MFA pairing reset for [${targetUser.username}]. They will receive a fresh Authenticator QR setup on their next sign-in.`
+        message: `MFA enrollment reset for [${targetUser.username}]. Existing sessions were revoked and new setup is required on next sign-in.`
       }, 200, origin, undefined, env);
     }
 
     // 11. Function Catalog (/api/v1/verify/functions)
     if (path === '/api/v1/verify/functions') {
-      let fns: any[] = [];
-      if (env.DB) {
-        try {
-          const res = await env.DB.prepare('SELECT * FROM functions WHERE is_active = 1').all();
-          fns = res?.results || [];
-        } catch { /* ignore */ }
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
       }
-      if (fns.length === 0) {
-        fns = [
-          { id: 'fn_login', name: 'Identity Login Handler', slug: 'login', service_name: 'auth-service', runtime: 'nodejs20.x', max_memory_mb: 128, timeout_seconds: 3, is_active: 1 },
-          { id: 'fn_dashboard', name: 'Dashboard Metrics Aggregator', slug: 'getDashboardMetrics', service_name: 'telemetry-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 3, is_active: 1, required_permission_id: 'perm_fn_invoke' },
-          { id: 'fn_audit_logs', name: 'Security Logs Query Engine', slug: 'viewSecurityLogs', service_name: 'audit-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 5, is_active: 1, required_permission_id: 'perm_audit_read' },
-          { id: 'fn_deploy_worker', name: 'Cloudflare Worker Deployment', slug: 'deployWorkerCode', service_name: 'pipeline-service', runtime: 'nodejs20.x', max_memory_mb: 512, timeout_seconds: 10, is_active: 1, required_permission_id: 'perm_fn_invoke' },
-          { id: 'fn_update_policy', name: 'Security Policy Mutation Engine', slug: 'updateSystemPolicy', service_name: 'policy-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 5, is_active: 1, required_permission_id: 'perm_policy_write' },
-          { id: 'fn_rotate_keys', name: 'KMS Key Rotation Worker', slug: 'rotateEncryptionKeys', service_name: 'kms-service', runtime: 'nodejs20.x', max_memory_mb: 256, timeout_seconds: 5, is_active: 1, required_permission_id: 'perm_policy_write' },
-          { id: 'fn_purge_backups', name: 'Cold Storage Backup Purge', slug: 'purgeColdStorageBackups', service_name: 'backup-service', runtime: 'nodejs20.x', max_memory_mb: 512, timeout_seconds: 15, is_active: 1, required_permission_id: 'perm_policy_write' }
-        ];
-      }
-      return jsonResponse({ success: true, functions: fns }, 200, origin);
+      const res = await env.DB.prepare('SELECT * FROM functions WHERE is_active = 1').all();
+      const fns = res?.results || [];
+      return jsonResponse({ success: true, functions: fns }, 200, origin, undefined, env);
     }
 
     // 12. User Approvals & Management (/api/system/users/approve & reject)
     if (path === '/api/system/users/approve') {
       const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
       if ('response' in auth) return auth.response;
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
 
       try {
         const body: any = await request.json().catch(() => ({}));
         const targetUsername = (body.username || '').trim();
         if (!targetUsername) {
-          return jsonResponse({ error: 'Target username is required for approval.' }, 400, origin);
+          return jsonResponse({ error: 'Target username is required for approval.' }, 400, origin, undefined, env);
         }
 
         const callerUsername = auth.caller.username;
         if (targetUsername.toLowerCase() === callerUsername.toLowerCase()) {
-          return jsonResponse({ error: 'Zero-Trust Policy Violation: Self-approval of user clearance is prohibited.' }, 403, origin);
+          return jsonResponse({ error: 'Zero-Trust Policy Violation: Self-approval of user clearance is prohibited.' }, 403, origin, undefined, env);
         }
 
-        let targetUser: any = null;
-        if (env.DB) {
-          targetUser = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(targetUsername).first();
-        }
-
+        const targetUser: any = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(targetUsername).first();
         if (!targetUser) {
-          return jsonResponse({ error: `User '${targetUsername}' not found in database.` }, 404, origin);
+          return jsonResponse({ error: `User '${targetUsername}' not found in database.` }, 404, origin, undefined, env);
         }
 
         if (targetUser.status === 'APPROVED') {
-          return jsonResponse({ error: `User [${targetUsername}] is already approved.` }, 409, origin);
+          return jsonResponse({ error: `User [${targetUsername}] is already approved.` }, 409, origin, undefined, env);
         }
 
         const nowIso = new Date().toISOString();
-        if (env.DB) {
-          await env.DB.prepare(
-            "UPDATE users SET status = 'APPROVED', approved_at = ?, approved_by = ? WHERE id = ?"
-          ).bind(nowIso, callerUsername, targetUser.id).run();
-
-          await logSecurityEvent(
-            env.DB,
-            callerUsername,
-            `/api/v1/users/${targetUsername}/approve`,
-            0,
-            'ALLOWED',
-            `[ADMIN CLEARANCE] User [${targetUsername}] APPROVED by authenticated Administrator ${callerUsername}.`,
-            0.5,
-            'USER_APPROVED'
-          );
+        const updateRes: any = await env.DB.prepare(
+          "UPDATE users SET status = 'APPROVED', approved_at = ?, approved_by = ? WHERE id = ?"
+        ).bind(nowIso, callerUsername, targetUser.id).run();
+        const updateChanges = updateRes?.meta?.changes ?? updateRes?.changes ?? 0;
+        if (updateChanges === 0) {
+          return jsonResponse({ error: `Failed to persist approval for [${targetUsername}].` }, 500, origin, undefined, env);
         }
 
-        return jsonResponse({ success: true, message: `Principal [${targetUsername}] has been APPROVED.` }, 200, origin);
+        await logSecurityEvent(
+          env.DB,
+          callerUsername,
+          `/api/v1/users/${targetUsername}/approve`,
+          0,
+          'ALLOWED',
+          `[ADMIN CLEARANCE] User [${targetUsername}] APPROVED by authenticated Administrator ${callerUsername}.`,
+          0.5,
+          'USER_APPROVED'
+        );
+
+        return jsonResponse({ success: true, message: `Principal [${targetUsername}] has been APPROVED.` }, 200, origin, undefined, env);
       } catch (err: any) {
-        return jsonResponse({ error: 'Approval update error: ' + err.message }, 500, origin);
+        return jsonResponse({ error: 'Approval update error: ' + err.message }, 500, origin, undefined, env);
       }
     }
 
     if (path === '/api/system/users/reject') {
       const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
       if ('response' in auth) return auth.response;
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
 
       try {
         const body: any = await request.json().catch(() => ({}));
         const targetUsername = (body.username || '').trim();
         if (!targetUsername) {
-          return jsonResponse({ error: 'Target username is required for rejection.' }, 400, origin);
+          return jsonResponse({ error: 'Target username is required for rejection.' }, 400, origin, undefined, env);
         }
 
         const callerUsername = auth.caller.username;
         if (targetUsername.toLowerCase() === callerUsername.toLowerCase()) {
-          return jsonResponse({ error: 'Zero-Trust Policy Violation: Self-rejection/action on own identity is prohibited.' }, 403, origin);
+          return jsonResponse({ error: 'Zero-Trust Policy Violation: Self-rejection/action on own identity is prohibited.' }, 403, origin, undefined, env);
         }
 
-        let targetUser: any = null;
-        if (env.DB) {
-          targetUser = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(targetUsername).first();
-        }
-
+        const targetUser: any = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(targetUsername).first();
         if (!targetUser) {
-          return jsonResponse({ error: `User '${targetUsername}' not found in database.` }, 404, origin);
+          return jsonResponse({ error: `User '${targetUsername}' not found in database.` }, 404, origin, undefined, env);
         }
 
         if (targetUser.status === 'REJECTED') {
-          return jsonResponse({ error: `User [${targetUsername}] is already rejected.` }, 409, origin);
+          return jsonResponse({ error: `User [${targetUsername}] is already rejected.` }, 409, origin, undefined, env);
         }
 
-        const nowIso = new Date().toISOString();
-        if (env.DB) {
-          await env.DB.prepare(
-            "UPDATE users SET status = 'REJECTED' WHERE id = ?"
-          ).bind(targetUser.id).run();
-
-          await logSecurityEvent(
-            env.DB,
-            callerUsername,
-            `/api/v1/users/${targetUsername}/reject`,
-            targetUser.base_risk_score || 20,
-            'BLOCKED',
-            `[ADMIN REJECTION] User [${targetUsername}] access REJECTED by authenticated Administrator ${callerUsername}. Reason: ${body.reason || 'SecOps decision'}`,
-            0.5,
-            'USER_REJECTED'
-          );
+        const updateRes: any = await env.DB.prepare(
+          "UPDATE users SET status = 'REJECTED' WHERE id = ?"
+        ).bind(targetUser.id).run();
+        const updateChanges = updateRes?.meta?.changes ?? updateRes?.changes ?? 0;
+        if (updateChanges === 0) {
+          return jsonResponse({ error: `Failed to persist rejection for [${targetUsername}].` }, 500, origin, undefined, env);
         }
 
-        return jsonResponse({ success: true, message: `Principal [${targetUsername}] access request REJECTED.` }, 200, origin);
+        await logSecurityEvent(
+          env.DB,
+          callerUsername,
+          `/api/v1/users/${targetUsername}/reject`,
+          targetUser.base_risk_score || 20,
+          'BLOCKED',
+          `[ADMIN REJECTION] User [${targetUsername}] access REJECTED by authenticated Administrator ${callerUsername}. Reason: ${body.reason || 'SecOps decision'}`,
+          0.5,
+          'USER_REJECTED'
+        );
+
+        return jsonResponse({ success: true, message: `Principal [${targetUsername}] access request REJECTED.` }, 200, origin, undefined, env);
       } catch (err: any) {
-        return jsonResponse({ error: 'Rejection error: ' + err.message }, 500, origin);
+        return jsonResponse({ error: 'Rejection error: ' + err.message }, 500, origin, undefined, env);
       }
     }
 
     // 13. Policy Configuration & Rules (/api/system/policy-config & /api/system/rules)
     if (path === '/api/system/policy-config' || path === '/api/v1/policies') {
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
       if (method === 'POST' || method === 'PUT') {
         const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
         if ('response' in auth) return auth.response;
@@ -1177,24 +1372,23 @@ export default {
         const globalLockdown = body.globalLockdown !== undefined ? Boolean(body.globalLockdown) : false;
         const requireAdminApprovalForNewLogins = body.requireAdminApprovalForNewLogins !== undefined ? Boolean(body.requireAdminApprovalForNewLogins) : true;
 
-        if (env.DB) {
-          await env.DB.prepare(
-            `UPDATE policies SET
-              max_risk_threshold = ?,
-              sequence_violation_penalty = ?,
-              enforce_strict_sequence = ?,
-              global_lockdown = ?,
-              require_admin_approval = ?,
-              updated_at = datetime('now')
-            WHERE id = 'current_policy'`
-          ).bind(
-            maxRiskThreshold,
-            sequenceViolationPenalty,
-            enforceStrictSequence ? 1 : 0,
-            globalLockdown ? 1 : 0,
-            requireAdminApprovalForNewLogins ? 1 : 0
-          ).run();
-        }
+        await env.DB.prepare(
+          `UPDATE policies SET
+            max_risk_threshold = ?,
+            sequence_violation_penalty = ?,
+            enforce_strict_sequence = ?,
+            global_lockdown = ?,
+            require_admin_approval = ?,
+            updated_at = datetime('now')
+          WHERE id = 'current_policy'`
+        ).bind(
+          maxRiskThreshold,
+          sequenceViolationPenalty,
+          enforceStrictSequence ? 1 : 0,
+          globalLockdown ? 1 : 0,
+          requireAdminApprovalForNewLogins ? 1 : 0
+        ).run();
+
         return jsonResponse({
           success: true,
           policyConfig: {
@@ -1207,35 +1401,32 @@ export default {
         }, 200, origin, undefined, env);
       }
 
-      let policy = {
-        maxRiskThreshold: 75,
-        sequenceViolationPenalty: 40,
-        enforceStrictSequence: true,
-        globalLockdown: false,
-        requireAdminApprovalForNewLogins: true
-      };
-      if (env.DB) {
-        const pRes: any = await env.DB.prepare('SELECT * FROM policies LIMIT 1').first();
-        if (pRes) {
-          policy = {
+      const pRes: any = await env.DB.prepare('SELECT * FROM policies LIMIT 1').first();
+      const policy = pRes
+        ? {
             maxRiskThreshold: pRes.max_risk_threshold ?? 75,
             sequenceViolationPenalty: pRes.sequence_violation_penalty ?? 40,
             enforceStrictSequence: Boolean(pRes.enforce_strict_sequence),
             globalLockdown: Boolean(pRes.global_lockdown),
             requireAdminApprovalForNewLogins: Boolean(pRes.require_admin_approval)
+          }
+        : {
+            maxRiskThreshold: 75,
+            sequenceViolationPenalty: 40,
+            enforceStrictSequence: true,
+            globalLockdown: false,
+            requireAdminApprovalForNewLogins: true
           };
-        }
-      }
       return jsonResponse(policy, 200, origin, undefined, env);
     }
 
     if (path === '/api/system/rules' || path === '/api/v1/policies/rules') {
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
       if (method === 'GET') {
-        let rules: any[] = [];
-        if (env.DB) {
-          const rRes = await env.DB.prepare('SELECT id, current_function, allowed_next_function FROM function_rules ORDER BY id ASC').all();
-          rules = rRes?.results || [];
-        }
+        const rRes = await env.DB.prepare('SELECT id, current_function, allowed_next_function FROM function_rules ORDER BY id ASC').all();
+        const rules = rRes?.results || [];
         return jsonResponse({ success: true, rules }, 200, origin, undefined, env);
       }
       if (method === 'POST') {
@@ -1247,11 +1438,9 @@ export default {
         if (!currentFn || !nextFn) {
           return jsonResponse({ error: 'current_function and allowed_next_function are required.' }, 400, origin, undefined, env);
         }
-        if (env.DB) {
-          await env.DB.prepare(
-            "INSERT OR IGNORE INTO function_rules (current_function, allowed_next_function) VALUES (?, ?)"
-          ).bind(currentFn, nextFn).run();
-        }
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO function_rules (current_function, allowed_next_function) VALUES (?, ?)"
+        ).bind(currentFn, nextFn).run();
         return jsonResponse({ success: true, rule: { current_function: currentFn, allowed_next_function: nextFn } }, 201, origin, undefined, env);
       }
     }
@@ -1260,7 +1449,10 @@ export default {
       const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
       if ('response' in auth) return auth.response;
       const ruleId = decodeURIComponent(path.split('/').pop() || '').trim();
-      if (!ruleId || !env.DB) {
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
+      if (!ruleId) {
         return jsonResponse({ error: 'Rule ID is required.' }, 400, origin, undefined, env);
       }
       await env.DB.prepare('DELETE FROM function_rules WHERE id = ?').bind(ruleId).run();
@@ -1271,6 +1463,14 @@ export default {
     if (path.startsWith('/api/')) {
       const verificationStartTime = performance.now();
       let auditUsername = 'unauthenticated_principal';
+
+      if (!env.DB) {
+        const failLatency = Number((performance.now() - verificationStartTime).toFixed(3));
+        return jsonResponse({
+          error: 'Security Verification Pipeline Unavailable [FAIL_CLOSED]: Database binding missing.',
+          metrics: { riskScore: 100, status: 'BLOCKED', verification_latency_ms: failLatency, failClosed: true }
+        }, 503, origin, failLatency, env);
+      }
 
       // Zero-Trust Fail-Closed outer guard
       try {
@@ -1645,7 +1845,7 @@ function timingSafeEqualStr(a: string, b: string): boolean {
 }
 
 async function verifyPasswordSubtle(password: string, saltHex: string, expectedHashHex: string): Promise<boolean> {
-  if (!password || !saltHex || !expectedHashHex) return false;
+  if (!password || !saltHex || !expectedHashHex || expectedHashHex.startsWith('!')) return false;
   try {
     const derivedHex = await derivePbkdf2Hex(password, saltHex);
     return timingSafeEqualStr(derivedHex.toLowerCase(), expectedHashHex.toLowerCase());
@@ -1763,6 +1963,12 @@ async function verifyJwtWeb(token: string, secretStr: string): Promise<{ valid: 
   if (parts.length !== 3) return { valid: false, error: 'TOKEN_MALFORMED' };
 
   try {
+    const headerJson = new TextDecoder().decode(base64UrlDecodeBytes(parts[0]));
+    const header = JSON.parse(headerJson);
+    if (!header || typeof header !== 'object' || header.alg !== 'HS256') {
+      return { valid: false, error: 'UNSUPPORTED_ALGORITHM' };
+    }
+
     const enc = new TextEncoder();
     const key = await crypto.subtle.importKey('raw', enc.encode(secretStr), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
     const sigBytes = base64UrlDecodeBytes(parts[2]);
@@ -1777,17 +1983,30 @@ async function verifyJwtWeb(token: string, secretStr: string): Promise<{ valid: 
     const claims = JSON.parse(payloadJson);
     const now = Math.floor(Date.now() / 1000);
 
-    if (claims.exp && claims.exp <= now) {
-      return { valid: false, error: 'TOKEN_EXPIRED' };
+    if (
+      !claims ||
+      typeof claims !== 'object' ||
+      typeof claims.sub !== 'string' || !claims.sub.trim() ||
+      typeof claims.username !== 'string' || !claims.username.trim() ||
+      typeof claims.role !== 'string' || !claims.role.trim() ||
+      typeof claims.jti !== 'string' || !claims.jti.trim()
+    ) {
+      return { valid: false, error: 'MISSING_REQUIRED_CLAIMS' };
     }
-    if (claims.nbf && claims.nbf > now) {
-      return { valid: false, error: 'TOKEN_NOT_YET_VALID' };
-    }
-    if (claims.iss && claims.iss !== DEFAULT_JWT_ISSUER) {
+    if (claims.iss !== DEFAULT_JWT_ISSUER) {
       return { valid: false, error: 'INVALID_ISSUER' };
     }
-    if (claims.aud && claims.aud !== DEFAULT_JWT_AUDIENCE) {
+    if (claims.aud !== DEFAULT_JWT_AUDIENCE) {
       return { valid: false, error: 'INVALID_AUDIENCE' };
+    }
+    if (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat) || claims.iat > now + 60) {
+      return { valid: false, error: 'INVALID_ISSUED_AT' };
+    }
+    if (typeof claims.nbf !== 'number' || !Number.isFinite(claims.nbf) || claims.nbf > now) {
+      return { valid: false, error: 'TOKEN_NOT_YET_VALID' };
+    }
+    if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp) || claims.exp <= now) {
+      return { valid: false, error: 'TOKEN_EXPIRED' };
     }
 
     return { valid: true, claims };
@@ -1819,16 +2038,21 @@ async function authenticateUserWorker(
     };
   }
 
-  if (env.DB) {
-    const sessionRow = await env.DB.prepare(
-      "SELECT * FROM active_sessions WHERE token = ? AND revoked = 0 AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1"
-    ).bind(callerToken).first();
-    if (!sessionRow) {
-      return {
-        authorized: false,
-        response: jsonResponse({ error: 'Unauthorized: Session has expired or been revoked.' }, 401, origin, undefined, env)
-      };
-    }
+  if (!env.DB) {
+    return {
+      authorized: false,
+      response: jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env)
+    };
+  }
+
+  const sessionRow = await env.DB.prepare(
+    "SELECT * FROM active_sessions WHERE token = ? AND revoked = 0 AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1"
+  ).bind(callerToken).first();
+  if (!sessionRow) {
+    return {
+      authorized: false,
+      response: jsonResponse({ error: 'Unauthorized: Session has expired or been revoked.' }, 401, origin, undefined, env)
+    };
   }
 
   return { authorized: true, caller: jwtCheck.claims, callerToken };

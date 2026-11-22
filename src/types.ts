@@ -37,10 +37,11 @@ export interface MfaPendingChallenge {
   user: User;
   phoneMasked: string;
   emailMasked?: string;
-  methods: Array<'authenticator' | 'sms' | 'backup_code'>;
+  methods: Array<'authenticator' | 'backup_code'>;
+  preferredMethod?: 'authenticator' | 'backup_code';
+  recoveryCodesRemaining?: number;
   enrollmentRequired?: boolean;
   demoTotpCode?: string;
-  demoSmsCode?: string;
   totpSecret?: string;
   serverTime?: string;
   stepSeconds?: number;
@@ -55,7 +56,7 @@ export interface AuthSession {
   token: string;
   loginTime: string;
   expiresInSeconds: number;
-  mfaMethod?: 'authenticator' | 'sms' | 'hardware_token';
+  mfaMethod?: 'authenticator' | 'backup_code' | 'hardware_token';
 }
 
 export interface SecurityPolicyConfig {

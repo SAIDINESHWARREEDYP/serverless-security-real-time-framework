@@ -8,7 +8,8 @@ import {
   LifeBuoy,
   ExternalLink,
   KeyRound,
-  ShieldCheck
+  ShieldCheck,
+  Download
 } from 'lucide-react';
 
 export interface MfaEnrollmentPayload {
@@ -69,6 +70,25 @@ export const MfaEnrollmentPanel: React.FC<MfaEnrollmentPanelProps> = ({
     navigator.clipboard.writeText(enrollment.backupCodes.join('\n'));
     setCopiedCodes(true);
     setTimeout(() => setCopiedCodes(false), 2000);
+  };
+
+  const handleDownloadBackupCodes = () => {
+    if (!enrollment.backupCodes?.length) return;
+    const content = [
+      'Serverless Cloud Security Verification Framework — Single-Use Recovery Codes',
+      `Account: ${enrollment.username || 'identity'}`,
+      `Issued: ${new Date().toISOString()}`,
+      'Store these codes safely on your laptop. Each code works once.',
+      '',
+      ...enrollment.backupCodes.map((c, idx) => `${idx + 1}. ${c}`)
+    ].join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${enrollment.username || 'account'}-recovery-codes.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -159,14 +179,24 @@ export const MfaEnrollmentPanel: React.FC<MfaEnrollmentPanelProps> = ({
               <LifeBuoy className="w-3.5 h-3.5 text-amber-400" />
               <span>Emergency Single-Use Recovery Codes (Save These Now)</span>
             </div>
-            <button
-              type="button"
-              onClick={handleCopyBackupCodes}
-              className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-200 text-[10px] font-mono flex items-center gap-1 cursor-pointer"
-            >
-              {copiedCodes ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-              <span>{copiedCodes ? 'Copied All' : 'Copy All'}</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleCopyBackupCodes}
+                className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-200 text-[10px] font-mono flex items-center gap-1 cursor-pointer"
+              >
+                {copiedCodes ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedCodes ? 'Copied All' : 'Copy All'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadBackupCodes}
+                className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-200 text-[10px] font-mono flex items-center gap-1 cursor-pointer"
+              >
+                <Download className="w-3 h-3" />
+                <span>Download .txt</span>
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
             {enrollment.backupCodes.map((code) => (

@@ -104,6 +104,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [isCheckingApproval, setIsCheckingApproval] = useState(false);
   const [approvalFeedback, setApprovalFeedback] = useState<string | null>(null);
   const [registeredEnrollment, setRegisteredEnrollment] = useState<MfaEnrollmentPayload | null>(null);
+  const pendingPasswordRef = React.useRef<string | null>(null);
 
   // Logged-in Authenticator Setup / Re-Key State
   const [accountMfaSetup, setAccountMfaSetup] = useState<MfaEnrollmentPayload | null>(null);
@@ -113,6 +114,89 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Live validation calculations
   const loginUsernameRules = useMemo(() => validateUsernameRules(usernameInput), [usernameInput]);
   const regUsernameRules = useMemo(() => validateUsernameRules(regUsername), [regUsername]);
+
+  const initiatePostApprovalLogin = React.useCallback(async (approvedUsername: string, cachedPassword: string) => {
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: approvedUsername, password: cachedPassword })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.mfaRequired && data.mfaSessionId) {
+        setPendingApprovalUser(null);
+        setRegisteredEnrollment(null);
+        setErrorMsg(null);
+        setMfaChallenge({
+          mfaSessionId: data.mfaSessionId,
+          username: data.user?.username || approvedUsername,
+          user: data.user || {
+            id: `usr_${approvedUsername}`,
+            username: approvedUsername,
+            password_hash: '••••••••',
+            role: data.role || 'Developer',
+            base_risk_score: data.userRisk ?? 20
+          },
+          phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
+          emailMasked: data.emailMasked,
+          methods: data.methods || ['backup_code', 'authenticator'],
+          preferredMethod: data.preferredMethod || (data.enrollmentRequired ? 'backup_code' : undefined),
+          recoveryCodesRemaining: data.recoveryCodesRemaining,
+          enrollmentRequired: Boolean(data.enrollmentRequired),
+          attemptsLeft: data.attemptsLeft ?? 5,
+          expiresInSeconds: 300,
+          message: data.message
+        });
+        return;
+      }
+    } catch {
+      // fallback to Sign In view
+    }
+    setPendingApprovalUser(null);
+    setRegisteredEnrollment(null);
+    setUsernameInput(approvedUsername);
+    setActiveTab('login');
+    setSuccessMsg(`Clearance Granted! Identity [${approvedUsername}] approved. Enter your password to sign in with MFA.`);
+  }, []);
+
+  React.useEffect(() => {
+    if (!isOpen || !pendingApprovalUser) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/auth/status?username=${encodeURIComponent(pendingApprovalUser.username)}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data.found && (data.approved || data.status === 'APPROVED') && !cancelled) {
+          clearInterval(timer);
+          const approvedUsername = pendingApprovalUser.username;
+          const cachedPass = pendingPasswordRef.current;
+          pendingPasswordRef.current = null;
+          if (cachedPass) {
+            await initiatePostApprovalLogin(approvedUsername, cachedPass);
+          } else {
+            setPendingApprovalUser(null);
+            setRegisteredEnrollment(null);
+            setUsernameInput(approvedUsername);
+            setActiveTab('login');
+            setErrorMsg(null);
+            setSuccessMsg(`Clearance Granted! Identity [${approvedUsername}] has been approved. Sign in to complete MFA.`);
+          }
+        } else if (data.found && data.status === 'REJECTED' && !cancelled) {
+          clearInterval(timer);
+          pendingPasswordRef.current = null;
+          setApprovalFeedback(`Clearance Denied: Administrator rejected access for [${pendingApprovalUser.username}].`);
+        }
+      } catch {
+        // silent poll retry
+      }
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isOpen, pendingApprovalUser, initiatePostApprovalLogin]);
 
   if (!isOpen) return null;
 
@@ -140,6 +224,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // Check if account requires Admin Approval
       if (res.status === 403 && (data.pendingApproval || data.status === 'PENDING_APPROVAL')) {
+        pendingPasswordRef.current = password;
         setPendingApprovalUser({
           username: cleanUsername,
           role: data.user?.role || 'Developer',
@@ -166,14 +251,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           user: data.user || {
             id: `usr_${cleanUsername}`,
             username: cleanUsername,
-            password_hash: password,
+            password_hash: '••••••••',
             role: data.role || 'Developer',
             base_risk_score: data.userRisk ?? 20
           },
           phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
           emailMasked: data.emailMasked,
-          methods: data.methods || ['authenticator', 'backup_code'],
+          methods: data.methods || ['backup_code', 'authenticator'],
+          preferredMethod: data.preferredMethod || (data.enrollmentRequired ? 'backup_code' : undefined),
+          recoveryCodesRemaining: data.recoveryCodesRemaining,
           enrollmentRequired: Boolean(data.enrollmentRequired),
+          attemptsLeft: data.attemptsLeft ?? 5,
+          expiresInSeconds: 300,
           message: data.message
         });
         setLoading(false);
@@ -261,6 +350,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // Check if registration was queued for Admin Approval (Default Zero-Trust rule)
       if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
+        pendingPasswordRef.current = regPassword;
         setRegisteredEnrollment(data.mfaEnrollment || null);
         setPendingApprovalUser({
           username: cleanName,
@@ -269,7 +359,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           department: regDept,
           createdAt: new Date().toISOString()
         });
-        setSuccessMsg(`Identity [${cleanName}] submitted to database. Scan the Authenticator QR & save recovery codes while awaiting SecOps Admin validation.`);
+        setSuccessMsg(`Identity [${cleanName}] submitted to database. Save your laptop recovery codes (or Authenticator QR) while awaiting SecOps Admin validation.`);
         setLoading(false);
         return;
       }
@@ -316,35 +406,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (res.ok && data.found) {
         if (data.approved || data.status === 'APPROVED') {
           setApprovalFeedback(`Clearance Granted! Identity [${username}] has been approved by Administrator.`);
-          // Log in immediately
-          const user: User = data.user || {
-            id: `usr_${username}`,
-            username,
-            role: data.role || 'Developer',
-            base_risk_score: data.userRisk ?? 20,
-            status: 'APPROVED'
-          };
-          if (data.token) {
-            const newSession: AuthSession = {
-              user,
-              token: data.token,
-              loginTime: new Date().toLocaleTimeString(),
-              expiresInSeconds: 3600
-            };
-            setTimeout(() => {
-              onLoginSuccess(newSession);
-              onClose();
-            }, 1200);
+          const cachedPass = pendingPasswordRef.current;
+          pendingPasswordRef.current = null;
+          if (cachedPass) {
+            await initiatePostApprovalLogin(username, cachedPass);
+          } else {
+            setPendingApprovalUser(null);
+            setRegisteredEnrollment(null);
+            setUsernameInput(username);
+            setActiveTab('login');
+            setErrorMsg(null);
+            setSuccessMsg(`Clearance Granted! Identity [${username}] approved. Enter your password to complete MFA.`);
           }
         } else if (data.status === 'REJECTED') {
+          pendingPasswordRef.current = null;
           setApprovalFeedback(`Clearance Denied: Administrator rejected access for [${username}].`);
         } else {
-          setApprovalFeedback(`Status: Still awaiting SecOps Administrator clearance. (Queue position: 1)`);
+          setApprovalFeedback(`Status: Still awaiting SecOps Administrator clearance. (Checking every 2.5s)`);
         }
       } else {
         setApprovalFeedback('Could not check status: identity not found.');
       }
-    } catch (err: any) {
+    } catch {
       setApprovalFeedback('Error verifying status with gateway.');
     } finally {
       setIsCheckingApproval(false);
@@ -592,8 +675,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {registeredEnrollment && (
                 <MfaEnrollmentPanel
                   enrollment={registeredEnrollment}
-                  title="Pair Your Authenticator App Before Approval"
-                  subtitle="Scan this QR code in Google Authenticator or Microsoft Authenticator right now and save your 8 recovery codes so you are ready as soon as an Admin approves your account."
+                  title="Save Your Laptop Recovery Codes (Or Pair Authenticator) While Waiting"
+                  subtitle="Download or copy your 8 single-use recovery codes for laptop-only authentication without a phone, or optionally scan the QR code in an Authenticator app."
                 />
               )}
 
@@ -629,6 +712,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    pendingPasswordRef.current = null;
                     setPendingApprovalUser(null);
                     setRegisteredEnrollment(null);
                   }}
@@ -880,7 +964,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         Username / Identity Handle
                       </label>
                       <span className="text-[10px] text-slate-400">
-                        Root Admin: <button type="button" onClick={() => setUsernameInput('Secops_Admin')} className="text-blue-400 hover:underline">Secops_Admin</button>
+                        Root Admin: <button type="button" onClick={() => setUsernameInput('secops_admin')} className="text-blue-400 hover:underline cursor-pointer">secops_admin</button>
                       </span>
                     </div>
 

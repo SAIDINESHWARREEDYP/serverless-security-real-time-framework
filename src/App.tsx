@@ -139,7 +139,7 @@ export default function App() {
       return [newLog, ...prev].slice(0, 500);
     });
     setTerminalLogs(prev => [
-      ...prev,
+      ...prev.slice(-249),
       {
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sse_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString(),
@@ -344,7 +344,7 @@ export default function App() {
 
   const addTerminalLog = useCallback((type: TerminalLogEntry['type'], text: string) => {
     setTerminalLogs((prev) => [
-      ...prev,
+      ...prev.slice(-249),
       {
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `term_${Date.now()}_${prev.length}`,
         timestamp: new Date().toLocaleTimeString(),
@@ -1709,6 +1709,7 @@ export default function App() {
             });
           }
           addTerminalLog('success', `[IAM] Authenticated as ${session.user.username} (${session.user.role})`);
+          fetchOverview();
         }}
         onLogout={() => {
           setCurrentSession(null);

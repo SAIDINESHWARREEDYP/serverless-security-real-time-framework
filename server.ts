@@ -62,6 +62,25 @@ app.use('/api', rootRouter);
 // Centralized Fail-Closed Error Handling Middleware
 app.use(errorHandlerMiddleware);
 
+// Block exposure of archives, SQLite databases, environment files, migrations, and server internals
+app.use((req, res, next) => {
+  const reqPath = (req.path || '').toLowerCase();
+  if (
+    reqPath.endsWith('.zip') ||
+    reqPath.endsWith('.tar') ||
+    reqPath.endsWith('.gz') ||
+    reqPath.endsWith('.sqlite') ||
+    reqPath.endsWith('.db') ||
+    reqPath.includes('/.env') ||
+    reqPath.startsWith('/archive') ||
+    reqPath.startsWith('/migrations') ||
+    reqPath.startsWith('/server')
+  ) {
+    return res.status(404).json({ error: 'Not Found' });
+  }
+  next();
+});
+
 // Vite middleware & Static Serving
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

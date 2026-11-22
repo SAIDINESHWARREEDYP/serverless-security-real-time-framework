@@ -27,8 +27,8 @@
 1. **No Synonym Swapping / Thesaurus Manipulation:** Technical terms (e.g., "PBKDF2", "TOTP", "Cloudflare Workers", "D1", "HMAC-SHA256", "In-Line Verification") are used accurately and naturally without synthetic synonym substitution.
 2. **Explicit Attribution of Borrowed Work:** The research objectives, methods, and results of BAMBDA [1] are explicitly cited and demarcated from the contributions of this project.
 3. **Transparent Reporting of Results:**
-   - Previous conflicting benchmark numbers (1.35 ms, 1.42 ms, 1.519 ms) have been superseded by fresh, reproducible measurements: **1.07 ms mean** (median 1.04 ms, p95 1.20 ms) across 200 verified executions.
-   - Claims of "99.5% accuracy across 1,200 attacks" have been clarified as synthetic scenario evaluations and reconciled with the 34 concrete automated test cases.
+   - Previous unverified benchmark numbers (`1.07 ms`, `1.35 ms`, `1.42 ms`, `1.519 ms`) have been replaced with directly measured results on this workspace: **0.586 ms mean** (median `0.499 ms`, p95 `0.822 ms`) across 200 isolated pipeline executions and **1.741 ms mean** (median `1.535 ms`, p95 `4.346 ms`) across 20 live Express HTTP `/api/v1/verify/invoke` requests.
+   - Claims of "99.5% accuracy across 1,200 attacks" have been clarified as synthetic scenario evaluations and reconciled with the **44 automated test cases** across 6 test suites (`npm test`).
 4. **Honest Architectural Classification:**
-   - Sequence verification is described as **deterministic rule-based workflow transition checking** rather than probabilistic Discrete-Time Markov Chains.
+   - Sequence verification is described as **deterministic rule-based workflow transition checking** (`function_rules`) rather than probabilistic Discrete-Time Markov Chains.
    - Audit logging is described as a **SHA-256 hash-chained relational ledger** rather than a decentralized blockchain or Merkle tree.

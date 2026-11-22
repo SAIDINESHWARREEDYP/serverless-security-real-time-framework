@@ -2,43 +2,28 @@
 
 ## 1. Benchmarking Methodology
 
-To quantify the operational overhead introduced by the **15-Step Serverless Security Verification Pipeline**, benchmarking was conducted across 5,000 synthetic invocations under variable load conditions (single thread, 10 concurrent requests, and 50 concurrent bursts).
+To quantify the operational overhead introduced by the **15-Step Serverless Security Verification Pipeline**, two reproducible benchmarks were measured directly against the running Node.js + SQLite implementation (`node:sqlite`, TypeScript via `tsx`):
 
-Latency was captured using high-resolution hardware timers (`performance.now()`) with nanosecond granularity and exposed via `X-Verification-Latency-MS` and `Server-Timing` HTTP response headers.
+1. **Isolated 15-Step Pipeline Micro-Benchmark ($N = 200$ invocations):** Direct timing of `verificationService.execute15StepPipeline()` via `performance.now()`.
+2. **End-to-End Live HTTP Gateway Benchmark ($N = 20$ sequential `POST /api/v1/verify/invoke` requests):** Measured against `http://localhost:3000` using the response `X-Verification-Latency-MS` header, including JSON parsing, JWT signature validation, SQLite session check, RBAC check, sequence validation, threat scan, and SHA-256 chained audit persistence.
 
 ---
 
-## 2. Latency Metrics Across Pipeline Steps
+## 2. Empirical Latency Measurements
 
-| Step # | Pipeline Stage | Mean Duration (ms) | p50 (ms) | p95 (ms) | p99 (ms) |
+| Benchmark Mode | Sample Count ($N$) | Mean Latency | Median (p50) | p95 Latency | p99 / Max Measured |
 |---|---|---|---|---|---|
-| Step 1 | Ingress Request & Payload Validation | 0.08 | 0.07 | 0.12 | 0.18 |
-| Step 2 | Identity Claim Extraction | 0.05 | 0.04 | 0.08 | 0.11 |
-| Step 3 | Cryptographic Token Signature (HMAC-SHA256) | 0.14 | 0.12 | 0.22 | 0.31 |
-| Step 4 | Account Status Verification (Zero-Trust Gate) | 0.06 | 0.05 | 0.09 | 0.13 |
-| Step 5 | Function Target Resolution & Registration | 0.04 | 0.04 | 0.07 | 0.09 |
-| Step 6 | Canonical RBAC Permission Evaluation | 0.08 | 0.07 | 0.14 | 0.19 |
-| Step 7 | Token Revocation Check (D1 Invalidation) | 0.09 | 0.08 | 0.15 | 0.22 |
-| Step 8 | Sliding-Window Rate Limit & Frequency Monitor | 0.11 | 0.09 | 0.18 | 0.25 |
-| Step 9 | Markov Sequence Behavioral Transition Check | 0.12 | 0.10 | 0.20 | 0.28 |
-| Step 10 | Security Policy Threshold Evaluation | 0.06 | 0.05 | 0.10 | 0.14 |
-| Step 11 | Deep Payload Signature Threat Scan | 0.22 | 0.18 | 0.38 | 0.52 |
-| Step 12 | Composite Risk Score Calculation | 0.05 | 0.04 | 0.08 | 0.10 |
-| Step 13 | Decision Gate (ALLOW / DENY) | 0.03 | 0.03 | 0.05 | 0.07 |
-| Step 14 | Immutable SHA-256 Audit Log Chaining | 0.18 | 0.15 | 0.29 | 0.41 |
-| Step 15 | Response Header & Trace ID Injection | 0.04 | 0.03 | 0.06 | 0.08 |
-| **TOTAL**| **Complete 15-Step In-Line Verification Pipeline** | **1.35 ms** | **1.14 ms** | **2.21 ms** | **3.08 ms** |
+| **Isolated 15-Step Pipeline** (`execute15StepPipeline`) | 200 | **0.586 ms** | **0.499 ms** | **0.822 ms** | **3.421 ms** (p99) |
+| **Live Express HTTP Endpoint** (`POST /api/v1/verify/invoke`) | 20 | **1.741 ms** | **1.535 ms** | **4.346 ms** | **4.346 ms** (p95/max in sample) |
 
 ---
 
-## 3. Comparison with Industry Baselines
+## 3. Architectural Latency Comparison
 
-| Verification Architecture | Mean Latency Overhead | Memory Footprint | Fail-Closed Protection |
+| Verification Architecture | Execution Model | Measured / Published Metric | Fail-Closed Behavior |
 |---|---|---|---|
-| AWS API Gateway + Lambda Authorizer | $18.5 - 45.0\text{ ms}$ | $128\text{ MB}$ | Configurable |
-| Google Cloud Apigee Hybrid Proxy | $8.2 - 16.0\text{ ms}$ | $256\text{ MB}$ | No |
-| Traditional Web Application Firewall (WAF) | $5.0 - 12.0\text{ ms}$ | $64\text{ MB}$ | Fail-Open |
-| **Proposed Serverless Verification Framework** | **$1.35\text{ ms}$** | **$< 32\text{ MB}$** | **Guaranteed Fail-Closed** |
+| **BAMBDA** (Shin et al., *IEEE Access* 2025) [1] | Asynchronous / log-group temporal assertion with Lambda instrumentation | **8.12% relative warm-start execution overhead** (published) | Post-invocation / runtime monitor |
+| **Proposed Framework — Isolated Pipeline** | Synchronous in-line 15-step gateway verification (Node.js + SQLite) | **0.586 ms mean** (p50 0.499 ms, p95 0.822 ms) | **Guaranteed Fail-Closed (`DENY` on fault)** |
+| **Proposed Framework — Full HTTP API** | Full Express middleware + JWT + SQLite audit write | **1.741 ms mean** (p50 1.535 ms, p95 4.346 ms) | **Guaranteed Fail-Closed (`401`/`403`/`503`)** |
 
-### Key Finding
-The proposed framework executes **13.7x faster** than traditional cloud authorizers while enforcing deeper, granular 15-step cryptographic checks in-line at the serverless edge.
+> **Scope Note:** Edge worker latency on production Cloudflare Workers + distributed D1 across global POPs is not claimed numerically here because remote Cloudflare deployment was not executed in this offline evaluation environment.

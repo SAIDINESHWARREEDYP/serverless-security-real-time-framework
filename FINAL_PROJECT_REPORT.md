@@ -8,7 +8,7 @@
 
 ## Abstract
 
-Serverless cloud computing introduces distinct operational vulnerabilities, including stateless identity fragmentation, out-of-order function execution, and cloud metadata exploitation. While existing research frameworks like BAMBDA (Shin et al., IEEE Access 2025) verify runtime temporal properties via log analysis, modern distributed applications require synchronized, in-line perimeter defense. This paper presents an integrated real-time security verification framework designed for edge and microservice environments using Cloudflare Workers, Cloudflare D1, and Node.js Express with TypeScript. The architecture enforces an in-line 15-step verification pipeline that inspects incoming invocations prior to handler execution. Core security modules include PBKDF2-SHA512 password hashing, RFC 6238 time-based one-time password multi-factor authentication with replay protection, cryptographic HMAC-SHA256 token verification, stateful session revocation, role-based access control, deterministic workflow sequence checking, dynamic rate burst detection, and heuristic threat scanning across six serverless attack vectors. Evaluated across 34 automated unit, integration, and security test cases, the framework achieves deterministic fail-closed containment and maintains tamper-evident SHA-256 audit hash chaining. Empirical micro-benchmarking demonstrates a mean in-line verification latency of 1.07 milliseconds (median 1.04 ms, p95 1.20 ms), confirming practical feasibility for high-throughput serverless microservices.
+Serverless cloud computing introduces distinct operational vulnerabilities, including stateless identity fragmentation, out-of-order function invocations, and cloud metadata exploitation. While prior verification systems such as BAMBDA (Shin et al., IEEE Access 2025) evaluate runtime properties asynchronously through log-group analysis, modern serverless APIs require synchronous, in-line perimeter enforcement. This work presents an integrated real-time security verification framework engineered for Cloudflare Workers with Cloudflare D1 and Node.js Express with TypeScript. The gateway enforces a deterministic 15-step in-line pipeline before executing target handlers. Core security controls integrate PBKDF2-SHA512 credential hashing, strict HS256 JWT validation, stateful session revocation, role-based access control, rule-based workflow sequence validation, sliding-window burst detection, heuristic threat scanning across six serverless vectors, and tamper-evident SHA-256 hash-chained audit logging. To ensure laptop-only accessibility without mobile phone dependency, authentication pairs optional RFC 6238 TOTP with atomic, single-use SHA-256 recovery-code enrollment and verification. Evaluated across 44 automated tests in six suites, the framework enforces fail-closed containment and maintains audit integrity. Empirical benchmarking on Node.js Express measures 0.586 ms mean isolated pipeline overhead and 1.741 ms mean end-to-end HTTP verification latency.
 
 ---
 
@@ -72,9 +72,9 @@ In 2025, IEEE Access published the foundational benchmark paper:
 - Deterministic sequence anomaly detection for multi-function business workflows.
 
 The framework developed in this capstone investigates an alternative edge gateway architecture that implements an in-line, Zero-Trust defense layer featuring:
-- A 15-step in-line pipeline achieving a reproducible mean verification latency of **1.07 ms** (median 1.04 ms, p95 1.20 ms).
-- Complete RFC 6238 TOTP MFA integration with single-use backup recovery codes [2].
-- Cryptographic HMAC-SHA256 JWT tokens [3] conforming to NIST SP 800-207 Zero Trust Architecture [4].
+- A 15-step in-line pipeline achieving an empirical mean isolated pipeline overhead of **0.586 ms** (median 0.499 ms, p95 0.822 ms) and **1.741 ms** mean end-to-end HTTP verification latency on Express + SQLite.
+- Laptop-only **single-use SHA-256 recovery-code enrollment and verification** without mobile dependency, alongside optional RFC 6238 TOTP MFA [2].
+- Cryptographic HMAC-SHA256 JWT tokens [3] enforcing strict `iss`, `aud`, `iat`, `nbf`, and `exp` claims conforming to NIST SP 800-207 Zero Trust Architecture [4].
 - A chained SHA-256 audit ledger ($H_t = \text{SHA256}(R_t \parallel H_{t-1})$) [11] with real-time SSE push telemetry.
 
 ---
@@ -159,11 +159,10 @@ To prevent credential stuffing, rainbow table lookup, and hardware-accelerated d
 - Format: `$pbkdf2-sha512$i=100000$<salt>$<hash>`.
 - Verification: Constant-time comparison using `crypto.timingSafeEqual` to prevent side-channel timing attacks.
 
-### 5.2 Multi-Factor Authentication (RFC 6238 TOTP)
-- **Algorithm**: Time-Based One-Time Password algorithm operating on 30-second time steps ($T_0 = 0$, $T_X = 30$).
-- **HMAC Hash Function**: SHA-1 as standardized by RFC 6238.
-- **Clock Drift Tolerance**: $\pm 1$ step window (supporting up to $\pm 30$ seconds clock discrepancy between edge nodes and mobile authenticators).
-- **Single-Use Backup Codes**: Generated as eight 10-character alphanumeric tokens, hashed upon creation, and consumed atomically upon use.
+### 5.2 Multi-Factor Authentication (Laptop-Only Recovery Codes & Optional RFC 6238 TOTP)
+- **First-Class Laptop-Only Recovery Codes**: On initial enrollment (and subsequent logins without a mobile device), accounts generate eight 8-character single-use recovery codes (`XXXX-XXXX`), stored strictly as SHA-256 digests and verified in constant time inside atomic SQLite transactions (`BEGIN IMMEDIATE`) / Worker D1 compare-and-set updates to eliminate concurrency replay.
+- **Optional RFC 6238 TOTP**: Operates on 30-second time steps ($T_0 = 0$, $T_X = 30$) using HMAC-SHA1 with $\pm 1$ step clock-skew tolerance and monotonic `last_totp_step` replay blocking [2].
+- **SMS Gateway Status**: Direct carrier SMS dispatch is intentionally disabled in code (`HTTP 501 Not Implemented`) rather than emulated.
 
 ### 5.3 Stateless JWT Token Management & Revocation
 - Tokens are digitally signed using HMAC-SHA256 (`HS256`).
@@ -226,25 +225,19 @@ Where:
 
 ---
 
-## 9. Markov Chain Sequence Anomaly Detection
+## 9. Deterministic Rule-Based Sequence Validation
 
-Serverless microservice invocations naturally follow business logic sequences (e.g., Cart Checkout must be preceded by Item Selection and Authentication). The framework models these transitions as a discrete first-order Markov Chain:
-
-$$P(S_t = s_j \mid S_{t-1} = s_i) = \frac{C(s_i \to s_j)}{\sum_k C(s_i \to s_k)}$$
-
-- The transition matrix $T$ is initialized with valid workflow paths.
-- If an invocation arrives with an unregistered transition ($P = 0$), the engine raises an `UNUSUAL_ACCESS_PATTERN` alert.
-- In strict enforcement mode, illegal transitions are blocked immediately; in permissive mode, they are logged with elevated risk.
+Serverless microservice invocations follow ordered administrative and application workflows. The framework validates step-to-step transitions deterministically using the relational `function_rules` transition table (`current_function` $\to$ `allowed_next_function`). If a principal invokes a function out of sequence without a permitted predecessor rule, the engine raises a `SEQUENCE_VIOLATION` event, applies the configured sequence penalty, and blocks invocations exceeding `maxRiskThreshold`.
 
 ---
 
 ## 10. Tamper-Evident SHA-256 Cryptographic Audit Ledger
 
-To guarantee non-repudiation and satisfy strict regulatory compliance (SOC 2, ISO 27001, HIPAA), the audit subsystem links each log record into a cryptographic hash chain:
+To support non-repudiation and integrity verification, the audit subsystem chains each log record sequentially via SHA-256:
 
-$$H_k = \text{HMAC-SHA256}\Big( K_{\text{audit}}, \, H_{k-1} \,\|\, T_k \,\|\, U_k \,\|\, A_k \,\|\, R_k \,\|\, D_k \,\|\, S_k \Big)$$
+$$H_k = \text{SHA256}\Big( R_k \,\|\, H_{k-1} \Big)$$
 
-If an attacker modifies a historical audit row (e.g., altering a `DENY` decision to `ALLOW` to conceal an unauthorized exfiltration), the computed hash chain diverges at that record. The built-in audit verification tool immediately isolates the exact row ID and timestamp of the breach.
+If an existing audit row is mutated retroactively, the sequential digest chain diverges at that record ID during audit ledger verification.
 
 ---
 
@@ -309,82 +302,57 @@ To ensure policies do not disrupt legitimate production traffic, developers and 
 ## 17. Experimental Setup & Benchmarking Methodology
 
 ### 17.1 Test Environment
-- **Runtime**: Cloudflare Workers edge runtime (V8 isolates) & Node.js 20.x test harness.
-- **Database**: Cloudflare D1 distributed SQLite engine.
-- **Client Emulation**: Automated synthetic workload generator executing 1,000 mixed invocations (clean, malicious, high-frequency, out-of-sequence).
+- **Node.js Backend**: Express API server backed by `node:sqlite` (`server/data/security_framework.sqlite`).
+- **Cloudflare Worker Verification**: `src/worker.ts` evaluated locally using an async D1 adapter over in-memory `node:sqlite` (remote Cloudflare D1 deployment pending external Cloudflare credentials).
+- **Automated Verification**: 44 executable test cases across 6 TypeScript test suites (`npm test`), plus live `localhost:3000` E2E verification.
 
 ### 17.2 Measurement Metrics
-- Verification Pipeline Latency ($\mu\text{s}$ and $\text{ms}$).
-- Detection Accuracy: True Positive Rate (TPR), False Positive Rate (FPR).
-- Database Query Overhead.
-- Tamper Detection Reliability.
+- Isolated 15-Step Verification Pipeline Latency ($N = 200$ invocations via `performance.now()`).
+- End-to-End HTTP Verification Latency (`X-Verification-Latency-MS` across $N = 20$ live requests).
+- Fail-Closed Integrity & Tamper-Evident Hash Chaining.
 
 ---
 
 ## 18. Latency & Overhead Performance Analysis
 
-Benchmarking across 1,000 invocations yielded the following timing breakdown across the 15 verification steps:
+Direct measurements executed on Node.js Express + `node:sqlite` in this workspace produced the following reproducible latency results:
 
-| Step | Verification Phase | Mean Latency ($\mu\text{s}$) | % Total Overhead |
-|---|---|---|---|
-| Step 1 | Header Parsing & Normalization | 42 $\mu\text{s}$ | 3.0% |
-| Step 2 | Syntactic Payload Validation | 38 $\mu\text{s}$ | 2.7% |
-| Step 3 | IP Provenance & Reputation Check | 48 $\mu\text{s}$ | 3.4% |
-| Step 4 | Cryptographic JWT Verification | 210 $\mu\text{s}$ | 14.8% |
-| Step 5 | Account State & Session Check | 125 $\mu\text{s}$ | 8.8% |
-| Step 6 | RBAC Role & Permission Matching | 64 $\mu\text{s}$ | 4.5% |
-| Step 7 | Deep Payload Inspection (SQLi/XSS) | 380 $\mu\text{s}$ | 26.8% |
-| Step 8 | Target Function Lifecycle Status | 55 $\mu\text{s}$ | 3.9% |
-| Step 9 | Sliding-Window Rate Limit Check | 82 $\mu\text{s}$ | 5.8% |
-| Step 10 | Markov Sequence Verification | 75 $\mu\text{s}$ | 5.3% |
-| Step 11 | Least-Privilege Scope Verification | 40 $\mu\text{s}$ | 2.8% |
-| Step 12 | Risk Score Calculation | 35 $\mu\text{s}$ | 2.5% |
-| Step 13 | Policy Decision Evaluation | 28 $\mu\text{s}$ | 2.0% |
-| Step 14 | SHA-256 Audit Ledger Chaining | 185 $\mu\text{s}$ | 13.0% |
-| Step 15 | Real-Time Telemetry Dispatch | 112 $\mu\text{s}$ | 7.9% |
-| **Total**| **Complete 15-Step Pipeline** | **1,419 $\mu\text{s}$ (1.42 ms)** | **100.0%** |
+| Measurement Scope | Sample Count ($N$) | Mean Latency | Median (p50) | p95 Latency |
+|---|---|---|---|---|
+| **Isolated 15-Step Pipeline** (`execute15StepPipeline`) | 200 | **0.586 ms** | **0.499 ms** | **0.822 ms** |
+| **Live Express HTTP** (`POST /api/v1/verify/invoke`) | 20 | **1.741 ms** | **1.535 ms** | **4.346 ms** |
 
-**Key Finding**: The entire 15-step security verification pipeline completes in **1.42 milliseconds**, representing an exceptional efficiency gain compared to the 2.10ms baseline reported in the IEEE Access 2025 *Bλambda* publication.
+**Key Finding**: In-line 15-step gateway inspection adds sub-millisecond core verification overhead (`0.586 ms` mean) and under 2 ms end-to-end HTTP overhead (`1.741 ms` mean) prior to target function execution.
 
 ---
 
-## 19. Threat Detection Accuracy & Efficacy Results
+## 19. Threat Detection Validation Results
 
-Evaluating the detection engine against standard vulnerability test datasets:
-
-| Attack Vector | Test Sample Count | Detected | Blocked | False Positives | Detection Rate |
-|---|---|---|---|---|---|
-| SQL Injection (SQLi) | 150 | 150 | 150 | 0 | **100.0%** |
-| Cross-Site Scripting (XSS) | 150 | 150 | 150 | 0 | **100.0%** |
-| Command Injection (CMDi) | 100 | 100 | 100 | 0 | **100.0%** |
-| Brute Force Auth / MFA | 100 | 100 | 100 | 0 | **100.0%** |
-| Markov Sequence Anomaly | 100 | 100 | 100 | 0 | **100.0%** |
-| Unauthorized / Expired JWT | 100 | 100 | 100 | 0 | **100.0%** |
-| Inactive Function Call | 50 | 50 | 50 | 0 | **100.0%** |
-| Clean Business Invocations | 250 | 0 | 0 | 0 | **0.0% FPR** |
+The automated verification test suites (`test/verification-pipeline.test.ts` and `test/security-hardening.test.ts`) verify deterministic detection and `DENY` containment across the six core heuristic vectors (`CLOUD_METADATA_SSRF`, `COMMAND_INJECTION`, `PROMPT_INJECTION`, `CREDENTIAL_LEAK`, `SQL_INJECTION`, and `DESERIALIZATION`), alongside rate-burst throttling and deterministic sequence violations (`function_rules`).
 
 ---
 
 ## 20. Security Hardening & Penetration Testing Results
 
-The automated security test suite verified that:
-1. All SQL injection attempts (`' OR 1=1 --`) fail due to parameterized queries.
-2. Tampering with any byte of a JWT signature causes immediate rejection.
-3. Modifying a historical audit record triggers instant cryptographic integrity failure during audit verification.
-4. If the database connection times out, the framework fails closed, preventing uninspected execution.
+The hardened test suites (`npm test`, 44 / 44 cases) verify that:
+1. All SQLite and Worker D1 queries use parameterized prepared statements (`db.prepare(...).bind(...)`).
+2. Modified JWT signatures, `alg: none` tokens, or missing `iss`/`aud`/`iat`/`nbf` claims are immediately rejected.
+3. Mutating an audit record breaks the SHA-256 chain validation.
+4. Pipeline faults trigger fail-closed containment (`100%` Risk, HTTP `403`), and missing D1 bindings in `src/worker.ts` fail closed with HTTP `503`.
+5. Concurrent (`Promise.all`) reuse of the same single-use recovery code permits strictly one verification and rejects the duplicate race request.
 
 ---
 
 ## 21. Comparison with State-of-the-Art Solutions
 
-| Security Feature | Standard Cloud WAF | AWS IAM / API Gateway | IEEE Access *BAMBDA* (2025) [1] | Our Framework |
-|---|---|---|---|---|
-| In-Line Edge Verification | Yes | Partial | Post-Log / Injection | **Yes (15-Step In-Line)** |
-| Verification Latency | 5–15 ms | 10–25 ms | 8.12% relative overhead | **1.07 ms mean (reproducible)** |
-| Cryptographic Audit Chaining | No | No | No (CloudWatch) | **Yes (SHA-256 Ledger)** [11] |
-| Sequence Verification | No | No | Formal Invariant Only | **Yes (Rule-based Table)** |
-| Built-in TOTP MFA | No | External (Cognito) | No | **Yes (RFC 6238)** [2] |
-| Real-Time SSE Telemetry | No | CloudWatch (Minutes) | No | **Yes (Sub-second push)** |
+| Security Feature | IEEE Access *BAMBDA* (2025) [1] | Our Framework |
+|---|---|---|
+| Verification Model | Asynchronous log-group / Lambda layer instrumentation | **Synchronous 15-Step In-Line Edge/Express Gateway** |
+| Measured Overhead | 8.12% warm-start execution overhead (published) | **0.586 ms mean pipeline / 1.741 ms HTTP** (local measurement) |
+| Audit Integrity | CloudWatch log assertions | **SHA-256 Hash-Chained Audit Ledger** [11] |
+| Workflow Sequencing | Temporal property logic on logs | **Deterministic `function_rules` Lookup Table** |
+| Multi-Factor Auth | External to verification layer | **Laptop-Only Recovery Codes + Optional RFC 6238 TOTP** [2] |
+| Real-Time Telemetry | Post-execution log polling | **In-Process SSE Push (`text/event-stream`)** |
 
 ---
 
@@ -406,9 +374,9 @@ The automated security test suite verified that:
 
 ## 24. Conclusion & Academic Summary
 
-This capstone project successfully demonstrates the design, implementation, and empirical validation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications. Differentiated from the post-invocation log analysis approach of the IEEE Access 2025 *BAMBDA* paper [1], this framework proves that comprehensive zero-trust verification—encompassing multi-factor authentication, granular RBAC, in-line payload inspection, rule-based sequence checking, and tamper-evident audit chaining—can be achieved synchronously at the edge with a reproducible mean latency of only **1.07 milliseconds** (median 1.04 ms, p95 1.20 ms).
+This capstone project demonstrates the design, implementation, and validation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications. Differentiated from the post-invocation log analysis approach of the IEEE Access 2025 *BAMBDA* paper [1], this framework enforces synchronous zero-trust checks—combining laptop-accessible single-use SHA-256 recovery-code MFA and optional RFC 6238 TOTP, granular RBAC, in-line payload inspection, rule-based sequence validation, and tamper-evident audit chaining—with measured latencies of **0.586 ms** (isolated pipeline) and **1.741 ms** (live HTTP API).
 
-The resulting codebase passes 34 out of 34 automated unit, integration, and security tests (100% success rate) and provides an academically sound, production-hardened foundation for secure serverless cloud computing.
+The hardened codebase passes **44 out of 44** automated test cases across six suites (`npm test`) alongside live HTTP end-to-end verification, establishing a defensible capstone submission.
 
 ---
 

@@ -8,6 +8,7 @@
  * - 0003_secure_auth_and_persistence.sql
  */
 
+import crypto from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'fs';
 import path from 'path';
@@ -342,27 +343,75 @@ export class PersistentSecurityDatabase {
       }
     }
 
-    // 3. Non-destructive upgrade ONLY for unmigrated/legacy seed passwords (never overwrite rotated passwords or secrets)
-    const legacySeedHash =
-      '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e';
+    // 3. Non-destructive CSPRNG bootstrapping for uninitialized records and unenrolled <20-char MFA secrets
+    const bootstrapSeedColumns = () => {
+      const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+      const REC_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 
-    this.sqlite.exec(`
-      UPDATE users SET
-        password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
-        password_hash = '${legacySeedHash}',
-        mfa_secret = COALESCE(NULLIF(mfa_secret, ''), 'JBSWY3DPEHPK3PXP')
-      WHERE (password_salt IS NULL OR password_salt = '' OR password_hash = 'ZeroTrust_2026')
-        AND username IN ('cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor');
-    `);
+      const makeBase32Secret = (bytesCount = 20): string => {
+        const buf = crypto.randomBytes(bytesCount);
+        let bits = '';
+        let out = '';
+        for (let i = 0; i < buf.length; i++) bits += buf[i].toString(2).padStart(8, '0');
+        for (let i = 0; i + 5 <= bits.length; i += 5) out += BASE32[parseInt(bits.slice(i, i + 5), 2)];
+        return out;
+      };
 
-    this.sqlite.exec(`
-      UPDATE users SET
-        password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
-        password_hash = 'cc5af848d092362caf2830e08b3e46495ab9cebba694112a0a5025b6cf05bc71d02a8ccbe5a6fa422a7b60bf0f4ce458b14c5af7e9ada0485d73b3397eac5db1',
-        mfa_secret = COALESCE(NULLIF(mfa_secret, ''), 'JBSWY3DPEHPK3PXP')
-      WHERE username = 'secops_admin'
-        AND (password_salt IS NULL OR password_salt = '' OR password_hash = 'ZeroTrust_2026' OR password_hash = '${legacySeedHash}');
-    `);
+      const makeRecoveryHashes = (count = 8): string[] => {
+        const hashes: string[] = [];
+        const rnd = crypto.randomBytes(count * 8);
+        let idx = 0;
+        for (let i = 0; i < count; i++) {
+          let code = '';
+          for (let j = 0; j < 8; j++) code += REC_CHARS[rnd[idx++] % REC_CHARS.length];
+          hashes.push(crypto.createHash('sha256').update(code).digest('hex'));
+        }
+        return hashes;
+      };
+
+      const uninitUsers = this.sqlite
+        .prepare(
+          `SELECT id, username, password_salt, password_hash FROM users
+           WHERE password_hash = '!BOOTSTRAP_REQUIRED!' OR password_hash IS NULL OR trim(password_hash) = ''`
+        )
+        .all() as Array<{ id: string; username: string; password_salt: string | null; password_hash: string }>;
+
+      const updateCredStmt = this.sqlite.prepare(
+        'UPDATE users SET password_salt = ?, password_hash = ? WHERE id = ?'
+      );
+
+      for (const row of uninitUsers) {
+        const salt = crypto.randomBytes(16).toString('hex');
+        const adminEnvPwd = row.username === 'secops_admin' ? process.env.INITIAL_ADMIN_PASSWORD?.trim() : undefined;
+        const secretPwd = adminEnvPwd && adminEnvPwd.length >= 8 ? adminEnvPwd : crypto.randomBytes(24).toString('hex');
+        const hash = crypto.pbkdf2Sync(secretPwd, salt, 100000, 64, 'sha512').toString('hex');
+        updateCredStmt.run(salt, hash, row.id);
+      }
+
+      const weakMfaUsers = this.sqlite
+        .prepare(
+          `SELECT id FROM users
+           WHERE mfa_secret IS NULL OR trim(mfa_secret) = ''
+              OR (COALESCE(mfa_enrolled, 0) = 0 AND COALESCE(last_totp_step, 0) = 0 AND length(trim(mfa_secret)) < 20)`
+        )
+        .all() as Array<{ id: string }>;
+
+      const updateMfaStmt = this.sqlite.prepare('UPDATE users SET mfa_secret = ? WHERE id = ?');
+      for (const row of weakMfaUsers) {
+        updateMfaStmt.run(makeBase32Secret(20), row.id);
+      }
+
+      const missingBackupUsers = this.sqlite
+        .prepare(`SELECT id FROM users WHERE mfa_backup_codes IS NULL OR trim(mfa_backup_codes) = ''`)
+        .all() as Array<{ id: string }>;
+
+      const updateBackupStmt = this.sqlite.prepare('UPDATE users SET mfa_backup_codes = ? WHERE id = ?');
+      for (const row of missingBackupUsers) {
+        updateBackupStmt.run(JSON.stringify(makeRecoveryHashes(8)), row.id);
+      }
+    };
+
+    bootstrapSeedColumns();
   }
 
   /**

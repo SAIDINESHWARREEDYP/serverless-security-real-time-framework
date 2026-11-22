@@ -80,6 +80,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   const [pendingUser, setPendingUser] = useState<User | null>(null);
   const [isPollingApproval, setIsPollingApproval] = useState(false);
   const [approvalPollCount, setApprovalPollCount] = useState(0);
+  const pendingPasswordRef = React.useRef<string | null>(null);
 
   // Multi-Factor Authentication Challenge & Registration Enrollment state
   const [mfaChallenge, setMfaChallenge] = useState<MfaPendingChallenge | null>(null);
@@ -163,7 +164,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
     };
   }, [username]);
 
-  // Real-time Polling for Admin Approval
+  // Real-time Polling for Admin Approval (automatically transitions into Factor-2 MFA challenge)
   useEffect(() => {
     if (!pendingUser) {
       setIsPollingApproval(false);
@@ -183,23 +184,28 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         if (data.success && data.approved && !isCancelled) {
           clearInterval(interval);
           setIsPollingApproval(false);
-          onAddTerminalLog?.('success', `[IAM CLEARANCE] Principal ${pendingUser.username} was APPROVED by Administrator.`);
+          const approvedUsername = pendingUser.username;
+          const cachedPassword = pendingPasswordRef.current;
+          pendingPasswordRef.current = null;
 
-          if (data.token) {
-            const session: AuthSession = {
-              user: data.user,
-              token: data.token,
-              loginTime: new Date().toLocaleTimeString(),
-              expiresInSeconds: data.expiresInSeconds || 3600
-            };
-            setPendingUser(null);
-            onLoginSuccess(session);
+          onAddTerminalLog?.('success', `[IAM CLEARANCE] Principal ${approvedUsername} was APPROVED by Administrator.`);
+          setPendingUser(null);
+          setRegisteredEnrollment(null);
+          setUsername(approvedUsername);
+          setActiveTab('signin');
+
+          if (cachedPassword) {
+            await executeLogin(approvedUsername, cachedPassword);
+          } else {
+            setStatusNotice(`Clearance Granted! Identity [${approvedUsername}] is now APPROVED. Enter your password to complete MFA.`);
           }
         } else if (data.status === 'REJECTED' && !isCancelled) {
           clearInterval(interval);
           setIsPollingApproval(false);
+          pendingPasswordRef.current = null;
           setErrorMsg(`Access clearance request for [${pendingUser.username}] was REJECTED by SecOps Administration.`);
           setPendingUser(null);
+          setRegisteredEnrollment(null);
         }
       } catch {
         // Silent retry
@@ -210,7 +216,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
       isCancelled = true;
       clearInterval(interval);
     };
-  }, [pendingUser, onLoginSuccess, onAddTerminalLog]);
+  }, [pendingUser, onAddTerminalLog]);
 
   // Handle Login submission
   const executeLogin = async (rawUsername: string, rawPassword?: string) => {
@@ -250,6 +256,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
       // Case 1: Pending Admin Approval Gate
       if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
+        pendingPasswordRef.current = cleanPass;
         const pUser: User = data.user || {
           id: `usr_${cleanUser}`,
           username: cleanUser,
@@ -278,15 +285,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
       // Case 4: Multi-Factor Authentication Challenge Triggered
       if (data.mfaRequired) {
-        onAddTerminalLog?.('info', `[MFA CHALLENGE] Password accepted for ${cleanUser}. RFC 6238 Multi-Factor passcode required.`);
+        onAddTerminalLog?.('info', `[MFA CHALLENGE] Password accepted for ${cleanUser}. Recovery-code or TOTP verification required.`);
         setMfaChallenge({
-          mfaSessionId: data.mfaSessionId,
+          mfaSessionId: data.mfaSessionId || data.mfaChallengeId,
           username: cleanUser,
           user: data.user,
           enrollmentRequired: Boolean(data.enrollmentRequired),
           phoneMasked: data.phoneMasked || '+1 (555) •••-4829',
           emailMasked: data.emailMasked || `${cleanUser.toLowerCase()}@corp.internal`,
-          methods: data.methods || ['authenticator', 'backup_code'],
+          methods: data.methods || ['backup_code', 'authenticator'],
+          preferredMethod: data.preferredMethod || (data.enrollmentRequired ? 'backup_code' : undefined),
+          recoveryCodesRemaining: data.recoveryCodesRemaining,
           serverTime: data.serverTime,
           stepSeconds: data.stepSeconds || 30,
           clockOffsetSeconds: effectiveDriftSeconds,
@@ -364,6 +373,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           });
         }
         if (data.pendingApproval || data.status === 'PENDING_APPROVAL') {
+          pendingPasswordRef.current = registerPassword;
           const pUser: User = data.user || {
             id: `usr_${clean}`,
             username: clean,
@@ -611,7 +621,23 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           <button
             type="button"
             onClick={() => setErrorMsg(null)}
-            className="text-rose-400 hover:text-white font-mono text-[11px]"
+            className="text-rose-400 hover:text-white font-mono text-[11px] cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {statusNotice && (
+        <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            <span>{statusNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusNotice(null)}
+            className="text-emerald-400 hover:text-white font-mono text-[11px] cursor-pointer"
           >
             Dismiss
           </button>
@@ -689,8 +715,8 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           {registeredEnrollment && (
             <MfaEnrollmentPanel
               enrollment={registeredEnrollment}
-              title={`Step 1: Add [${registeredEnrollment.username || pendingUser.username}] to Your Authenticator App While Waiting`}
-              subtitle="Scan this QR code now so your Authenticator app is ready as soon as an Administrator approves your account."
+              title={`Step 1: Save Recovery Codes for [${registeredEnrollment.username || pendingUser.username}]`}
+              subtitle="Save these 8 single-use recovery codes on your laptop to sign in without a phone, or optionally pair an Authenticator app."
             />
           )}
 
@@ -701,6 +727,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
             <button
               type="button"
               onClick={() => {
+                pendingPasswordRef.current = null;
                 setPendingUser(null);
                 setRegisteredEnrollment(null);
               }}

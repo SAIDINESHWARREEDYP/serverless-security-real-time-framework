@@ -19,16 +19,9 @@ ALTER TABLE users ADD COLUMN last_totp_step INTEGER DEFAULT 0;
 ALTER TABLE audit_events ADD COLUMN integrity_hash TEXT;
 ALTER TABLE audit_events ADD COLUMN prev_hash TEXT;
 
--- 2. Upgrade seeded principals to genuine PBKDF2-SHA512 password hashes and secure MFA secrets
--- Password for all default test seeds: 'ZeroTrust_2026'
-UPDATE users SET 
-  password_salt = 'a1f8c29e4b6d3a7f80e5c1d2e3f4a5b6',
-  password_hash = '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e',
-  mfa_secret = COALESCE(NULLIF(mfa_secret, ''), 'JBSWY3DPEHPK3PXP'),
-  mfa_backup_codes = COALESCE(NULLIF(mfa_backup_codes, ''), '["28a78be9a0696a510de354eb442c1b4199d16b6b344817b3fd4cb9427e78b6af","f067b0c6798d0a64e8b6963c52cbc5d9dc441a497cb2ac1c52ce3a8f8704dd1f","b2d6d45ffdbd2ec495d69e642343a1b83ec1ed22e58221eae54ac00df1577152","59294c3b8da03511ccba650818e3b885ade07dc3704d4ac3a8dd8a29d0e49124"]'),
-  last_totp_step = COALESCE(last_totp_step, 0)
-WHERE username IN ('secops_admin', 'cloud_dev', 'auditor_guest', 'sarah_infra', 'alex_contractor', 'threat_actor')
-  AND (password_salt IS NULL OR password_salt = '');
+-- 2. Credential salts, PBKDF2-SHA512 hashes, unique TOTP secrets, and hashed recovery codes
+-- are provisioned per identity via CSPRNG during runtime bootstrap (never statically in SQL).
+UPDATE users SET last_totp_step = COALESCE(last_totp_step, 0) WHERE last_totp_step IS NULL;
 
 -- 3. Ensure Incidents Table exists and has required forensic fields
 CREATE TABLE IF NOT EXISTS incidents (

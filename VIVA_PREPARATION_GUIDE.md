@@ -22,8 +22,8 @@ This viva preparation guide contains **42 rigorous, highly defensible questions 
 ### Q2: What is the IEEE Access 2025 *BAMBDA* paper, and how does your project build upon it?
 **Answer:** The *BAMBDA* paper (*Changhee Shin, Bom Kim, and Seungsoo Lee, "BAMBDA: A Real-Time Verification Framework for Serverless Computing," IEEE Access, vol. 13, pp. 90896–90911, 2025, DOI: 10.1109/ACCESS.2025.3572729*) proposed automated code injection and centralized log-group analysis to verify temporal safety and liveness properties in AWS Lambda workflows, reporting an 8.12% runtime overhead under warm-start conditions.
 Our project investigates an alternative in-line gateway architecture designed for edge runtimes (Cloudflare Workers with Cloudflare D1) and Node.js microservices. Our independently developed contributions include:
-- An in-line 15-step verification pipeline intercepting requests prior to function handler invocation, with a reproducible mean verification latency of **1.07 ms** (median 1.04 ms, p95 1.20 ms).
-- Native Zero-Trust identity management: PBKDF2-SHA512 hashing (100,000 rounds), RFC 6238 TOTP MFA with replay prevention, single-use hashed backup codes, and HMAC-SHA256 JWT tokens.
+- An in-line 15-step verification pipeline intercepting requests prior to function handler invocation, with measured empirical Node.js Express benchmarks of **0.586 ms** mean isolated pipeline latency (median 0.499 ms, p95 0.822 ms) and **1.741 ms** mean end-to-end HTTP verification latency (median 1.535 ms, p95 4.346 ms).
+- Native Zero-Trust identity management: PBKDF2-SHA512 hashing (100,000 rounds), laptop-accessible single-use SHA-256 recovery-code enrollment and verification, optional RFC 6238 TOTP MFA with replay prevention, and strict HS256 JWT validation.
 - Stateful real-time session revocation backed by relational SQL persistence.
 - Deterministic rule-based workflow transition checking (`function_rules`) to prevent unauthorized lateral jumps.
 - Heuristic threat scanning across six serverless attack vectors (including AWS/GCP IMDS SSRF `169.254.169.254`).
@@ -65,8 +65,8 @@ Our implementation verifies $C$, $C-1$, and $C+1$ to allow $\pm 30$ seconds of c
 2. Fast cryptographic validation (Step 4) verifies the signature in $\sim 210\mu\text{s}$.
 3. Step 5 performs a fast session status check against the database/cache (`sessions` table). If an administrator revokes the session or the user logs out, the `sessionId` is invalidated, causing immediate rejection of the token without waiting for `exp` to elapse.
 
-### Q10: What are single-use MFA backup codes, and how are they stored securely?
-**Answer:** When MFA is enrolled, 8 alphanumeric backup codes are generated. To prevent plaintext database exposure, backup codes are stored as individual cryptographic hashes. When a backup code is submitted during authentication, it is hashed, matched against the stored hashes, and deleted immediately from the database upon valid use (single-use semantics).
+### Q10: How does laptop-only MFA work without requiring a mobile authenticator app?
+**Answer:** Users without an authenticator app enroll using eight 8-character single-use recovery codes (`XXXX-XXXX`), which can be copied or downloaded as a `.txt` file on their laptop and confirmed immediately during first sign-in. Codes are stored solely as SHA-256 hashes, verified in constant time (`timingSafeEqual`), and consumed atomically inside SQLite `BEGIN IMMEDIATE` transactions (or D1 compare-and-set updates in the Worker) so concurrent requests cannot reuse a code. Optional RFC 6238 TOTP remains available alongside it.
 
 ---
 
@@ -118,8 +118,8 @@ Our framework validates that the `sessionId` is active and verifies effective pe
 ### Q16: Why is Step 7 (Payload Sanitization) placed before Step 10 (Markov Sequence Verification)?
 **Answer:** Input validation and injection detection are fast, deterministic heuristic operations ($380\mu\text{s}$) that do not require state transitions. If an attacker submits a malformed or malicious payload, it is rejected immediately at Step 7, avoiding unnecessary state transitions or polluting the Markov state history.
 
-### Q17: What is the measured total latency of your 15-step pipeline, and how does it compare to the *Bλambda* paper?
-**Answer:** Our empirical benchmark across 1,000 real invocations measured an average latency of **1.419 milliseconds (1.42 ms)**. The IEEE Access 2025 *Bλambda* publication reported an average verification overhead of **2.10 ms**. Our implementation is approximately **32% faster** due to optimized in-memory V8 string handling and single-query parameterized database bindings.
+### Q17: What is the measured latency of your 15-step pipeline, and how does it relate to *BAMBDA*?
+**Answer:** Local workspace measurements on Node.js Express + `node:sqlite` yielded **0.586 ms mean** (median 0.499 ms, p95 0.822 ms) across 200 isolated pipeline calls and **1.741 ms mean** (median 1.535 ms) across 20 live `POST /api/v1/verify/invoke` HTTP requests. Rather than claiming an invented millisecond figure for *BAMBDA*, we cite Shin et al.'s published metric (**8.12% warm-start execution overhead**) and differentiate our architecture by synchronous in-line perimeter enforcement.
 
 ### Q18: What is Function Lifecycle Verification (Step 8), and what states are supported?
 **Answer:** Serverless functions undergo continuous lifecycle changes. Supported states are:
@@ -159,11 +159,9 @@ $$R = \min\left(100, \, \max_{k \in \mathcal{A}} \Big( B_k \times W_{\text{env}}
 - $\Delta_j$: Additive penalty for secondary concurrent infractions.
 - $\delta_{\text{velocity}}$: Denial velocity penalty calculated as $\min(25, 5 \times D_{120})$, where $D_{120}$ is the count of denied requests from this client in the past 120 seconds.
 
-### Q22: What is the Discrete Markov Chain Sequence model, and what threat does it prevent?
+### Q22: How does deterministic workflow sequence validation work, and what threat does it prevent?
 **Answer:** In multi-stage cloud workflows, business functions must be invoked in a defined order (e.g., `authenticate` $\to$ `fetchOrder` $\to$ `processPayment`). Attackers attempt to bypass intermediate controls by directly calling high-value functions (e.g., `processPayment`).
-We model valid workflow transitions as a Markov Chain:
-$$P(S_t = s_j \mid S_{t-1} = s_i)$$
-If an invocation transition has $P = 0$ (an unapproved or out-of-order jump), the engine flags an `UNUSUAL_ACCESS_PATTERN` threat and blocks the request.
+Rather than using probabilistic models, our framework enforces deterministic rule-based sequence validation via the `function_rules` relational table: each registered function declares explicit predecessor/transition rules (`require_previous_function`, allowed source triggers). If an invocation attempts an unauthorized or out-of-order transition, Step 10 flags an `UNUSUAL_ACCESS_PATTERN` violation and blocks the request.
 
 ### Q23: How does your sliding-window rate limiter work without leaking memory over time?
 **Answer:** Instead of fixed-interval counters that suffer from boundary burst attacks (double quota at minute boundaries), we implement a sliding-window log:
@@ -175,15 +173,15 @@ If an invocation transition has $P = 0$ (an unapproved or out-of-order jump), th
 
 ## Domain 6: Cryptographic Audit Logging & Incident Management
 
-### Q24: How does your tamper-evident audit ledger mathematically guarantee non-repudiation?
-**Answer:** Each audit entry $k$ is cryptographically linked to its predecessor using HMAC-SHA256:
-$$H_k = \text{HMAC-SHA256}\Big( K_{\text{audit}}, \, H_{k-1} \,\|\, T_k \,\|\, U_k \,\|\, A_k \,\|\, R_k \,\|\, D_k \,\|\, S_k \Big)$$
-Because $H_k$ depends on $H_{k-1}$ and all record attributes, any modification of a historical record changes its computed hash. This causes a mismatch with the stored $H_{k+1}$ in all subsequent records, making unauthorized modifications immediately detectable.
+### Q24: How does your tamper-evident audit ledger detect historical record modification?
+**Answer:** Each audit entry $k$ is cryptographically linked to its predecessor using sequential SHA-256 hash chaining:
+$$H_k = \text{SHA256}\Big( R_k \,\|\, H_{k-1} \Big)$$
+where $R_k$ is the canonical serialized record payload ($T_k, U_k, A_k, R_k, D_k, S_k$) and $H_{k-1}$ is the hash of the preceding log entry. Because $H_k$ depends on $H_{k-1}$ and all record attributes, any modification of a historical record changes its computed hash, causing a deterministic mismatch with $H_{k+1}$ and all subsequent records.
 
 ### Q25: How does the `verifyAuditLogIntegrity()` function detect which record was tampered with?
 **Answer:** The verification function performs a chronological pass:
-1. Sets expected previous hash $H_{\text{prev}} = H_0$.
-2. For each row $k$, recomputes $\hat{H}_k = \text{HMAC-SHA256}(K_{\text{audit}}, H_{\text{prev}} \,\|\, \text{fields}_k)$.
+1. Sets expected previous hash $H_{\text{prev}} = H_0$ (the genesis seed).
+2. For each row $k$, recomputes $\hat{H}_k = \text{SHA256}(\text{payload}_k \,\|\, H_{\text{prev}})$.
 3. Checks if $\hat{H}_k == H_k$.
 4. If a discrepancy is found, it terminates and outputs the exact ID, timestamp, and tampered field values of the compromised record.
 
@@ -220,44 +218,41 @@ Because $H_k$ depends on $H_{k-1}$ and all record attributes, any modification o
 ## Domain 8: Testing, Verification & Defense Strategy
 
 ### Q31: How many automated tests exist in your test suite, and what is the pass rate?
-**Answer:** The test suite contains **34 comprehensive automated tests** across 4 dedicated test files (`test/auth-security.test.ts`, `test/rbac-security.test.ts`, `test/verification-pipeline.test.ts`, `test/security-hardening.test.ts`), with a **100% pass rate (34 passed, 0 failed)**.
+**Answer:** The test suite contains **44 automated test cases/sections** across **6 dedicated suites** (`auth-security.test.ts`, `rbac-security.test.ts`, `verification-pipeline.test.ts`, `security-hardening.test.ts`, `identity-credentials-workflow.test.ts`, and `migration-and-hardening.test.ts`), executing via `npm test` with a **100% pass rate (44 / 44)**.
 
 ### Q32: How did you test SQL injection resilience?
-**Answer:** We executed malicious payloads (including tautologies like `' OR 1=1 --`, union-based extracts `' UNION SELECT id, password_hash FROM users --`, and stacked queries `; DROP TABLE users;`) against all repository query methods. All tests verified that the database treated the injection strings as literal parameters rather than executable SQL syntax.
+**Answer:** We submitted SQL injection payloads (`' OR '1'='1`, tautologies, union probes) to the 15-step threat scanner and verified that all SQLite and Worker D1 database queries use parameterized prepared statements (`db.prepare().bind()`), treating inputs strictly as bound data.
 
-### Q33: How did you test Cross-Site Scripting (XSS) resilience in the payload inspector?
-**Answer:** Payloads containing `<script>alert('XSS')</script>`, `javascript:void(0)`, `<img src=x onerror=alert(1)>`, and nested event handlers were submitted to Step 7. The inspection engine detected the script signatures and blocked the invocation with a `MALFORMED_PAYLOAD` threat alert.
+### Q33: How did you test Cross-Site Scripting (XSS) & Command Injection resilience in the payload inspector?
+**Answer:** Payloads containing shell injection commands (`; /bin/sh`), IMDS SSRF URLs (`169.254.169.254`), prompt injection, SQLi, and insecure deserialization were tested in `test/security-hardening.test.ts` and `test/verification-pipeline.test.ts` and consistently denied fail-closed.
 
 ### Q34: What is the Developer Workbench, and how does it support policy simulation?
-**Answer:** The Developer Workbench is an interactive testing environment within the frontend that allows developers and security teams to execute simulated invocations. Users can adjust headers, role claims, and JSON payloads, and observe the exact step-by-step evaluation of the 15-step pipeline, including per-step latency and risk scoring, without affecting live production traffic.
+**Answer:** The Developer Workbench is an interactive testing environment within the frontend that allows developers and security teams to inspect active tokens and execute test invocations against `/api/v1/verify/invoke`, observing real-time verification latency, risk scoring, and decision gates.
 
-### Q35: If an examiner asks: "Is your system really real-time if average latency is 1.42ms?", how do you answer?
-**Answer:** In computer networking and distributed cloud systems, "real-time" denotes predictable, sub-human-perception response times. A verification overhead of 1.42ms is less than 5% of typical network transit time (30–50ms) and well below the human perceptual threshold (100ms). It executes synchronously in-line *before* the function code runs, meaning security verification occurs in true real time rather than asynchronously post-execution.
+### Q35: If an examiner asks: "Is your system really real-time if live HTTP verification averages 1.74 ms?", how do you answer?
+**Answer:** Yes. Core 15-step verification averages **0.586 ms** isolated and **1.741 ms** across the full HTTP + SQLite audit path—well under human perceptual latency (100 ms) and synchronous *before* handler execution rather than waiting on asynchronous post-hoc log ingestion.
 
-### Q36: How does the framework ensure zero false positives for legitimate users?
-**Answer:** In our benchmark test of 250 clean, authorized business invocations across diverse roles, the framework achieved a **0.0% False Positive Rate (FPR)**. Valid workflows adhere to established role permissions, stay within normal request rate baselines, and match verified Markov transitions, resulting in risk scores consistently below 20.
+### Q36: How does the framework prevent false positives on legitimate traffic?
+**Answer:** Authorized calls with valid claims, permitted RBAC roles, valid workflow transitions, and normal request rates pass Steps 1–13 with base risk scores below `maxRiskThreshold` (default 75%), as verified in Scenario 1 of `test/verification-pipeline.test.ts` and live HTTP testing.
 
-### Q37: How do you protect against brute-force password guessing?
-**Answer:** The authentication service implements an account-level and IP-level sliding window counter. If 5 consecutive failed login attempts occur within a 5-minute window:
-1. The user account is temporarily locked.
-2. A `REPEATED_AUTH_FAILURES` security alert is raised.
-3. Subsequent login attempts are rejected immediately with HTTP 429 Too Many Requests.
+### Q37: How do you protect against brute-force password guessing and MFA guessing?
+**Answer:** Both login (`max 5 failures`) and per-challenge MFA verification (`max 5 attempts` in `mfa_challenges`, atomically locked at `consumed = 1`) enforce strict attempt caps and rate limiting, locking out repeated guesses before token issuance.
 
-### Q38: What external dependencies are required to run this framework?
-**Answer:** The core verification engine is intentionally lightweight and dependency-free, relying strictly on standard web APIs (`crypto.subtle`, Fetch API `Request`/`Response`, SQLite D1 prepared statements). The frontend utilizes standard React 19, Lucide icons, and Tailwind CSS. No external commercial agents or proprietary cloud-vendor lock-ins are required.
+### Q38: What external dependencies are required to run this framework locally?
+**Answer:** The local Node.js runtime relies on built-in `node:sqlite`, Express, React 19, Vite, and TypeScript (`tsx`). The Cloudflare Worker script (`src/worker.ts`) uses pure Web Crypto (`crypto.subtle`) and D1 prepared statements, and was verified locally against a `node:sqlite` D1 adapter (remote Cloudflare D1 deployment requires external Cloudflare API credentials).
 
-### Q39: Can your framework be deployed on AWS Lambda or Google Cloud Functions instead of Cloudflare Workers?
-**Answer:** Yes. Because the verification engine is written against standard TypeScript and Web Cryptography standards (`crypto.subtle`), the core pipeline logic (`verification.service.ts`) is completely runtime-agnostic. It can be wrapped in an AWS Lambda Layer or an Express middleware on Google Cloud Run with minimal adapter code.
+### Q39: Can your framework be deployed across Express Node.js and Cloudflare Workers?
+**Answer:** Yes. Core verification, strict HS256 JWT validation, PBKDF2-SHA512 hashing, and recovery-code / TOTP MFA are implemented in parity across Express (`server/`) and the Web Fetch Worker (`src/worker.ts`), with local validation via an async SQLite D1 adapter.
 
 ### Q40: What are the primary academic contributions of this capstone project?
 **Answer:**
-1. Proving that comprehensive in-line security verification (including MFA, RBAC, AST payload inspection, and Markov sequencing) can be executed in **1.42 milliseconds** at the cloud edge.
-2. The design and empirical validation of a **15-step deterministic verification pipeline** extending the IEEE Access 2025 *Bλambda* architecture.
-3. The integration of **cryptographic SHA-256 hash chaining** directly into the invocation pipeline, ensuring immutable, verifiable audit ledgers in serverless environments.
-4. A complete, open-source reference implementation featuring 26 interactive SOC dashboards and 100% automated test coverage.
+1. Demonstrating synchronous 15-step in-line security verification in **0.586 ms** (pipeline) / **1.741 ms** (full HTTP API) prior to serverless handler execution.
+2. Designing and verifying a **laptop-only SHA-256 recovery-code MFA workflow** (atomic transaction & D1 CAS concurrency controls) alongside optional RFC 6238 TOTP so users never depend on mobile phones or unconfigured SMS gateways.
+3. Integrating **tamper-evident SHA-256 hash chaining** and fail-closed containment (`DENY` on pipeline fault, `503` on missing D1 binding).
+4. Validating the complete architecture across **44 automated tests in 6 suites**.
 
-### Q41: How do you handle clock drift between edge nodes and mobile authenticator apps for TOTP?
-**Answer:** The RFC 6238 TOTP specification uses 30-second time steps. Our verification function checks the current step $C_0 = \lfloor T / 30 \rfloor$ as well as $C_{-1} = C_0 - 1$ and $C_{+1} = C_0 + 1$. This provides a 90-second verification window, ensuring that minor clock discrepancies between client devices and cloud edge servers do not result in false rejections.
+### Q41: How do you handle clock drift between edge nodes and authenticator apps for TOTP?
+**Answer:** The optional RFC 6238 TOTP mode uses 30-second steps checking $C_0$, $C_{-1}$, and $C_{+1}$ while blocking step replay via `last_totp_step`. Users without an authenticator app use laptop-only recovery codes with zero clock sensitivity.
 
 ### Q42: Summarize your capstone project in two sentences for the external examiner.
-**Answer:** "We designed and implemented an integrated real-time security verification framework for serverless applications that executes a 15-step in-line defense pipeline at the cloud edge in just 1.42 milliseconds. Grounded in the IEEE Access 2025 *Bλambda* architecture, it provides enterprise-grade zero-trust authentication, RBAC, payload sanitization, Markov sequence verification, and tamper-evident cryptographic audit logging with zero bypasses across 34 automated security tests."
+**Answer:** "We designed and implemented an integrated real-time security verification framework that enforces a 15-step in-line defense pipeline prior to serverless handler execution, measuring 0.586 ms isolated overhead and 1.741 ms full HTTP latency. Grounded in comparative analysis against IEEE Access *BAMBDA* [1], it delivers PBKDF2-SHA512 security, laptop-accessible recovery-code MFA plus optional TOTP, strict HS256 JWT checks, RBAC, deterministic sequence validation, and SHA-256 hash-chained audit logging verified across 44 automated tests."

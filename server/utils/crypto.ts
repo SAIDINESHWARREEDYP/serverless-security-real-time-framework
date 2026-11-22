@@ -48,24 +48,18 @@ export function hashPassword(password: string, providedSalt?: string): { salt: s
  * Strictly rejects empty credentials and mismatched hashes. Never accepts universal passwords.
  */
 export function verifyPassword(password: string, salt: string | undefined, expectedHash: string): boolean {
-  if (!password || !expectedHash) return false;
+  if (!password || !expectedHash || expectedHash.startsWith('!')) return false;
+  if (!salt || salt.trim().length === 0) return false;
   try {
-    if (salt && salt.trim().length > 0) {
-      const derivedKey = crypto.pbkdf2Sync(
-        password,
-        salt,
-        CONFIG.PASSWORD_HASH_ITERATIONS,
-        CONFIG.PASSWORD_HASH_KEYLEN,
-        'sha512'
-      );
-      const expectedBuf = Buffer.from(expectedHash, 'hex');
-      return derivedKey.length === expectedBuf.length && crypto.timingSafeEqual(derivedKey, expectedBuf);
-    }
-
-    // Legacy unsalted seed records only (upgraded automatically upon successful verification)
-    const pwdBuf = Buffer.from(password);
-    const expBuf = Buffer.from(expectedHash);
-    return pwdBuf.length === expBuf.length && crypto.timingSafeEqual(pwdBuf, expBuf);
+    const derivedKey = crypto.pbkdf2Sync(
+      password,
+      salt,
+      CONFIG.PASSWORD_HASH_ITERATIONS,
+      CONFIG.PASSWORD_HASH_KEYLEN,
+      'sha512'
+    );
+    const expectedBuf = Buffer.from(expectedHash, 'hex');
+    return derivedKey.length === expectedBuf.length && crypto.timingSafeEqual(derivedKey, expectedBuf);
   } catch {
     return false;
   }
@@ -163,30 +157,40 @@ export function verifyJwt(token: string): { valid: boolean; claims?: JwtClaims; 
   }
 
   // Mandatory Claims Presence Check
-  if (!claims.sub || !claims.username || !claims.role || !claims.jti) {
+  if (
+    !claims ||
+    typeof claims !== 'object' ||
+    typeof claims.sub !== 'string' || !claims.sub.trim() ||
+    typeof claims.username !== 'string' || !claims.username.trim() ||
+    typeof claims.role !== 'string' || !claims.role.trim() ||
+    typeof claims.jti !== 'string' || !claims.jti.trim()
+  ) {
     return { valid: false, error: 'MISSING_REQUIRED_CLAIMS' };
   }
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Expiration Check
-  if (typeof claims.exp !== 'number' || claims.exp <= now) {
-    return { valid: false, error: 'TOKEN_EXPIRED' };
+  // Strict Issuer & Audience Check (mandatory, never optional)
+  if (claims.iss !== CONFIG.JWT_ISSUER) {
+    return { valid: false, error: 'INVALID_ISSUER' };
+  }
+  if (claims.aud !== CONFIG.JWT_AUDIENCE) {
+    return { valid: false, error: 'INVALID_AUDIENCE' };
   }
 
-  // Not Before Check
-  if (typeof claims.nbf === 'number' && claims.nbf > now) {
+  // Issued-At Check (mandatory finite number, reject tokens issued far in the future)
+  if (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat) || claims.iat > now + 60) {
+    return { valid: false, error: 'INVALID_ISSUED_AT' };
+  }
+
+  // Not-Before Check (mandatory finite number)
+  if (typeof claims.nbf !== 'number' || !Number.isFinite(claims.nbf) || claims.nbf > now) {
     return { valid: false, error: 'TOKEN_NOT_YET_VALID' };
   }
 
-  // Issuer Check
-  if (claims.iss && claims.iss !== CONFIG.JWT_ISSUER) {
-    return { valid: false, error: 'INVALID_ISSUER' };
-  }
-
-  // Audience Check
-  if (claims.aud && claims.aud !== CONFIG.JWT_AUDIENCE) {
-    return { valid: false, error: 'INVALID_AUDIENCE' };
+  // Expiration Check (mandatory finite number)
+  if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp) || claims.exp <= now) {
+    return { valid: false, error: 'TOKEN_EXPIRED' };
   }
 
   return { valid: true, claims };
@@ -307,15 +311,26 @@ export function verifyBackupCode(
   if (!candidateCode || !Array.isArray(hashedCodes) || hashedCodes.length === 0) {
     return { valid: false };
   }
-  const clean = candidateCode.trim().toUpperCase();
-  const candidateHash = crypto.createHash('sha256').update(clean).digest('hex');
+  const rawClean = candidateCode.trim().toUpperCase();
+  const unhyphenated = rawClean.replace(/[\s\-]/g, '');
+  const hyphenated = unhyphenated.length === 8 ? `${unhyphenated.slice(0, 4)}-${unhyphenated.slice(4)}` : unhyphenated;
 
+  const hashUnhyphenated = crypto.createHash('sha256').update(unhyphenated).digest();
+  const hashHyphenated = crypto.createHash('sha256').update(hyphenated).digest();
+
+  let matchedHash: string | undefined;
   for (const storedHash of hashedCodes) {
-    if (crypto.timingSafeEqual(Buffer.from(candidateHash), Buffer.from(storedHash))) {
-      return { valid: true, matchedHash: storedHash };
+    if (typeof storedHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(storedHash)) {
+      continue;
+    }
+    const storedBuf = Buffer.from(storedHash, 'hex');
+    const eq1 = storedBuf.length === hashUnhyphenated.length && crypto.timingSafeEqual(hashUnhyphenated, storedBuf);
+    const eq2 = storedBuf.length === hashHyphenated.length && crypto.timingSafeEqual(hashHyphenated, storedBuf);
+    if ((eq1 || eq2) && !matchedHash) {
+      matchedHash = storedHash;
     }
   }
-  return { valid: false };
+  return matchedHash ? { valid: true, matchedHash } : { valid: false };
 }
 
 /**

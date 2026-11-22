@@ -43,6 +43,8 @@ class AuthService {
     phoneMasked?: string;
     emailMasked?: string;
     methods?: string[];
+    preferredMethod?: 'authenticator' | 'backup_code';
+    recoveryCodesRemaining?: number;
     attemptsLeft?: number;
     error?: string;
     remainingAttempts?: number;
@@ -103,11 +105,6 @@ class AuthService {
     // Password passed: reset failed attempts counter
     rateLimiter.recordLoginSuccess(identifier);
 
-    // If user has a legacy unhashed password or missing salt, securely upgrade to salted PBKDF2
-    if (!user.password_salt || user.password_hash === password) {
-      userRepository.updatePassword(user.id, password);
-    }
-
     // 4. Zero-Trust Approval Status Verification
     if (user.status === 'PENDING_APPROVAL') {
       return {
@@ -158,12 +155,16 @@ class AuthService {
         requested_function: '/api/v1/auth/login',
         calculated_risk: user.base_risk_score,
         status: 'ALLOWED',
-        reason: `[MFA CHALLENGE] Password verified for ${user.username}. RFC 6238 TOTP verification code required.`,
+        reason: `[MFA CHALLENGE] Password verified for ${user.username}. Recovery-code or RFC 6238 TOTP verification required.`,
         verification_latency_ms: 1.1,
         event_type: 'MFA_CHALLENGE_ISSUED'
       });
 
-      const enrollmentRequired = !user.mfa_enrolled && (!user.last_totp_step || user.last_totp_step === 0);
+      const hasTotpEnrolled = typeof user.last_totp_step === 'number' && user.last_totp_step > 0;
+      const enrollmentRequired = !user.mfa_enrolled && !hasTotpEnrolled;
+      const preferredMethod: 'authenticator' | 'backup_code' =
+        enrollmentRequired || !hasTotpEnrolled ? 'backup_code' : 'authenticator';
+      const recoveryCodesRemaining = Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes.length : 0;
 
       return {
         status: 'MFA_REQUIRED',
@@ -171,7 +172,9 @@ class AuthService {
         enrollmentRequired,
         phoneMasked: maskPhone(user.phone),
         emailMasked: maskEmail(user.email),
-        methods: ['authenticator', 'backup_code'],
+        methods: ['backup_code', 'authenticator'],
+        preferredMethod,
+        recoveryCodesRemaining,
         attemptsLeft: CONFIG.MFA_MAX_ATTEMPTS,
         user: userRepository.sanitize(user)
       };
@@ -192,10 +195,12 @@ class AuthService {
     success: boolean;
     token?: string;
     user?: SanitizedUser;
+    mfaMethod?: 'authenticator' | 'backup_code';
+    recoveryCodesRemaining?: number;
     error?: string;
     attemptsLeft?: number;
   }> {
-    const { mfaChallengeId, code, ipAddress, userAgent, username } = params;
+    const { mfaChallengeId, code, method, ipAddress, userAgent, username } = params;
     if (!mfaChallengeId || !mfaChallengeId.trim()) {
       return {
         success: false,
@@ -203,179 +208,284 @@ class AuthService {
       };
     }
 
-    const challengeRow = db.prepare(
-      'SELECT * FROM mfa_challenges WHERE id = ? OR challenge_token = ? LIMIT 1'
-    ).bind(mfaChallengeId.trim(), mfaChallengeId.trim()).first<any>();
+    const challengeKey = mfaChallengeId.trim();
+    const cleanCode = (code || '').trim().replace(/[\s\-]/g, '');
 
-    if (!challengeRow) {
-      return {
-        success: false,
-        error: 'MFA challenge not found or expired. Please re-authenticate.'
-      };
-    }
+    let auditEventToRecord: {
+      username: string;
+      requested_function: string;
+      calculated_risk: number;
+      status: 'ALLOWED' | 'BLOCKED';
+      reason: string;
+      verification_latency_ms: number;
+      event_type: string;
+    }[] = [];
 
-    if (challengeRow.consumed) {
-      return {
-        success: false,
-        error: 'MFA challenge has already been consumed. Please re-authenticate.'
-      };
-    }
+    let txOutcome:
+      | { ok: true; user: UserRecord; mfaMethod: 'authenticator' | 'backup_code'; recoveryCodesRemaining: number }
+      | { ok: false; error: string; attemptsLeft?: number } = {
+      ok: false,
+      error: 'MFA verification failed.'
+    };
 
-    if (new Date(challengeRow.expires_at).getTime() <= Date.now()) {
-      db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE id = ?').bind(challengeRow.id).run();
-      return {
-        success: false,
-        error: 'MFA challenge timed out (5-minute security limit exceeded). Please re-enter credentials.'
-      };
-    }
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      const challengeRow = db.prepare(
+        'SELECT * FROM mfa_challenges WHERE id = ? OR challenge_token = ? LIMIT 1'
+      ).bind(challengeKey, challengeKey).first<any>();
 
-    const currentAttempts = Number(challengeRow.attempts || 0);
-    const maxAttempts = Number(challengeRow.max_attempts || CONFIG.MFA_MAX_ATTEMPTS);
-    if (currentAttempts >= maxAttempts) {
-      db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE id = ?').bind(challengeRow.id).run();
-      return {
-        success: false,
-        error: 'MFA verification locked out. Maximum attempts exceeded. Please re-authenticate.',
-        attemptsLeft: 0
-      };
-    }
-
-    const user = userRepository.findById(challengeRow.user_id);
-    if (!user) {
-      db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE id = ?').bind(challengeRow.id).run();
-      return {
-        success: false,
-        error: 'User record for MFA challenge not found. Please re-authenticate.'
-      };
-    }
-
-    if (username && username.trim().toLowerCase() !== user.username.toLowerCase()) {
-      return {
-        success: false,
-        error: 'MFA challenge binding mismatch for specified principal.'
-      };
-    }
-
-    if (!user.mfa_secret || !user.mfa_secret.trim()) {
-      return {
-        success: false,
-        error: 'MFA is not enrolled for this principal.'
-      };
-    }
-
-    const cleanCode = code.trim().replace(/[\s\-]/g, '');
-    const storedBase32Secret = normalizeBase32Secret(user.mfa_secret);
-
-    let isCodeValid = false;
-    let verifiedStep: number | undefined;
-
-    // 1. Strict RFC 6238 TOTP verification using otplib
-    if (/^\d{6}$/.test(cleanCode)) {
-      const totpResult = verifyTotpToken(cleanCode, storedBase32Secret, 0, 1);
-
-      if (totpResult.valid) {
-        if (typeof user.last_totp_step === 'number' && totpResult.timeWindow && totpResult.timeWindow <= user.last_totp_step) {
-          logger.warn('MFA_REPLAY_BLOCKED', 'MFA TOTP replay attempt blocked', { userId: user.id, metadata: { username: user.username, timeStep: totpResult.timeWindow } });
-          return {
-            success: false,
-            error: 'Replay Attack Prevention: This TOTP time-step was already consumed. Please wait for the next 30-second token.',
-            attemptsLeft: Math.max(0, maxAttempts - currentAttempts)
-          };
-        }
-
-        isCodeValid = true;
-        verifiedStep = totpResult.timeWindow;
-      }
-    }
-
-    // 2. Single-Use Cryptographic Recovery Bypass Codes (Hashed with SHA-256)
-    if (!isCodeValid && cleanCode.length >= 8) {
-      const backupResult = verifyRecoveryCode(cleanCode, user.mfa_backup_codes || []);
-      if (backupResult.valid && backupResult.matchedHash) {
-        isCodeValid = true;
-        const remainingHashedCodes = (user.mfa_backup_codes || []).filter(
-          (h) => h !== backupResult.matchedHash
-        );
-        userRepository.update(user.id, { mfa_backup_codes: remainingHashedCodes });
-        auditRepository.record({
-          username: user.username,
-          requested_function: '/api/v1/auth/mfa/verify',
-          calculated_risk: 15,
-          status: 'ALLOWED',
-          reason: `[RECOVERY CODE CONSUMED] Single-use recovery bypass code consumed for ${user.username}. Code permanently invalidated.`,
-          verification_latency_ms: 1.2,
-          event_type: 'BACKUP_CODE_CONSUMED'
-        });
-      }
-    }
-
-    // If still invalid, persist incremented attempts countdown
-    if (!isCodeValid) {
-      const nextAttempts = currentAttempts + 1;
-      const attemptsLeft = Math.max(0, maxAttempts - nextAttempts);
-      const shouldConsume = nextAttempts >= maxAttempts ? 1 : 0;
-
-      db.prepare('UPDATE mfa_challenges SET attempts = ?, consumed = ? WHERE id = ?')
-        .bind(nextAttempts, shouldConsume, challengeRow.id)
-        .run();
-
-      auditRepository.record({
-        username: user.username,
-        requested_function: '/api/v1/auth/mfa/verify',
-        calculated_risk: Math.min(100, user.base_risk_score + 25),
-        status: 'BLOCKED',
-        reason: `[MFA REJECTED] Invalid passcode submitted (${attemptsLeft} attempts remaining). Arbitrary bypass codes rejected.`,
-        verification_latency_ms: 1.4,
-        event_type: 'MFA_VERIFICATION_FAILURE'
-      });
-
-      if (attemptsLeft <= 0) {
-        return {
-          success: false,
-          error: 'MFA verification locked out. Maximum attempts exceeded. Please re-authenticate.',
-          attemptsLeft: 0
+      if (!challengeRow) {
+        txOutcome = {
+          ok: false,
+          error: 'MFA challenge not found or expired. Please re-authenticate.'
         };
+      } else if (challengeRow.consumed) {
+        txOutcome = {
+          ok: false,
+          error: 'MFA challenge has already been consumed. Please re-authenticate.'
+        };
+      } else if (new Date(challengeRow.expires_at).getTime() <= Date.now()) {
+        db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE id = ?').bind(challengeRow.id).run();
+        txOutcome = {
+          ok: false,
+          error: 'MFA challenge timed out (5-minute security limit exceeded). Please re-enter credentials.'
+        };
+      } else {
+        const currentAttempts = Number(challengeRow.attempts || 0);
+        const maxAttempts = Number(challengeRow.max_attempts || CONFIG.MFA_MAX_ATTEMPTS);
+
+        if (currentAttempts >= maxAttempts) {
+          db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE id = ?').bind(challengeRow.id).run();
+          txOutcome = {
+            ok: false,
+            error: 'MFA verification locked out. Maximum attempts exceeded. Please re-authenticate.',
+            attemptsLeft: 0
+          };
+        } else {
+          const user = userRepository.findById(challengeRow.user_id);
+          if (!user) {
+            db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE id = ?').bind(challengeRow.id).run();
+            txOutcome = {
+              ok: false,
+              error: 'User record for MFA challenge not found. Please re-authenticate.'
+            };
+          } else if (username && username.trim().toLowerCase() !== user.username.toLowerCase()) {
+            txOutcome = {
+              ok: false,
+              error: 'MFA challenge binding mismatch for specified principal.'
+            };
+          } else if (!user.mfa_secret || !user.mfa_secret.trim()) {
+            txOutcome = {
+              ok: false,
+              error: 'MFA is not configured for this principal.'
+            };
+          } else {
+            const storedBase32Secret = normalizeBase32Secret(user.mfa_secret);
+            const backupHashes = Array.isArray(user.mfa_backup_codes) ? user.mfa_backup_codes : [];
+
+            let isCodeValid = false;
+            let verifiedStep: number | undefined;
+            let consumedRecoveryCode = false;
+            let remainingHashedCodes = backupHashes;
+            let replayBlocked = false;
+            let exhaustedRecoveryCodes = false;
+
+            // 1. RFC 6238 TOTP check when code is 6 digits and caller did not force backup_code
+            if (method !== 'backup_code' && /^\d{6}$/.test(cleanCode)) {
+              const totpResult = verifyTotpToken(cleanCode, storedBase32Secret, 0, 1);
+              if (totpResult.valid) {
+                if (
+                  typeof user.last_totp_step === 'number' &&
+                  totpResult.timeWindow &&
+                  totpResult.timeWindow <= user.last_totp_step
+                ) {
+                  replayBlocked = true;
+                  logger.warn('MFA_REPLAY_BLOCKED', 'MFA TOTP replay attempt blocked', {
+                    userId: user.id,
+                    metadata: { username: user.username, timeStep: totpResult.timeWindow }
+                  });
+                } else {
+                  isCodeValid = true;
+                  verifiedStep = totpResult.timeWindow;
+                }
+              }
+            }
+
+            // 2. Single-Use SHA-256 Recovery Code verification & atomic consumption
+            if (!isCodeValid && !replayBlocked && (method === 'backup_code' || cleanCode.length >= 8)) {
+              if (backupHashes.length === 0) {
+                exhaustedRecoveryCodes = true;
+              } else {
+                const backupResult = verifyRecoveryCode(cleanCode, backupHashes);
+                if (backupResult.valid && backupResult.matchedHash) {
+                  isCodeValid = true;
+                  consumedRecoveryCode = true;
+                  remainingHashedCodes = backupHashes.filter((h) => h !== backupResult.matchedHash);
+                }
+              }
+            }
+
+            if (replayBlocked) {
+              auditEventToRecord.push({
+                username: user.username,
+                requested_function: '/api/v1/auth/mfa/verify',
+                calculated_risk: Math.min(100, user.base_risk_score + 30),
+                status: 'BLOCKED',
+                reason: `[MFA REPLAY BLOCKED] TOTP time-step replay rejected for ${user.username}.`,
+                verification_latency_ms: 1.1,
+                event_type: 'MFA_REPLAY_BLOCKED'
+              });
+              txOutcome = {
+                ok: false,
+                error: 'Replay Attack Prevention: This TOTP time-step was already consumed. Please wait for the next 30-second token.',
+                attemptsLeft: Math.max(0, maxAttempts - currentAttempts)
+              };
+            } else if (!isCodeValid) {
+              const nextAttempts = currentAttempts + 1;
+              const attemptsLeft = Math.max(0, maxAttempts - nextAttempts);
+              const shouldConsume = nextAttempts >= maxAttempts ? 1 : 0;
+
+              db.prepare('UPDATE mfa_challenges SET attempts = ?, consumed = ? WHERE id = ?')
+                .bind(nextAttempts, shouldConsume, challengeRow.id)
+                .run();
+
+              auditEventToRecord.push({
+                username: user.username,
+                requested_function: '/api/v1/auth/mfa/verify',
+                calculated_risk: Math.min(100, user.base_risk_score + 25),
+                status: 'BLOCKED',
+                reason: exhaustedRecoveryCodes
+                  ? `[RECOVERY CODES EXHAUSTED] ${user.username} attempted recovery-code verification with 0 valid codes remaining (${attemptsLeft} attempts left).`
+                  : `[MFA REJECTED] Invalid ${method === 'backup_code' ? 'recovery code' : 'verification code'} submitted (${attemptsLeft} attempts remaining).`,
+                verification_latency_ms: 1.4,
+                event_type: attemptsLeft <= 0 ? 'MFA_LOCKOUT' : 'MFA_VERIFICATION_FAILURE'
+              });
+
+              txOutcome =
+                attemptsLeft <= 0
+                  ? {
+                      ok: false,
+                      error: 'MFA verification locked out. Maximum attempts exceeded. Please re-authenticate.',
+                      attemptsLeft: 0
+                    }
+                  : exhaustedRecoveryCodes
+                  ? {
+                      ok: false,
+                      error: `No valid recovery codes remain for this account (0 remaining). Contact an Administrator to reset MFA or regenerate recovery codes. ${attemptsLeft} attempts remaining.`,
+                      attemptsLeft
+                    }
+                  : {
+                      ok: false,
+                      error: `Invalid verification code. ${attemptsLeft} attempts remaining.`,
+                      attemptsLeft
+                    };
+            } else {
+              // Consume challenge strictly once inside BEGIN IMMEDIATE lock
+              const consumeRes = db.prepare(
+                'UPDATE mfa_challenges SET consumed = 1 WHERE id = ? AND consumed = 0'
+              ).bind(challengeRow.id).run();
+
+              if ((consumeRes.changes || 0) === 0) {
+                txOutcome = {
+                  ok: false,
+                  error: 'MFA challenge already consumed. Please re-authenticate.'
+                };
+              } else {
+                const wasFirstEnrollment = !user.mfa_enrolled;
+
+                if (consumedRecoveryCode) {
+                  db.prepare(
+                    'UPDATE users SET mfa_backup_codes = ?, mfa_enrolled = 1 WHERE id = ?'
+                  ).bind(JSON.stringify(remainingHashedCodes), user.id).run();
+
+                  auditEventToRecord.push({
+                    username: user.username,
+                    requested_function: '/api/v1/auth/mfa/verify',
+                    calculated_risk: 15,
+                    status: 'ALLOWED',
+                    reason: `[RECOVERY CODE CONSUMED] Single-use recovery code verified & permanently invalidated for ${user.username} (${remainingHashedCodes.length} remaining).`,
+                    verification_latency_ms: 1.2,
+                    event_type: 'BACKUP_CODE_CONSUMED'
+                  });
+
+                  if (wasFirstEnrollment) {
+                    auditEventToRecord.push({
+                      username: user.username,
+                      requested_function: '/api/v1/auth/mfa/verify',
+                      calculated_risk: user.base_risk_score,
+                      status: 'ALLOWED',
+                      reason: `[RECOVERY ENROLLMENT COMPLETED] Laptop-only recovery-code MFA activated for ${user.username} (${remainingHashedCodes.length} backup codes remaining).`,
+                      verification_latency_ms: 1.0,
+                      event_type: 'RECOVERY_CODE_ENROLLMENT_COMPLETED'
+                    });
+                  }
+                } else if (typeof verifiedStep === 'number') {
+                  db.prepare(
+                    'UPDATE users SET last_totp_step = ?, mfa_enrolled = 1 WHERE id = ?'
+                  ).bind(verifiedStep, user.id).run();
+                }
+
+                auditEventToRecord.push({
+                  username: user.username,
+                  requested_function: '/api/v1/auth/mfa/verify',
+                  calculated_risk: user.base_risk_score,
+                  status: 'ALLOWED',
+                  reason: consumedRecoveryCode
+                    ? `[MFA AUTHORIZED] Multi-factor authentication confirmed via single-use recovery code (${remainingHashedCodes.length} remaining). Cryptographic JWT session established.`
+                    : `[MFA AUTHORIZED] Multi-factor authentication successfully confirmed via RFC 6238 TOTP. Cryptographic JWT session established.`,
+                  verification_latency_ms: 1.2,
+                  event_type: 'MFA_SUCCESS'
+                });
+
+                const updatedUser = userRepository.findById(user.id) || user;
+                txOutcome = {
+                  ok: true,
+                  user: updatedUser,
+                  mfaMethod: consumedRecoveryCode ? 'backup_code' : 'authenticator',
+                  recoveryCodesRemaining: remainingHashedCodes.length
+                };
+              }
+            }
+          }
+        }
       }
 
+      db.exec('COMMIT;');
+    } catch (err) {
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // ignore rollback error
+      }
+      throw err;
+    }
+
+    for (const ev of auditEventToRecord) {
+      auditRepository.record(ev);
+    }
+
+    if (!txOutcome.ok) {
+      const failedOutcome = txOutcome as { ok: false; error: string; attemptsLeft?: number };
       return {
         success: false,
-        error: `Invalid verification code. ${attemptsLeft} attempts remaining.`,
-        attemptsLeft
+        error: failedOutcome.error,
+        attemptsLeft: failedOutcome.attemptsLeft
       };
     }
 
-    // Atomically mark challenge consumed to prevent parallel replay
-    const consumeRes = db.prepare(
-      'UPDATE mfa_challenges SET consumed = 1 WHERE id = ? AND consumed = 0'
-    ).bind(challengeRow.id).run();
-
-    if ((consumeRes.changes || 0) === 0) {
-      return {
-        success: false,
-        error: 'MFA challenge already consumed. Please re-authenticate.'
-      };
-    }
-
-    // MFA Passed: update last accepted TOTP step and permanently mark Authenticator enrolled
-    if (typeof verifiedStep === 'number') {
-      userRepository.update(user.id, { last_totp_step: verifiedStep, mfa_enrolled: true });
-    }
-
-    auditRepository.record({
-      username: user.username,
-      requested_function: '/api/v1/auth/mfa/verify',
-      calculated_risk: user.base_risk_score,
-      status: 'ALLOWED',
-      reason: `[MFA AUTHORIZED] Multi-factor authentication successfully confirmed via RFC 6238 TOTP. Cryptographic JWT session established.`,
-      verification_latency_ms: 1.2,
-      event_type: 'MFA_SUCCESS'
-    });
-
-    const sessionRes = this.completeLoginSession(user, ipAddress, userAgent);
+    const okOutcome = txOutcome as {
+      ok: true;
+      user: UserRecord;
+      mfaMethod: 'authenticator' | 'backup_code';
+      recoveryCodesRemaining: number;
+    };
+    const sessionRes = this.completeLoginSession(okOutcome.user, ipAddress, userAgent);
     return {
       success: true,
       token: sessionRes.token,
-      user: sessionRes.user
+      user: sessionRes.user,
+      mfaMethod: okOutcome.mfaMethod,
+      recoveryCodesRemaining: okOutcome.recoveryCodesRemaining
     };
   }
 
@@ -439,13 +549,18 @@ class AuthService {
   }
 
   /**
-   * Provides one-time Authenticator QR & setup key for an active Factor-1 MFA challenge
-   * ONLY if the identity has never paired an Authenticator app yet (mfa_enrolled = false and last_totp_step = 0).
+   * Provides one-time MFA enrollment material for an active Factor-1 MFA challenge
+   * ONLY if the identity has not yet completed MFA enrollment (mfa_enrolled = false and last_totp_step = 0).
+   * Supports laptop-only 'recovery_codes' mode (no authenticator app required) or 'authenticator' TOTP QR mode.
    */
-  public getChallengeEnrollment(mfaChallengeId: string): {
+  public getChallengeEnrollment(
+    mfaChallengeId: string,
+    mode?: 'recovery_codes' | 'authenticator'
+  ): {
     success: boolean;
     status?: number;
     error?: string;
+    mode?: 'recovery_codes' | 'authenticator';
     username?: string;
     secret?: string;
     provisioningUri?: string;
@@ -480,14 +595,43 @@ class AuthService {
       return {
         success: false,
         status: 403,
-        error: 'Authenticator app is already enrolled for this identity. Enter your 6-digit code, use a recovery code, or contact an Administrator to reset MFA.'
+        error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
+      };
+    }
+
+    const effectiveMode: 'recovery_codes' | 'authenticator' =
+      mode === 'recovery_codes' ? 'recovery_codes' : 'authenticator';
+
+    const { plaintextCodes, hashedCodes } = generateRecoveryCodes(8);
+
+    if (effectiveMode === 'recovery_codes') {
+      userRepository.update(user.id, {
+        mfa_backup_codes: hashedCodes,
+        mfa_enabled: true
+      });
+
+      auditRepository.record({
+        username: user.username,
+        requested_function: '/api/auth/mfa/enroll-challenge',
+        calculated_risk: user.base_risk_score,
+        status: 'ALLOWED',
+        reason: `[RECOVERY ENROLLMENT ISSUED] Issued 8 single-use hashed recovery codes for laptop-only MFA setup (${user.username}). Pending confirmation.`,
+        verification_latency_ms: 0.9,
+        event_type: 'RECOVERY_CODE_ENROLLMENT_STARTED'
+      });
+
+      return {
+        success: true,
+        mode: 'recovery_codes',
+        username: user.username,
+        backupCodes: plaintextCodes,
+        issuer: 'ServerlessSecOps'
       };
     }
 
     const secret = user.mfa_secret && user.mfa_secret.trim().length >= 16
       ? normalizeBase32Secret(user.mfa_secret)
       : generateTotpSecret(20);
-    const { plaintextCodes, hashedCodes } = generateRecoveryCodes(8);
 
     userRepository.update(user.id, {
       mfa_secret: secret,
@@ -509,6 +653,7 @@ class AuthService {
 
     return {
       success: true,
+      mode: 'authenticator',
       username: user.username,
       secret,
       provisioningUri,
@@ -522,6 +667,17 @@ class AuthService {
     if (!user) return null;
     const newSecret = generateTotpSecret(20);
     const { hashedCodes } = generateRecoveryCodes(8);
+
+    // Revoke all existing sessions and consume pending MFA challenges on reset
+    sessionRepository.revoke({
+      username: user.username,
+      revokedBy: adminUsername,
+      reason: 'MFA enrollment reset by Administrator'
+    });
+    db.prepare('UPDATE mfa_challenges SET consumed = 1 WHERE user_id = ? AND consumed = 0')
+      .bind(user.id)
+      .run();
+
     const updated = userRepository.update(user.id, {
       mfa_secret: newSecret,
       mfa_backup_codes: hashedCodes,
@@ -535,7 +691,7 @@ class AuthService {
       requested_function: `/api/system/users/${user.username}/mfa-reset`,
       calculated_risk: 15,
       status: 'ALLOWED',
-      reason: `[ADMIN MFA RESET] Authenticator pairing reset for ${user.username} by ${adminUsername}. Next sign-in will prompt first-time QR setup.`,
+      reason: `[ADMIN MFA RESET] MFA enrollment & recovery codes reset for ${user.username} by ${adminUsername} at ${new Date().toISOString()}; existing sessions revoked. Outcome: RESET_COMPLETED.`,
       verification_latency_ms: 1.0,
       event_type: 'MFA_ENROLLMENT_RESET'
     });

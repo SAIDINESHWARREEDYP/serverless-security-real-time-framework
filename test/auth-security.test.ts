@@ -30,22 +30,48 @@ async function runTestSuite() {
   console.log('STARTING AUTOMATED SECURITY & AUTHENTICATION VERIFICATION SUITE');
   console.log('================================================================\n');
 
-  // Test 1: Valid Login with PBKDF2 Password Hashing
+  // Test 1: Valid Login with PBKDF2 Password Hashing (dynamic test user, no hardcoded seed passwords)
+  const testAuthUsername = `auth_sec_test_${Date.now()}`;
+  const testAuthPassword = `TestAuth_Pass_${Date.now()}!`;
+  let createdAuthUserId: string | null = null;
   try {
-    const user = userRepository.findByUsername('secops_admin');
-    const isPwValid = user ? verifyPassword('12345@pro', user.password_salt, user.password_hash) : false;
-    assert(isPwValid, '1. Valid Login & PBKDF2 Verification', 'PBKDF2 SHA-512 derived key matches cryptographic salt.');
+    const created = userRepository.create({
+      username: testAuthUsername,
+      password: testAuthPassword,
+      role: 'Developer',
+      base_risk_score: 10,
+      status: 'APPROVED',
+      department: 'Security QA'
+    });
+    createdAuthUserId = created.id;
+    const isPwValid = verifyPassword(testAuthPassword, created.password_salt, created.password_hash);
+    const adminUser = userRepository.findByUsername('secops_admin');
+    const adminHasProperCrypt = Boolean(
+      adminUser &&
+        adminUser.password_salt &&
+        adminUser.password_salt.length >= 32 &&
+        adminUser.password_hash &&
+        !adminUser.password_hash.startsWith('!')
+    );
+    assert(isPwValid && adminHasProperCrypt, '1. Valid Login & PBKDF2 Verification', 'PBKDF2 SHA-512 derived key matches random salt; seeded admin uses CSPRNG credentials.');
   } catch (err: any) {
     assert(false, '1. Valid Login & PBKDF2 Verification', err.message);
   }
 
   // Test 2: Invalid Password Rejection
   try {
-    const user = userRepository.findByUsername('secops_admin');
+    const user = userRepository.findByUsername(testAuthUsername);
     const isPwValid = user ? verifyPassword('WrongPassword123!', user.password_salt, user.password_hash) : false;
     assert(!isPwValid, '2. Invalid Password Rejection', 'Incorrect password correctly rejected without false positives.');
   } catch (err: any) {
     assert(false, '2. Invalid Password Rejection', err.message);
+  } finally {
+    if (createdAuthUserId) {
+      try {
+        const { db } = await import('../server/db.ts');
+        db.prepare('DELETE FROM users WHERE id = ?').bind(createdAuthUserId).run();
+      } catch { /* ignore */ }
+    }
   }
 
   // Test 3: Expired Token Rejection

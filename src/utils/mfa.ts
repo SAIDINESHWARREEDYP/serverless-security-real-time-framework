@@ -321,9 +321,20 @@ export function generateRecoveryCodes(count = 8): RecoveryCodesResult {
   return { plaintextCodes, hashedCodes };
 }
 
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length === 0 || a.length !== b.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 /**
  * Verify candidate recovery code against list of hashed backup codes.
- * Supports codes entered with or without hyphens.
+ * Supports codes entered with or without hyphens using constant-time comparison.
  */
 export function verifyRecoveryCode(
   candidateCode: string,
@@ -336,16 +347,20 @@ export function verifyRecoveryCode(
   const unhyphenated = rawClean.replace(/[\s\-]/g, '');
   const hyphenated = unhyphenated.length === 8 ? `${unhyphenated.slice(0, 4)}-${unhyphenated.slice(4)}` : unhyphenated;
 
-  const candidateHash1 = sha256Hex(unhyphenated);
-  const candidateHash2 = sha256Hex(hyphenated);
+  const candidateHash1 = sha256Hex(unhyphenated).toLowerCase();
+  const candidateHash2 = sha256Hex(hyphenated).toLowerCase();
 
+  let matchedHash: string | undefined;
   for (const storedHash of storedHashedCodes) {
+    if (typeof storedHash !== 'string') continue;
     const s = storedHash.toLowerCase();
-    if (s === candidateHash1.toLowerCase() || s === candidateHash2.toLowerCase()) {
-      return { valid: true, matchedHash: storedHash };
+    const eq1 = timingSafeEqualHex(s, candidateHash1);
+    const eq2 = timingSafeEqualHex(s, candidateHash2);
+    if ((eq1 || eq2) && !matchedHash) {
+      matchedHash = storedHash;
     }
   }
-  return { valid: false };
+  return matchedHash ? { valid: true, matchedHash } : { valid: false };
 }
 
 /**

@@ -424,7 +424,7 @@ export const DeveloperWorkbench: React.FC<DeveloperWorkbenchProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">amr (MFA Factor 2):</span>
-                  <span className="text-cyan-300 font-bold">{currentSession.mfaMethod ? currentSession.mfaMethod.toUpperCase() : 'TOTP / SMS (VERIFIED)'}</span>
+                  <span className="text-cyan-300 font-bold">{currentSession.mfaMethod ? currentSession.mfaMethod.toUpperCase() : 'RECOVERY CODE / TOTP (VERIFIED)'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">issued_at:</span>

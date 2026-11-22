@@ -2,26 +2,28 @@
 
 **Project:** Serverless Cloud Security Verification Framework  
 **Standard Evaluated:** OWASP Top 10 API Security Risks (2023), NIST SP 800-207 Zero Trust Architecture, CIS Benchmarks  
-**Audit Date:** October 30, 2026  
+**Initial Audit Date:** October 30, 2026 | **Post-Hardening Status:** Remediated & Re-Verified  
 
 ---
 
-## Index of Security Findings
+## Remediation Status Summary (Current Codebase)
 
-1. [SEC-01] Critical: Unauthenticated Administrative Endpoints in `server.ts`
-2. [SEC-02] Critical: Universal Password Authentication Bypass
-3. [SEC-03] High: Insecure Pseudo-JWT Tokens (Lack of Cryptographic Signature)
-4. [SEC-04] High: Plaintext Password Storage in Database
-5. [SEC-05] High: Unrestricted Sensitive Data Exposure in Overview API
-6. [SEC-06] High: Missing Rate Limiting on Authentication & OTP Endpoints
-7. [SEC-07] Medium: Wildcard CORS Configuration on Sensitive Endpoints
-8. [SEC-08] Medium: In-Memory Storage Volatility & Audit Trail Loss Risk
-9. [SEC-09] Medium: Edge Worker Route Desynchronization (Cloudflare Parity Gap)
-10. [SEC-10] Low: Missing CSRF Protection & Security Headers
+| ID | Original Finding | Current Status | Verification Summary |
+|---|---|---|---|
+| **SEC-01** | Unauthenticated Admin Endpoints | **REMEDIATED** | Express & Worker admin routes enforce Bearer JWT + Admin role checks (`authenticate`, `authorize`). |
+| **SEC-02** | Universal Password Bypass | **REMEDIATED** | Removed hardcoded `'ZeroTrust_2026'`, `'MBU_Project_2027'`, and static `'12345@pro'` / `'JBSWY3DPEHPK3PXP'` seed secrets; bootstrap uses CSPRNG + PBKDF2-SHA512. |
+| **SEC-03** | Insecure Pseudo-JWT Tokens | **REMEDIATED** | `HS256` HMAC-SHA256 verification enforcing mandatory `alg === 'HS256'`, `iss`, `aud`, `iat`, `nbf`, `exp`; rejects `zt_jwt_*` / `alg:none`. |
+| **SEC-04** | Plaintext Password Storage | **REMEDIATED** | 100k-round PBKDF2-SHA512 with 16-byte random salt & `timingSafeEqual`; legacy plaintext fallback removed. |
+| **SEC-05** | Sensitive Data Exposure | **REMEDIATED** | Password hashes, salts, MFA secrets, raw emails, and phones stripped from overview & API responses. |
+| **SEC-06** | Missing Auth Rate Limiting & SMS Risk | **REMEDIATED** | Rate limiter protects `/api/login`; SMS gateway is disabled (`HTTP 501`) and replaced with laptop-only single-use SHA-256 recovery-code MFA + optional TOTP. |
+| **SEC-07** | Wildcard CORS | **REMEDIATED** | Explicit `TRUSTED_ORIGINS` allow-list enforced cleanly in Express & Worker. |
+| **SEC-08** | In-Memory Volatility | **REMEDIATED** | Persistent SQLite (`node:sqlite`) with deterministic `0001`–`0004` migrations and transactional MFA challenges. |
+| **SEC-09** | Cloudflare Worker Desync | **PARTIAL (Local D1 Parity)** | `src/worker.ts` implements hardened parity routes & fails closed with `503` if `env.DB` is unbound; verified via local `node:sqlite` D1 adapter. |
+| **SEC-10** | Missing Security Headers & Static Exposure | **REMEDIATED** | Security headers (`X-Content-Type-Options`, CSP) active; `.zip` archives & `.env*` blocked with `404`. |
 
 ---
 
-## Detailed Vulnerability Reports
+## Historical Initial Audit Details (October 30, 2026 Baseline)
 
 ### [SEC-01] Unauthenticated Administrative Endpoints
 - **File Path:** `/server.ts`

@@ -22,8 +22,8 @@ if (rawSecret && rawSecret.length >= 32) {
   if (isProd) {
     throw new Error('[FATAL_SECURITY_ERROR] JWT_SECRET must be configured with at least 32 characters in production.');
   }
-  // Local development / testing verification secret key
-  resolvedJwtSecret = 'dev_zt_secops_verification_secret_key_minimum_32_characters_2026_local_only';
+  // Ephemeral high-entropy development/testing secret generated via CSPRNG per process startup
+  resolvedJwtSecret = crypto.randomBytes(32).toString('hex');
 }
 
 // Explicit Trusted Origins for CORS Defense

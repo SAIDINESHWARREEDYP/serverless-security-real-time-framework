@@ -17,42 +17,70 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
   const [streamEventsCount, setStreamEventsCount] = useState<number>(0);
   const [reconnectAttempts, setReconnectAttempts] = useState<number>(0);
 
-  // Set of seen event IDs to prevent duplicate processing
+  const onNewLogRef = useRef(onNewLog);
+  const onNewAlertRef = useRef(onNewAlert);
+  const onIncidentUpdateRef = useRef(onIncidentUpdate);
+
+  useEffect(() => {
+    onNewLogRef.current = onNewLog;
+    onNewAlertRef.current = onNewAlert;
+    onIncidentUpdateRef.current = onIncidentUpdate;
+  }, [onNewLog, onNewAlert, onIncidentUpdate]);
+
+  // Set of seen event IDs to prevent duplicate processing (bounded to prevent memory growth)
   const processedEventIdsRef = useRef<Set<string>>(new Set());
 
   // SSE event source ref
   const eventSourceRef = useRef<EventSource | null>(null);
-  const isPollingFallbackRef = useRef<boolean>(false);
-  const pollingTimerRef = useRef<any>(null);
+  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef<number>(0);
 
   const processIncomingEvent = useCallback((event: { type: string; data: any; timestamp: string }) => {
     setLastServerTime(event.timestamp || new Date().toISOString());
-    setStreamEventsCount(prev => prev + 1);
+    setStreamEventsCount((prev) => prev + 1);
+
+    if (processedEventIdsRef.current.size > 2000) {
+      processedEventIdsRef.current.clear();
+    }
 
     if (event.type === 'NEW_INVOCATION' && event.data) {
       const eventKey = `log_${event.data.id}_${event.data.timestamp}`;
       if (!processedEventIdsRef.current.has(eventKey)) {
         processedEventIdsRef.current.add(eventKey);
-        if (onNewLog) onNewLog(event.data);
+        onNewLogRef.current?.(event.data);
       }
     } else if (event.type === 'THREAT_ALERT' && event.data) {
       const eventKey = `alt_${event.data.id}`;
       if (!processedEventIdsRef.current.has(eventKey)) {
         processedEventIdsRef.current.add(eventKey);
-        if (onNewAlert) onNewAlert(event.data);
+        onNewAlertRef.current?.(event.data);
       }
     } else if ((event.type === 'INCIDENT_CREATED' || event.type === 'INCIDENT_UPDATED') && event.data) {
-      if (onIncidentUpdate) onIncidentUpdate(event.data);
+      onIncidentUpdateRef.current?.(event.data);
     }
-  }, [onNewLog, onNewAlert, onIncidentUpdate]);
+  }, []);
 
-  // Connect to SSE stream with automated polling fallback
+  // Connect to SSE stream with polling fallback and automatic SSE reconnection
   useEffect(() => {
     let isCancelled = false;
 
+    const clearPolling = () => {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    };
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
+
     const startPollingFallback = () => {
-      if (isCancelled) return;
-      isPollingFallbackRef.current = true;
+      if (isCancelled || pollingTimerRef.current) return;
       setConnectionStatus('POLLING_FALLBACK');
 
       const poll = async () => {
@@ -60,7 +88,9 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
           const res = await fetch('/api/system/health');
           if (res.ok) {
             const data = await res.json();
-            setLastServerTime(data.timestamp || new Date().toISOString());
+            if (!isCancelled) {
+              setLastServerTime(data.timestamp || new Date().toISOString());
+            }
           }
         } catch {
           // ignore transient poll failure
@@ -72,18 +102,22 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
     };
 
     const initEventSource = () => {
+      if (isCancelled) return;
+      clearReconnectTimer();
+
       try {
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+        }
         const es = new EventSource('/api/v1/realtime/stream');
         eventSourceRef.current = es;
 
         es.onopen = () => {
           if (!isCancelled) {
+            reconnectAttemptRef.current = 0;
             setConnectionStatus('LIVE_STREAMING');
             setReconnectAttempts(0);
-            if (pollingTimerRef.current) {
-              clearInterval(pollingTimerRef.current);
-              pollingTimerRef.current = null;
-            }
+            clearPolling();
           }
         };
 
@@ -98,18 +132,20 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
         };
 
         es.onerror = () => {
-          if (!isCancelled) {
-            es.close();
-            setConnectionStatus('RECONNECTING');
-            setReconnectAttempts(prev => prev + 1);
+          if (isCancelled) return;
+          es.close();
+          eventSourceRef.current = null;
+          reconnectAttemptRef.current += 1;
+          setReconnectAttempts(reconnectAttemptRef.current);
+          startPollingFallback();
 
-            // Reconnection strategy with backoff; fallback to controlled polling
-            setTimeout(() => {
-              if (!isCancelled) {
-                startPollingFallback();
-              }
-            }, 3000);
-          }
+          const backoffMs = Math.min(30000, 3000 * Math.pow(2, Math.min(3, reconnectAttemptRef.current - 1)));
+          reconnectTimerRef.current = setTimeout(() => {
+            if (!isCancelled) {
+              setConnectionStatus('RECONNECTING');
+              initEventSource();
+            }
+          }, backoffMs);
         };
       } catch {
         startPollingFallback();
@@ -120,11 +156,11 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
 
     return () => {
       isCancelled = true;
+      clearReconnectTimer();
+      clearPolling();
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
-      }
-      if (pollingTimerRef.current) {
-        clearInterval(pollingTimerRef.current);
+        eventSourceRef.current = null;
       }
     };
   }, [pollingIntervalMs, processIncomingEvent]);

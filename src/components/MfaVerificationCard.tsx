@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Smartphone,
-  MessageSquare,
   KeyRound,
   ShieldCheck,
   ShieldAlert,
@@ -11,19 +10,13 @@ import {
   ArrowLeft,
   Copy,
   Check,
+  Download,
   Lock,
-  Sparkles,
-  Send,
   LifeBuoy,
-  Key,
-  Shield,
-  Fingerprint,
-  AlertTriangle
+  Laptop
 } from 'lucide-react';
-import { MfaPendingChallenge, AuthSession, User } from '../types.ts';
-import {
-  getTotpRemainingSeconds
-} from '../utils/mfa.ts';
+import { MfaPendingChallenge, AuthSession } from '../types.ts';
+import { getTotpRemainingSeconds } from '../utils/mfa.ts';
 import { MfaEnrollmentPanel, MfaEnrollmentPayload } from './MfaEnrollmentPanel.tsx';
 
 interface MfaVerificationCardProps {
@@ -41,110 +34,267 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
   onAddTerminalLog,
   variant = 'page'
 }) => {
-  const [method, setMethod] = useState<'authenticator' | 'sms' | 'backup_code'>('authenticator');
+  const [method, setMethod] = useState<'backup_code' | 'authenticator'>(() => {
+    if (challenge.enrollmentRequired) return 'backup_code';
+    if (challenge.preferredMethod === 'authenticator') return 'authenticator';
+    if (challenge.preferredMethod === 'backup_code') return 'backup_code';
+    if (challenge.methods?.includes('backup_code')) return 'backup_code';
+    return 'authenticator';
+  });
+
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [recoveryCodeInput, setRecoveryCodeInput] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [attemptsLeft, setAttemptsLeft] = useState<number>(challenge.attemptsLeft ?? 5);
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState<number>(0);
-  const [enrollmentData, setEnrollmentData] = useState<MfaEnrollmentPayload | null>(null);
-  const [enrollmentLoading, setEnrollmentLoading] = useState(false);
-  const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
+  const [copiedRecoveryAll, setCopiedRecoveryAll] = useState(false);
 
-  // Keep attemptsLeft synchronized with backend challenge state
+  // Separate one-time enrollment payloads keyed by mfaSessionId so laptop-only recovery setup does not hang or overwrite across tab switches
+  const [recoveryEnrollmentCodes, setRecoveryEnrollmentCodes] = useState<string[] | null>(null);
+  const [recoveryCodesChallengeId, setRecoveryCodesChallengeId] = useState<string | null>(null);
+  const [recoveryEnrollmentLoading, setRecoveryEnrollmentLoading] = useState(false);
+  const [recoveryEnrollmentError, setRecoveryEnrollmentError] = useState<string | null>(null);
+
+  const [authenticatorEnrollmentData, setAuthenticatorEnrollmentData] = useState<MfaEnrollmentPayload | null>(null);
+  const [authenticatorChallengeId, setAuthenticatorChallengeId] = useState<string | null>(null);
+  const [authenticatorEnrollmentLoading, setAuthenticatorEnrollmentLoading] = useState(false);
+  const [authenticatorEnrollmentError, setAuthenticatorEnrollmentError] = useState<string | null>(null);
+
+  const [challengeSecondsLeft, setChallengeSecondsLeft] = useState<number>(challenge.expiresInSeconds || 300);
+
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const recoveryInputRef = useRef<HTMLInputElement | null>(null);
+  const onAddTerminalLogRef = useRef(onAddTerminalLog);
+
+  useEffect(() => {
+    onAddTerminalLogRef.current = onAddTerminalLog;
+  }, [onAddTerminalLog]);
+
+  // Reset enrollment caches cleanly whenever a new MFA challenge is presented
+  useEffect(() => {
+    setRecoveryEnrollmentCodes(null);
+    setRecoveryCodesChallengeId(null);
+    setRecoveryEnrollmentLoading(false);
+    setRecoveryEnrollmentError(null);
+    setAuthenticatorEnrollmentData(null);
+    setAuthenticatorChallengeId(null);
+    setAuthenticatorEnrollmentLoading(false);
+    setAuthenticatorEnrollmentError(null);
+    setRecoveryCodeInput('');
+    setDigits(['', '', '', '', '', '']);
+    setErrorMsg(null);
+    setChallengeSecondsLeft(challenge.expiresInSeconds || 300);
+  }, [challenge.mfaSessionId, challenge.expiresInSeconds]);
+
+  // Live 5-minute MFA challenge TTL countdown
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setChallengeSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [challenge.mfaSessionId]);
+
   useEffect(() => {
     if (challenge.attemptsLeft !== undefined) {
       setAttemptsLeft(challenge.attemptsLeft);
     }
   }, [challenge.attemptsLeft]);
 
-  // Dynamic TOTP countdown (30 second period + clock offset)
   const [totpSecondsLeft, setTotpSecondsLeft] = useState<number>(() => {
     const { secondsRemaining } = getTotpRemainingSeconds(challenge.clockOffsetSeconds || 0);
     return secondsRemaining;
   });
 
-  // References to the 6 PIN input boxes
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  // 1. Live Ticking TOTP Timer synchronized with standard 30s window and client clock offset
   useEffect(() => {
     const updateTotp = () => {
       const { secondsRemaining } = getTotpRemainingSeconds(challenge.clockOffsetSeconds || 0);
       setTotpSecondsLeft(secondsRemaining);
     };
-
     updateTotp();
     const timer = setInterval(updateTotp, 1000);
     return () => clearInterval(timer);
   }, [challenge.clockOffsetSeconds]);
 
-  // 2. Resend SMS Cooldown Timer
   useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const cd = setInterval(() => {
-      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(cd);
-  }, [resendCooldown]);
-
-  // Auto-focus first input box on mount
-  useEffect(() => {
-    if (method !== 'backup_code') {
+    if (method === 'authenticator') {
       inputRefs.current[0]?.focus();
+    } else {
+      recoveryInputRef.current?.focus();
     }
   }, [method]);
 
-  // Automatically load one-time Authenticator QR setup if this identity hasn't paired yet
-  useEffect(() => {
-    if (!challenge.enrollmentRequired || !challenge.mfaSessionId) return;
-    let cancelled = false;
-    setEnrollmentLoading(true);
-    setEnrollmentError(null);
-    fetch('/api/auth/mfa/enroll-challenge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mfaChallengeId: challenge.mfaSessionId })
-    })
-      .then(async (res) => {
+  const fetchRecoveryEnrollment = React.useCallback(
+    async (signal?: AbortSignal) => {
+      if (!challenge.enrollmentRequired || !challenge.mfaSessionId) return;
+      setRecoveryEnrollmentLoading(true);
+      setRecoveryEnrollmentError(null);
+
+      try {
+        const res = await fetch('/api/auth/mfa/enroll-challenge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mfaChallengeId: challenge.mfaSessionId,
+            mode: 'recovery_codes'
+          }),
+          signal
+        });
         const data = await res.json();
+        if (signal?.aborted) return;
+
+        if (!res.ok || !data.success || !Array.isArray(data.backupCodes) || data.backupCodes.length === 0) {
+          throw new Error(data.error || 'Could not generate laptop recovery codes.');
+        }
+
+        setRecoveryEnrollmentCodes(data.backupCodes);
+        setRecoveryCodesChallengeId(challenge.mfaSessionId);
+        onAddTerminalLogRef.current?.(
+          'info',
+          `[MFA ENROLLMENT] Issued ${data.backupCodes.length} single-use recovery codes for laptop-only authentication (${challenge.username}).`
+        );
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || signal?.aborted) return;
+        setRecoveryEnrollmentError(err?.message || 'Unable to load recovery code enrollment.');
+      } finally {
+        if (!signal?.aborted) {
+          setRecoveryEnrollmentLoading(false);
+        }
+      }
+    },
+    [challenge.enrollmentRequired, challenge.mfaSessionId, challenge.username]
+  );
+
+  // First-time laptop-only recovery code enrollment (React StrictMode safe via AbortController)
+  useEffect(() => {
+    if (!challenge.enrollmentRequired || !challenge.mfaSessionId || method !== 'backup_code') {
+      return;
+    }
+    if (recoveryCodesChallengeId === challenge.mfaSessionId && recoveryEnrollmentCodes && recoveryEnrollmentCodes.length > 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    fetchRecoveryEnrollment(controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    challenge.enrollmentRequired,
+    challenge.mfaSessionId,
+    method,
+    recoveryCodesChallengeId,
+    recoveryEnrollmentCodes,
+    fetchRecoveryEnrollment
+  ]);
+
+  const fetchAuthenticatorEnrollment = React.useCallback(
+    async (signal?: AbortSignal) => {
+      if (!challenge.enrollmentRequired || !challenge.mfaSessionId) return;
+      setAuthenticatorEnrollmentLoading(true);
+      setAuthenticatorEnrollmentError(null);
+
+      try {
+        const res = await fetch('/api/auth/mfa/enroll-challenge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mfaChallengeId: challenge.mfaSessionId,
+            mode: 'authenticator'
+          }),
+          signal
+        });
+        const data = await res.json();
+        if (signal?.aborted) return;
+
         if (!res.ok || !data.success) {
           throw new Error(data.error || 'Could not load first-time Authenticator setup.');
         }
-        if (!cancelled) {
-          setEnrollmentData({
-            username: data.username,
-            secret: data.secret,
-            provisioningUri: data.provisioningUri,
-            backupCodes: data.backupCodes,
-            issuer: data.issuer
-          });
-          onAddTerminalLog?.('info', `[MFA PAIRING] Loaded one-time RFC 6238 QR & setup key for unenrolled principal ${challenge.username}.`);
-        }
-      })
-      .catch((err: any) => {
-        if (!cancelled) {
-          setEnrollmentError(err?.message || 'Unable to load MFA pairing data.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setEnrollmentLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [challenge.enrollmentRequired, challenge.mfaSessionId, challenge.username, onAddTerminalLog]);
 
-  // Handle digit typing & auto-advance
+        setAuthenticatorEnrollmentData({
+          username: data.username,
+          secret: data.secret,
+          provisioningUri: data.provisioningUri,
+          backupCodes: data.backupCodes,
+          issuer: data.issuer
+        });
+        setAuthenticatorChallengeId(challenge.mfaSessionId);
+        if (Array.isArray(data.backupCodes) && data.backupCodes.length > 0) {
+          setRecoveryEnrollmentCodes(data.backupCodes);
+          setRecoveryCodesChallengeId(challenge.mfaSessionId);
+        }
+        onAddTerminalLogRef.current?.(
+          'info',
+          `[MFA PAIRING] Loaded optional RFC 6238 QR & setup key for ${challenge.username}.`
+        );
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || signal?.aborted) return;
+        setAuthenticatorEnrollmentError(err?.message || 'Unable to load MFA pairing data.');
+      } finally {
+        if (!signal?.aborted) {
+          setAuthenticatorEnrollmentLoading(false);
+        }
+      }
+    },
+    [challenge.enrollmentRequired, challenge.mfaSessionId, challenge.username]
+  );
+
+  // Optional first-time Authenticator app pairing when explicitly selected
+  useEffect(() => {
+    if (!challenge.enrollmentRequired || !challenge.mfaSessionId || method !== 'authenticator') {
+      return;
+    }
+    if (authenticatorChallengeId === challenge.mfaSessionId && authenticatorEnrollmentData) {
+      return;
+    }
+
+    const controller = new AbortController();
+    fetchAuthenticatorEnrollment(controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    challenge.enrollmentRequired,
+    challenge.mfaSessionId,
+    method,
+    authenticatorChallengeId,
+    authenticatorEnrollmentData,
+    fetchAuthenticatorEnrollment
+  ]);
+
+  const handleCopyAllRecoveryCodes = () => {
+    if (!recoveryEnrollmentCodes?.length) return;
+    navigator.clipboard.writeText(recoveryEnrollmentCodes.join('\n'));
+    setCopiedRecoveryAll(true);
+    setTimeout(() => setCopiedRecoveryAll(false), 2000);
+  };
+
+  const handleDownloadRecoveryCodes = () => {
+    if (!recoveryEnrollmentCodes?.length) return;
+    const content = [
+      'Serverless Cloud Security Verification Framework — Single-Use Recovery Codes',
+      `Account: ${challenge.username}`,
+      `Issued: ${new Date().toISOString()}`,
+      'Store this file safely on your laptop. Each code can be used once to sign in without a phone.',
+      '',
+      ...recoveryEnrollmentCodes.map((code, idx) => `${idx + 1}. ${code}`)
+    ].join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${challenge.username}-recovery-codes.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleDigitChange = (index: number, val: string) => {
     const clean = val.replace(/\D/g, '');
     if (!clean && val !== '') return;
 
     const newDigits = [...digits];
     if (clean.length > 1) {
-      // Pasted or multiple characters entered
       const chars = clean.slice(0, 6).split('');
       chars.forEach((c, i) => {
         if (index + i < 6) newDigits[index + i] = c;
@@ -158,7 +308,6 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     newDigits[index] = clean;
     setDigits(newDigits);
 
-    // Auto-advance
     if (clean && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
@@ -183,10 +332,9 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     e.preventDefault();
     const pasted = e.clipboardData.getData('text').trim();
 
-    // Check if user pasted a recovery code (format: XXXX-XXXX or 8+ alphanumeric)
     if (pasted.includes('-') || pasted.length >= 8) {
       setMethod('backup_code');
-      setRecoveryCodeInput(pasted);
+      setRecoveryCodeInput(pasted.toUpperCase());
       return;
     }
 
@@ -205,22 +353,21 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     }
   };
 
-  // Submit verification code to API
   const submitVerification = async (codeToVerify?: string) => {
     let cleanCode = '';
     const isRecovery = method === 'backup_code';
 
     if (isRecovery) {
       cleanCode = (codeToVerify || recoveryCodeInput).trim().toUpperCase();
-      if (cleanCode.length < 8) {
-        setErrorMsg('Please enter a valid single-use recovery code (format: XXXX-XXXX).');
+      if (cleanCode.replace(/[\s\-]/g, '').length < 8) {
+        setErrorMsg('Please enter a valid 8-character single-use recovery code (format: XXXX-XXXX).');
         return;
       }
     } else {
       const raw = (codeToVerify || digits.join('')).trim();
       cleanCode = raw.replace(/[\s\-]/g, '');
       if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
-        setErrorMsg('Please enter a complete 6-digit verification code.');
+        setErrorMsg('Please enter a complete 6-digit Authenticator verification code.');
         return;
       }
     }
@@ -231,7 +378,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
     try {
       onAddTerminalLog?.(
         'post',
-        `[MFA] Submitting 2nd factor (${isRecovery ? 'RECOVERY CODE' : method.toUpperCase()}) code for verification...`
+        `[MFA] Submitting 2nd factor (${isRecovery ? 'RECOVERY CODE' : 'AUTHENTICATOR TOTP'}) for verification...`
       );
 
       const res = await fetch('/api/auth/mfa/verify', {
@@ -242,7 +389,7 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           mfaChallengeId: challenge.mfaSessionId,
           username: challenge.username,
           code: cleanCode,
-          method: isRecovery ? 'backup_code' : method
+          method: isRecovery ? 'backup_code' : 'authenticator'
         })
       });
 
@@ -263,17 +410,18 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
         return;
       }
 
-      // MFA SUCCESS - Guaranteed clean state transition
       setErrorMsg(null);
-      onAddTerminalLog?.('success', `[MFA VERIFIED] Factor 2 verified via ${isRecovery ? 'RECOVERY CODE' : method.toUpperCase()}. High-assurance session established.`);
-      console.log('[MFA_SUCCESS] Session credentials confirmed for:', data.user?.username);
+      onAddTerminalLog?.(
+        'success',
+        `[MFA VERIFIED] Factor 2 verified via ${isRecovery ? 'RECOVERY CODE' : 'AUTHENTICATOR TOTP'}. High-assurance session established.`
+      );
 
       const session: AuthSession = {
         user: data.user,
         token: data.token,
         loginTime: new Date().toLocaleTimeString(),
         expiresInSeconds: data.expiresInSeconds || 3600,
-        mfaMethod: isRecovery ? 'hardware_token' : method
+        mfaMethod: data.mfaMethod || (isRecovery ? 'backup_code' : 'authenticator')
       };
 
       onVerifySuccess(session);
@@ -286,8 +434,13 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
 
   const isComplete =
     method === 'backup_code'
-      ? recoveryCodeInput.trim().length >= 8
+      ? recoveryCodeInput.trim().replace(/[\s\-]/g, '').length >= 8
       : digits.every((d) => d !== '');
+
+  const remainingCodesCount =
+    challenge.recoveryCodesRemaining !== undefined
+      ? challenge.recoveryCodesRemaining
+      : recoveryEnrollmentCodes?.length;
 
   return (
     <div className={`w-full ${variant === 'page' ? 'max-w-xl mx-auto my-6' : 'w-full'} font-sans`}>
@@ -317,9 +470,10 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
             <h3 className="text-xl font-bold text-white tracking-tight">
               Multi-Factor Authentication
             </h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              Zero-Trust Verification: Complete factor 2 to confirm identity for{' '}
-              <span className="text-blue-400 font-semibold">{challenge.username}</span>.
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              Zero-Trust Verification: Complete factor 2 for{' '}
+              <span className="text-blue-400 font-semibold">{challenge.username}</span>{' '}
+              using a single-use Recovery Code on your laptop or an Authenticator app.
             </p>
           </div>
         </div>
@@ -357,58 +511,194 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           </div>
         </div>
 
-        {/* Method Switcher Tabs: Authenticator, SMS, and Recovery Code */}
-        <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
-          <button
-            type="button"
-            onClick={() => {
-              setMethod('authenticator');
-              setErrorMsg(null);
-            }}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-              method === 'authenticator'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-            }`}
-          >
-            <Smartphone className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">Authenticator</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setMethod('sms');
-              setErrorMsg(null);
-            }}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-              method === 'sms'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">SMS Code</span>
-          </button>
-
+        {/* Two Method Switcher Tabs: Recovery Code (Laptop-Only) & Authenticator App */}
+        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
           <button
             type="button"
             onClick={() => {
               setMethod('backup_code');
               setErrorMsg(null);
             }}
-            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+            className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-medium transition-all cursor-pointer ${
               method === 'backup_code'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
             }`}
           >
             <LifeBuoy className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">Recovery Code</span>
+            <span className="truncate">Use a Recovery Code</span>
+            {typeof remainingCodesCount === 'number' && !challenge.enrollmentRequired && (
+              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                method === 'backup_code' ? 'bg-blue-800/70 text-blue-100' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {remainingCodesCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMethod('authenticator');
+              setErrorMsg(null);
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+              method === 'authenticator'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+            }`}
+          >
+            <Smartphone className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">
+              {challenge.enrollmentRequired ? 'Authenticator App (Optional)' : 'Authenticator code'}
+            </span>
           </button>
         </div>
 
-        {/* METHOD 1: AUTHENTICATOR APP (RFC 6238 TOTP) */}
+        {/* METHOD 1: SINGLE-USE RECOVERY CODE (LAPTOP-ONLY — NO PHONE NEEDED) */}
+        {method === 'backup_code' && (
+          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/90 space-y-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs text-slate-200">
+                <Laptop className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-semibold text-white">
+                  {challenge.enrollmentRequired
+                    ? 'First-Time Laptop MFA Enrollment (No Phone Needed)'
+                    : 'Single-Use Recovery Code Verification'}
+                </span>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0">
+                SHA-256 HASHED
+              </span>
+            </div>
+
+            {challenge.enrollmentRequired ? (
+              recoveryEnrollmentLoading ? (
+                <div className="p-4 rounded-xl bg-slate-950/80 border border-blue-500/30 text-xs text-blue-300 flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Generating 8 high-entropy single-use recovery codes for your laptop...</span>
+                </div>
+              ) : recoveryEnrollmentCodes ? (
+                <div className="p-3.5 rounded-xl bg-amber-950/20 border border-amber-500/35 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                      <LifeBuoy className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Save These 8 Single-Use Codes Now (Shown Once)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleCopyAllRecoveryCodes}
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-[11px] font-mono flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedRecoveryAll ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedRecoveryAll ? 'Copied' : 'Copy All'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDownloadRecoveryCodes}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[11px] font-mono flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download .txt</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Download or copy these codes to your laptop, then <strong className="text-white">click any code below</strong> (or type one) to activate MFA and finish signing in. That code is consumed immediately; the remaining 7 stay valid for future logins.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecoveryCodeInput('');
+                        fetchRecoveryEnrollment();
+                      }}
+                      disabled={recoveryEnrollmentLoading}
+                      className="text-[10px] font-mono text-amber-300 hover:text-amber-200 underline flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Generate Fresh Set</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {recoveryEnrollmentCodes.map((code) => {
+                      const isSelected = recoveryCodeInput.trim().toUpperCase() === code.toUpperCase();
+                      return (
+                        <button
+                          key={code}
+                          type="button"
+                          onClick={() => {
+                            setRecoveryCodeInput(code);
+                            setErrorMsg(null);
+                            recoveryInputRef.current?.focus();
+                          }}
+                          title="Click to select this recovery code for immediate verification"
+                          className={`px-2.5 py-2 rounded-lg border text-center font-mono text-xs transition-all cursor-pointer select-all ${
+                            isSelected
+                              ? 'bg-emerald-950/60 border-emerald-400 text-emerald-200 ring-1 ring-emerald-400/50 font-bold shadow-sm'
+                              : 'bg-slate-950 border-slate-800 hover:border-amber-400/60 hover:bg-slate-900 text-amber-200'
+                          }`}
+                        >
+                          {code}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : recoveryEnrollmentError ? (
+                <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-3">
+                  <span>{recoveryEnrollmentError}</span>
+                  <button
+                    type="button"
+                    onClick={() => fetchRecoveryEnrollment()}
+                    className="px-2.5 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/40 text-rose-100 text-[11px] font-mono shrink-0 cursor-pointer flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              ) : null
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Enter one of your saved 8-character recovery codes (format:{' '}
+                  <code className="text-amber-300">XXXX-XXXX</code>). Each recovery code is single-use and permanently invalidated once verified.
+                </p>
+                {challenge.recoveryCodesRemaining === 0 && (
+                  <div className="p-3 rounded-lg bg-rose-950/35 border border-rose-500/40 text-rose-200 text-[11px] leading-relaxed">
+                    <strong>No recovery codes remaining (0 left).</strong> Please switch to your enrolled Authenticator App or ask an Administrator to generate new recovery codes or reset MFA in User Database.
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-mono uppercase text-slate-400 font-medium">
+                Enter Recovery Code
+              </label>
+              <input
+                ref={recoveryInputRef}
+                type="text"
+                value={recoveryCodeInput}
+                onChange={(e) => setRecoveryCodeInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && isComplete && !loading) {
+                    submitVerification();
+                  }
+                }}
+                placeholder="e.g. 7K4N-9P2W"
+                maxLength={14}
+                disabled={loading}
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-center text-sm font-bold tracking-widest focus:outline-none focus:border-blue-500 uppercase"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* METHOD 2: AUTHENTICATOR APP (RFC 6238 TOTP) */}
         {method === 'authenticator' && (
           <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/90 space-y-3.5">
             <div className="flex items-center justify-between text-xs">
@@ -421,7 +711,6 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
               </span>
             </div>
 
-            {/* Live Progress Bar for 30s cycle */}
             <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
               <div
                 className="bg-blue-500 h-full transition-all duration-1000 ease-linear rounded-full"
@@ -429,114 +718,57 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
               />
             </div>
 
-            {/* First-Time Authenticator Pairing Panel (Shown ONLY when user hasn't paired yet) */}
             {challenge.enrollmentRequired ? (
-              enrollmentLoading ? (
+              authenticatorEnrollmentLoading ? (
                 <div className="p-4 rounded-xl bg-slate-950/80 border border-blue-500/30 text-xs text-blue-300 flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Preparing your one-time Authenticator QR code &amp; backup recovery codes...</span>
+                  <span>Preparing optional Authenticator QR code &amp; backup recovery codes...</span>
                 </div>
-              ) : enrollmentData ? (
+              ) : authenticatorEnrollmentData ? (
                 <MfaEnrollmentPanel
-                  enrollment={enrollmentData}
-                  title="Account Not Paired Yet — Pair Authenticator App Now"
-                  subtitle={`Scan this QR code or enter the setup key in Google/Microsoft Authenticator for ${challenge.username}, then enter the 6-digit code below.`}
+                  enrollment={authenticatorEnrollmentData}
+                  title="Optional: Pair an Authenticator App"
+                  subtitle={`If you prefer an Authenticator app on another device, scan this QR code for ${challenge.username} and enter the 6-digit code below. Otherwise switch back to Use a Recovery Code for laptop-only login.`}
                 />
-              ) : enrollmentError ? (
-                <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs">
-                  {enrollmentError}
+              ) : authenticatorEnrollmentError ? (
+                <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-3">
+                  <span>{authenticatorEnrollmentError}</span>
+                  <button
+                    type="button"
+                    onClick={() => fetchAuthenticatorEnrollment()}
+                    className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 text-[11px] font-mono shrink-0 cursor-pointer flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Retry</span>
+                  </button>
                 </div>
               ) : null
             ) : (
-              /* Authenticator Security Guidance for Already-Paired Users */
               <div className="p-3 rounded-lg bg-blue-950/30 border border-blue-500/30 flex items-start gap-3">
                 <div className="p-1.5 rounded bg-blue-500/20 text-blue-400 shrink-0 mt-0.5">
                   <KeyRound className="w-4 h-4" />
                 </div>
                 <div className="text-xs text-slate-300 leading-relaxed space-y-1">
                   <div>
-                    <span className="font-semibold text-white">Time-Based One-Time Password:</span> Open your enrolled Authenticator app (e.g. Google Authenticator, Microsoft Authenticator) and enter the current 6-digit code below.
+                    <span className="font-semibold text-white">Time-Based One-Time Password:</span> Enter the current 6-digit code from your paired Authenticator app.
                   </div>
                   <div className="text-[11px] text-slate-400">
-                    New device or didn&apos;t save the QR? Use a saved{' '}
+                    No phone available? Switch to{' '}
                     <button
                       type="button"
-                      onClick={() => setMethod('backup_code')}
+                      onClick={() => {
+                        setMethod('backup_code');
+                        setErrorMsg(null);
+                      }}
                       className="text-amber-300 hover:underline font-medium cursor-pointer"
                     >
-                      Recovery Code
+                      Use a Recovery Code
                     </button>
-                    {' '}or ask an Administrator to click <strong>Reset MFA</strong> in User Database.
+                    {' '}to sign in directly from your laptop.
                   </div>
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* METHOD 2: SMS OTP CODE */}
-        {method === 'sms' && (
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/90 space-y-3.5">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-1.5 text-slate-400">
-                <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Registered Mobile Device:</span>
-              </div>
-              <span className="font-mono font-semibold text-white">
-                {challenge.phoneMasked || '+1 (555) •••-4829'}
-              </span>
-            </div>
-
-            {/* Carrier Status Notice */}
-            <div className="p-3.5 rounded-lg bg-amber-950/20 border border-amber-500/30 space-y-2">
-              <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>SMS 2FA Gateway Unconfigured</span>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Direct telecommunications SMS delivery is not configured in this environment. Please authenticate using your enrolled <strong className="text-blue-300">Authenticator app</strong> or an emergency single-use <strong className="text-amber-300">Recovery Code</strong>.
-              </p>
-              <div className="pt-1 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMethod('authenticator')}
-                  className="px-2.5 py-1 text-xs rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 cursor-pointer"
-                >
-                  Switch to Authenticator
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMethod('backup_code')}
-                  className="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                >
-                  Use Recovery Code
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* METHOD 3: RECOVERY CODE */}
-        {method === 'backup_code' && (
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/90 space-y-3">
-            <div className="flex items-center gap-2 text-xs text-slate-300">
-              <LifeBuoy className="w-4 h-4 text-amber-400" />
-              <span className="font-semibold text-white">Single-Use Recovery Bypass Code</span>
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Lost your authenticator device? Enter one of your emergency 8-character recovery codes (format: <code className="text-amber-300">XXXX-XXXX</code>). Each code is single-use and will be permanently consumed upon entry.
-            </p>
-
-            <div className="relative">
-              <input
-                type="text"
-                value={recoveryCodeInput}
-                onChange={(e) => setRecoveryCodeInput(e.target.value.toUpperCase())}
-                placeholder="e.g. 7K4N-9P2W"
-                maxLength={12}
-                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-center text-sm font-bold tracking-widest focus:outline-none focus:border-blue-500 uppercase"
-              />
-            </div>
           </div>
         )}
 
@@ -555,11 +787,11 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           </div>
         )}
 
-        {/* 6-DIGIT CODE INPUT (When not in recovery code mode) */}
-        {method !== 'backup_code' && (
+        {/* 6-DIGIT CODE INPUT (When Authenticator tab active) */}
+        {method === 'authenticator' && (
           <div className="space-y-2">
             <label className="block text-center text-xs font-mono uppercase text-slate-400 font-medium">
-              Enter 6-Digit Verification Code
+              Enter 6-Digit Authenticator Code
             </label>
 
             <div className="flex items-center justify-center gap-2 sm:gap-3">
@@ -617,13 +849,18 @@ export const MfaVerificationCard: React.FC<MfaVerificationCardProps> = ({
           </button>
         </div>
 
-        {/* Security Compliance Seal */}
-        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+        {/* Security Compliance Seal & Challenge TTL */}
+        <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500 font-mono">
           <span className="flex items-center gap-1">
             <Lock className="w-3 h-3 text-blue-400" />
             NIST SP 800-207 Zero-Trust MFA
           </span>
-          <span className="text-emerald-500">RFC 6238 SHA-1 / SHA-256</span>
+          <span className={challengeSecondsLeft <= 30 ? 'text-rose-400 font-semibold' : 'text-slate-400'}>
+            {challengeSecondsLeft > 0
+              ? `Challenge valid ${Math.floor(challengeSecondsLeft / 60)}:${String(challengeSecondsLeft % 60).padStart(2, '0')}`
+              : 'Challenge expired — please cancel and sign in again'}
+          </span>
+          <span className="text-emerald-500">SHA-256 Recovery &amp; RFC 6238 TOTP</span>
         </div>
       </div>
     </div>

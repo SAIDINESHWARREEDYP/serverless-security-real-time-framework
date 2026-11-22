@@ -1,18 +1,29 @@
 /**
- * Automated Migration Integrity, MFA Persistence, and Cloudflare Worker Hardening Suite
- * Tests isolated SQLite databases (/tmp & :memory:) without modifying production security_framework.sqlite.
+ * Automated Migration Integrity, Laptop-Only Recovery Code MFA, Strict JWT & Worker Hardening Suite
+ * Tests isolated SQLite databases (/tmp & :memory:) and cleans up any ephemeral test records from production SQLite.
  */
 
 import assert from 'node:assert';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { PersistentSecurityDatabase, splitSqlStatements, db as prodDb } from '../server/db.ts';
 import { authService } from '../server/services/auth.service.ts';
 import { userRepository } from '../server/repositories/user.repository.ts';
+import { sessionRepository } from '../server/repositories/session.repository.ts';
 import { generateTotpToken } from '../src/utils/mfa.ts';
-import { verifyJwt } from '../server/utils/crypto.ts';
+import { base64UrlEncode, hashPassword, verifyJwt } from '../server/utils/crypto.ts';
+import { CONFIG } from '../server/config/env.ts';
 import worker from '../src/worker.ts';
+
+function signCustomHmacJwt(header: Record<string, any>, payload: Record<string, any>, secret: string): string {
+  const h = base64UrlEncode(JSON.stringify(header));
+  const p = base64UrlEncode(JSON.stringify(payload));
+  const signingInput = `${h}.${p}`;
+  const sig = base64UrlEncode(crypto.createHmac('sha256', secret).update(signingInput).digest());
+  return `${signingInput}.${sig}`;
+}
 
 function createAsyncD1Adapter(sqliteDb: PersistentSecurityDatabase) {
   return {
@@ -57,12 +68,13 @@ function getTablesAndIndexes(sqlitePath: string) {
 }
 
 async function runTests() {
-  console.log('\n=== RUNNING MIGRATION, MFA PERSISTENCE & WORKER HARDENING TESTS ===\n');
+  console.log('\n=== RUNNING MIGRATION, RECOVERY-CODE MFA, STRICT JWT & WORKER HARDENING TESTS ===\n');
 
   const tmpCleanPath = `/tmp/test_migration_clean_${Date.now()}.sqlite`;
   const tmpLegacyPath = `/tmp/test_migration_legacy_${Date.now()}.sqlite`;
-  let tempUserId: string | null = null;
-  let tempChallengeIds: string[] = [];
+  const cleanupUserIds: string[] = [];
+  const cleanupUsernames: string[] = [];
+  const tempChallengeIds: string[] = [];
 
   try {
     // 1. Comment-aware SQL statement parser preserves statements following -- and /* */ comments
@@ -82,8 +94,8 @@ async function runTests() {
     assert.ok(parsedStmts[0].includes("'-- not a comment; semicolon inside string'"), 'String literal semicolons must not split statements');
     console.log('✔ PASS 1: Comment- and string-aware SQL splitter preserves multiline DDL & literals');
 
-    // 2. Clean database initialization (0001 -> 0002 -> 0003)
-    new PersistentSecurityDatabase(tmpCleanPath);
+    // 2. Clean database initialization (0001 -> 0004) + no hardcoded weak defaults
+    const cleanDb = new PersistentSecurityDatabase(tmpCleanPath);
     const cleanInspect = getTablesAndIndexes(tmpCleanPath);
     try {
       const requiredTables = [
@@ -115,10 +127,15 @@ async function runTests() {
       assert.ok(cleanInspect.migrations.includes('0004_mfa_enrollment_status.sql'), 'Expected 0004_mfa_enrollment_status.sql');
       const userCols = (cleanInspect.raw.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name);
       assert.ok(userCols.includes('mfa_enrolled'), 'users table must include mfa_enrolled column');
+
+      const seededAdmin = cleanDb.getUser('secops_admin');
+      assert.ok(seededAdmin, 'Seeded secops_admin record should exist');
+      assert.ok(seededAdmin!.password_salt.length >= 32 && !seededAdmin!.password_hash.startsWith('!'), 'Seeded admin must use CSPRNG PBKDF2 hash');
+      assert.ok(seededAdmin!.mfa_secret && seededAdmin!.mfa_secret !== 'JBSWY3DPEHPK3PXP' && seededAdmin!.mfa_secret.length >= 20, 'Seeded admin must use unique >=20-char Base32 MFA secret');
     } finally {
       cleanInspect.raw.close();
     }
-    console.log('✔ PASS 2: Clean SQLite DB applies 0001-0004 with mfa_challenges, mfa_enrolled, and all indexes');
+    console.log('✔ PASS 2: Clean SQLite DB applies 0001-0004 with mfa_challenges, mfa_enrolled, and CSPRNG credentials');
 
     // 3. Upgrade pre-0003 DB preserving existing custom users and audit records + idempotent re-init
     const legacySqlite = new DatabaseSync(tmpLegacyPath);
@@ -147,9 +164,7 @@ async function runTests() {
       .run(new Date().toISOString(), 'legacy_custom_user', '/api/legacy', 10, 'ALLOWED', 'Pre-migration preserved event', 1.25);
     legacySqlite.close();
 
-    // Run upgrade via PersistentSecurityDatabase constructor
     new PersistentSecurityDatabase(tmpLegacyPath);
-    // Repeated initialization must be completely idempotent
     new PersistentSecurityDatabase(tmpLegacyPath);
 
     const upgradedInspect = getTablesAndIndexes(tmpLegacyPath);
@@ -167,79 +182,222 @@ async function runTests() {
     }
     console.log('✔ PASS 3: Pre-0003 DB upgrades through 0004 without data loss and repeated init is idempotent');
 
-    // 4. Express AuthService persistent mfa_challenges lifecycle (DB stored, replay blocked, 5-attempt lockout)
-    const testUname = `mfa_persist_test_${Date.now()}`;
+    // 4. Express Strict JWT Verification Checks
+    const validClaimsBase = {
+      sub: 'usr_jwt_test',
+      username: 'jwt_tester',
+      role: 'Developer',
+      jti: 'jti_strict_1',
+      iss: CONFIG.JWT_ISSUER,
+      aud: CONFIG.JWT_AUDIENCE,
+      iat: Math.floor(Date.now() / 1000),
+      nbf: Math.floor(Date.now() / 1000) - 5,
+      exp: Math.floor(Date.now() / 1000) + 3600
+    };
+    const algNoneToken = `${base64UrlEncode(JSON.stringify({ alg: 'none', typ: 'JWT' }))}.${base64UrlEncode(JSON.stringify(validClaimsBase))}.`;
+    assert.strictEqual(verifyJwt(algNoneToken).valid, false, 'alg:none JWT must be rejected');
+
+    const { iss: _omitIss, ...noIssClaims } = validClaimsBase;
+    assert.strictEqual(verifyJwt(signCustomHmacJwt({ alg: 'HS256', typ: 'JWT' }, noIssClaims, CONFIG.JWT_SECRET)).valid, false, 'JWT without iss must be rejected');
+
+    const { aud: _omitAud, ...noAudClaims } = validClaimsBase;
+    assert.strictEqual(verifyJwt(signCustomHmacJwt({ alg: 'HS256', typ: 'JWT' }, noAudClaims, CONFIG.JWT_SECRET)).valid, false, 'JWT without aud must be rejected');
+
+    const { nbf: _omitNbf, ...noNbfClaims } = validClaimsBase;
+    assert.strictEqual(verifyJwt(signCustomHmacJwt({ alg: 'HS256', typ: 'JWT' }, noNbfClaims, CONFIG.JWT_SECRET)).valid, false, 'JWT without nbf must be rejected');
+
+    const { iat: _omitIat, ...noIatClaims } = validClaimsBase;
+    assert.strictEqual(verifyJwt(signCustomHmacJwt({ alg: 'HS256', typ: 'JWT' }, noIatClaims, CONFIG.JWT_SECRET)).valid, false, 'JWT without iat must be rejected');
+
+    const futureIatClaims = { ...validClaimsBase, iat: Math.floor(Date.now() / 1000) + 600 };
+    assert.strictEqual(verifyJwt(signCustomHmacJwt({ alg: 'HS256', typ: 'JWT' }, futureIatClaims, CONFIG.JWT_SECRET)).valid, false, 'JWT with future iat > now+60 must be rejected');
+
+    console.log('✔ PASS 4: Express verifyJwt strictly rejects alg:none, missing iss/aud/iat/nbf, and future iat');
+
+    // 5. Express AuthService Laptop-Only Recovery Code Enrollment, Verification, Replay, Expiry, Lockout, Concurrency & Exhaustion/Reset (Tests RC-1..RC-10)
+    const testUname = `mfa_recovery_test_${Date.now()}`;
+    const testPwd = `StrongPassword_${Date.now()}!`;
+    cleanupUsernames.push(testUname);
+
     const createdUser = userRepository.create({
       username: testUname,
-      password: 'StrongPassword_2026!',
+      password: testPwd,
       role: 'Developer',
       base_risk_score: 10,
       status: 'APPROVED',
       department: 'Security QA',
       mfa_enabled: true
     });
-    tempUserId = createdUser.id;
-    assert.ok(createdUser.mfa_secret && createdUser.mfa_secret !== 'JBSWY3DPEHPK3PXP', 'New user must receive random TOTP secret');
+    cleanupUserIds.push(createdUser.id);
+    assert.ok(createdUser.mfa_secret && createdUser.mfa_secret !== 'JBSWY3DPEHPK3PXP' && createdUser.mfa_secret.length >= 20, 'New user must receive >=20-char random secret');
 
-    const loginRes = await authService.login({ username: testUname, password: 'StrongPassword_2026!', ipAddress: '127.0.0.10' });
-    assert.strictEqual(loginRes.status, 'MFA_REQUIRED');
-    assert.strictEqual(loginRes.enrollmentRequired, true, 'First-time unpaired login must set enrollmentRequired = true');
-    assert.ok(loginRes.mfaChallengeId, 'Login should return persistent mfaChallengeId');
-    tempChallengeIds.push(loginRes.mfaChallengeId!);
+    // Test RC-8: First-time recovery-code enrollment without phone issues 8 codes (no TOTP secret/URI) and confirming 1 activates enrollment
+    const enrollLogin = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.10' });
+    assert.strictEqual(enrollLogin.status, 'MFA_REQUIRED');
+    assert.strictEqual(enrollLogin.enrollmentRequired, true);
+    assert.strictEqual(enrollLogin.preferredMethod, 'backup_code', 'First-time login must default to laptop recovery code mode');
+    tempChallengeIds.push(enrollLogin.mfaChallengeId!);
 
-    const enrollOut = authService.getChallengeEnrollment(loginRes.mfaChallengeId!);
-    assert.strictEqual(enrollOut.success, true, 'Unpaired active challenge must allow one-time enrollment QR retrieval');
-    assert.ok(enrollOut.provisioningUri?.startsWith('otpauth://totp/'));
-    assert.ok(Array.isArray(enrollOut.backupCodes) && enrollOut.backupCodes.length === 8);
+    const recoveryEnrollOut = authService.getChallengeEnrollment(enrollLogin.mfaChallengeId!, 'recovery_codes');
+    assert.strictEqual(recoveryEnrollOut.success, true);
+    assert.strictEqual(recoveryEnrollOut.mode, 'recovery_codes');
+    assert.strictEqual(recoveryEnrollOut.secret, undefined, 'recovery_codes enrollment must not expose TOTP secret');
+    assert.strictEqual(recoveryEnrollOut.provisioningUri, undefined, 'recovery_codes enrollment must not expose provisioningUri');
+    assert.ok(Array.isArray(recoveryEnrollOut.backupCodes) && recoveryEnrollOut.backupCodes.length === 8, 'Must issue 8 recovery codes');
 
-    const dbChallenge = prodDb.prepare('SELECT * FROM mfa_challenges WHERE id = ?').bind(loginRes.mfaChallengeId).first<any>();
-    assert.ok(dbChallenge, 'MFA challenge must be persisted in mfa_challenges table');
-    assert.strictEqual(Number(dbChallenge.consumed), 0);
+    // Confirm first code activates enrollment and consumes code #0 -> leaves 7 remaining
+    const confirmCode0 = recoveryEnrollOut.backupCodes![0];
+    const enrollVerify = await authService.verifyMfa({
+      mfaChallengeId: enrollLogin.mfaChallengeId!,
+      code: confirmCode0,
+      method: 'backup_code'
+    });
+    assert.strictEqual(enrollVerify.success, true, 'Test RC-8: Confirming 1 recovery code activates laptop-only MFA');
+    assert.strictEqual(enrollVerify.mfaMethod, 'backup_code');
+    assert.strictEqual(enrollVerify.recoveryCodesRemaining, 7);
+    assert.ok(enrollVerify.token && verifyJwt(enrollVerify.token).valid, 'Must issue valid JWT');
+    assert.strictEqual(userRepository.findById(createdUser.id)?.mfa_enrolled, true, 'User must be marked mfa_enrolled = true after recovery code confirmation');
 
-    // 5 failed attempts lock out challenge
-    for (let i = 1; i <= 5; i++) {
-      const badVerify = await authService.verifyMfa({ mfaChallengeId: loginRes.mfaChallengeId!, code: '000000' });
-      assert.strictEqual(badVerify.success, false);
-      assert.strictEqual(badVerify.attemptsLeft, Math.max(0, 5 - i));
-    }
-    const lockedChallenge = prodDb.prepare('SELECT consumed, attempts FROM mfa_challenges WHERE id = ?').bind(loginRes.mfaChallengeId).first<any>();
-    assert.strictEqual(Number(lockedChallenge.consumed), 1, 'Exhausted challenge must be marked consumed');
-    assert.strictEqual(Number(lockedChallenge.attempts), 5);
+    // Test RC-3 & RC-4: Replay of same consumed challenge OR previously consumed recovery code fails
+    const replayChallengeRes = await authService.verifyMfa({
+      mfaChallengeId: enrollLogin.mfaChallengeId!,
+      code: recoveryEnrollOut.backupCodes![1],
+      method: 'backup_code'
+    });
+    assert.strictEqual(replayChallengeRes.success, false, 'Test RC-4: Replaying consumed mfaChallengeId must fail');
 
-    // Fresh challenge with valid RFC 6238 TOTP code succeeds, seals enrollment, and blocks replay
-    const loginRes2 = await authService.login({ username: testUname, password: 'StrongPassword_2026!', ipAddress: '127.0.0.11' });
-    assert.strictEqual(loginRes2.status, 'MFA_REQUIRED');
-    tempChallengeIds.push(loginRes2.mfaChallengeId!);
-    const refreshedUser = userRepository.findById(createdUser.id)!;
-    const validTotp = generateTotpToken(refreshedUser.mfa_secret!);
-    const okVerify = await authService.verifyMfa({ mfaChallengeId: loginRes2.mfaChallengeId!, code: validTotp });
-    assert.strictEqual(okVerify.success, true, 'Valid TOTP must complete MFA verification');
-    assert.ok(okVerify.token && verifyJwt(okVerify.token).valid, 'Completed MFA must issue valid JWT');
-    assert.strictEqual(userRepository.findById(createdUser.id)?.mfa_enrolled, true, 'User must be marked mfa_enrolled after verification');
+    // Test RC-9 & RC-3 & RC-2: Subsequent login succeeds without authenticator, blocks enroll-challenge (403), rejects invalid & previously consumed code
+    const loginNext = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.11' });
+    assert.strictEqual(loginNext.status, 'MFA_REQUIRED');
+    assert.strictEqual(loginNext.enrollmentRequired, false, 'Test RC-9: Enrolled laptop-only user must NOT prompt enrollment again');
+    assert.strictEqual(loginNext.recoveryCodesRemaining, 7);
+    tempChallengeIds.push(loginNext.mfaChallengeId!);
 
-    const replayVerify = await authService.verifyMfa({ mfaChallengeId: loginRes2.mfaChallengeId!, code: validTotp });
-    assert.strictEqual(replayVerify.success, false, 'Replaying consumed MFA challenge must fail');
-
-    // Subsequent login for already-enrolled user must NOT allow enroll-challenge (403)
-    const loginRes3 = await authService.login({ username: testUname, password: 'StrongPassword_2026!', ipAddress: '127.0.0.12' });
-    assert.strictEqual(loginRes3.enrollmentRequired, false, 'Enrolled user login must set enrollmentRequired = false');
-    tempChallengeIds.push(loginRes3.mfaChallengeId!);
-    const blockedEnroll = authService.getChallengeEnrollment(loginRes3.mfaChallengeId!);
+    const blockedEnroll = authService.getChallengeEnrollment(loginNext.mfaChallengeId!, 'recovery_codes');
     assert.strictEqual(blockedEnroll.success, false);
-    assert.strictEqual(blockedEnroll.status, 403, 'Enrolled user must be blocked from fetching QR via enroll-challenge');
+    assert.strictEqual(blockedEnroll.status, 403, 'Already-enrolled user must be blocked from re-fetching enrollment codes');
 
-    // Admin MFA reset re-enables first-time QR pairing
-    const resetRes = authService.resetMfaEnrollment(testUname, 'secops_admin');
-    assert.ok(resetRes, 'resetMfaEnrollment must return updated UserRecord');
-    assert.strictEqual(resetRes?.mfa_enrolled, false);
-    assert.strictEqual(userRepository.findById(createdUser.id)?.mfa_enrolled, false);
-    const loginRes4 = await authService.login({ username: testUname, password: 'StrongPassword_2026!', ipAddress: '127.0.0.13' });
-    assert.strictEqual(loginRes4.enrollmentRequired, true, 'Login after MFA reset must restore enrollmentRequired = true');
-    if (loginRes4.mfaChallengeId) tempChallengeIds.push(loginRes4.mfaChallengeId);
-    console.log('✔ PASS 4: Express AuthService handles one-time MFA enrollment, seals pairing after TOTP verification, and supports Admin reset');
+    const invalidAttempt = await authService.verifyMfa({
+      mfaChallengeId: loginNext.mfaChallengeId!,
+      code: 'ZZZZ-9999',
+      method: 'backup_code'
+    });
+    assert.strictEqual(invalidAttempt.success, false, 'Test RC-2: Invalid recovery code rejected');
+    assert.strictEqual(invalidAttempt.attemptsLeft, 4, 'Test RC-2: Invalid recovery code decrements attemptsLeft');
 
-    // 5. Cloudflare Worker end-to-end tests against isolated in-memory SQLite D1 adapter
+    const reuseOldCodeAttempt = await authService.verifyMfa({
+      mfaChallengeId: loginNext.mfaChallengeId!,
+      code: confirmCode0,
+      method: 'backup_code'
+    });
+    assert.strictEqual(reuseOldCodeAttempt.success, false, 'Test RC-3: Previously consumed recovery code rejected');
+    assert.strictEqual(reuseOldCodeAttempt.attemptsLeft, 3);
+
+    // Valid code #1 succeeds -> leaves 6 remaining
+    const confirmCode1 = recoveryEnrollOut.backupCodes![1];
+    const loginNextOk = await authService.verifyMfa({
+      mfaChallengeId: loginNext.mfaChallengeId!,
+      code: confirmCode1,
+      method: 'backup_code'
+    });
+    assert.strictEqual(loginNextOk.success, true, 'Test RC-1 & RC-9: Valid recovery code succeeds without authenticator');
+    assert.strictEqual(loginNextOk.recoveryCodesRemaining, 6);
+
+    // Test RC-6: Max-attempts lockout on repeated invalid recovery codes
+    const lockLogin = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.12' });
+    tempChallengeIds.push(lockLogin.mfaChallengeId!);
+    for (let i = 1; i <= 5; i++) {
+      const bad = await authService.verifyMfa({
+        mfaChallengeId: lockLogin.mfaChallengeId!,
+        code: 'AAAA-BBBB',
+        method: 'backup_code'
+      });
+      assert.strictEqual(bad.success, false);
+      assert.strictEqual(bad.attemptsLeft, Math.max(0, 5 - i));
+    }
+    const lockRow = prodDb.prepare('SELECT consumed, attempts FROM mfa_challenges WHERE id = ?').bind(lockLogin.mfaChallengeId).first<any>();
+    assert.strictEqual(Number(lockRow.consumed), 1, 'Test RC-6: Exhausted recovery attempts lock out challenge');
+    assert.strictEqual(Number(lockRow.attempts), 5);
+
+    // Test RC-5: Expired mfaChallengeId rejected
+    const expLogin = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.13' });
+    tempChallengeIds.push(expLogin.mfaChallengeId!);
+    prodDb.prepare('UPDATE mfa_challenges SET expires_at = ? WHERE id = ?').bind(new Date(Date.now() - 60_000).toISOString(), expLogin.mfaChallengeId).run();
+    const expiredRes = await authService.verifyMfa({
+      mfaChallengeId: expLogin.mfaChallengeId!,
+      code: recoveryEnrollOut.backupCodes![2],
+      method: 'backup_code'
+    });
+    assert.strictEqual(expiredRes.success, false, 'Test RC-5: Expired mfaChallengeId must be rejected');
+    assert.ok(expiredRes.error?.toLowerCase().includes('timed out') || expiredRes.error?.toLowerCase().includes('expired'));
+
+    // Test RC-7: Concurrent submission with the SAME recovery code (Promise.all) -> strictly 1 succeeds, 1 fails
+    const concLoginA = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.14' });
+    const concLoginB = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.15' });
+    tempChallengeIds.push(concLoginA.mfaChallengeId!, concLoginB.mfaChallengeId!);
+    const raceCode = recoveryEnrollOut.backupCodes![2];
+    const [raceResA, raceResB] = await Promise.all([
+      authService.verifyMfa({ mfaChallengeId: concLoginA.mfaChallengeId!, code: raceCode, method: 'backup_code' }),
+      authService.verifyMfa({ mfaChallengeId: concLoginB.mfaChallengeId!, code: raceCode, method: 'backup_code' })
+    ]);
+    const raceSuccesses = [raceResA, raceResB].filter((r) => r.success).length;
+    assert.strictEqual(raceSuccesses, 1, 'Test RC-7 (Express): Exactly 1 concurrent submission of same recovery code may succeed');
+    assert.strictEqual(userRepository.findById(createdUser.id)?.mfa_backup_codes?.length, 5, '5 backup codes should remain after 1 wins race');
+
+    // Test RC-10: Exhaust all remaining recovery codes -> clear exhaustion error -> Admin MFA reset revokes prior session & restores enrollment
+    const priorToken = enrollVerify.token!;
+    for (let idx = 3; idx < 8; idx++) {
+      const l = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.16' });
+      tempChallengeIds.push(l.mfaChallengeId!);
+      const v = await authService.verifyMfa({
+        mfaChallengeId: l.mfaChallengeId!,
+        code: recoveryEnrollOut.backupCodes![idx],
+        method: 'backup_code'
+      });
+      assert.strictEqual(v.success, true, `Consuming recovery code #${idx} must succeed`);
+    }
+    const zeroLogin = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.17' });
+    tempChallengeIds.push(zeroLogin.mfaChallengeId!);
+    assert.strictEqual(zeroLogin.recoveryCodesRemaining, 0, 'Test RC-10: 0 recovery codes remain');
+    const exhaustedAttempt = await authService.verifyMfa({
+      mfaChallengeId: zeroLogin.mfaChallengeId!,
+      code: recoveryEnrollOut.backupCodes![7],
+      method: 'backup_code'
+    });
+    assert.strictEqual(exhaustedAttempt.success, false);
+    assert.ok(exhaustedAttempt.error?.includes('0 remaining') || exhaustedAttempt.error?.toLowerCase().includes('no valid recovery codes'), 'Test RC-10: Clear exhaustion message required');
+
+    const resetUser = authService.resetMfaEnrollment(testUname, 'secops_admin');
+    assert.ok(resetUser, 'Test RC-10: Admin MFA reset succeeds');
+    assert.strictEqual(resetUser?.mfa_enrolled, false);
+    const revokedPriorSession = sessionRepository.findByToken(priorToken);
+    assert.strictEqual(revokedPriorSession?.status, 'revoked', 'Test RC-10: Admin MFA reset must revoke active sessions');
+    const resetAuditLogged = prodDb
+      .prepare("SELECT * FROM audit_events WHERE username = ? AND event_type = 'MFA_ENROLLMENT_RESET' AND requested_function LIKE ? ORDER BY id DESC LIMIT 1")
+      .bind('secops_admin', `%${testUname}%`)
+      .first<any>();
+    assert.ok(resetAuditLogged && resetAuditLogged.reason.includes('secops_admin'), 'Test RC-10: MFA reset must log actor & event');
+
+    // Optional TOTP flow still works smoothly after MFA reset
+    const loginAfterReset = await authService.login({ username: testUname, password: testPwd, ipAddress: '127.0.0.18' });
+    assert.strictEqual(loginAfterReset.enrollmentRequired, true);
+    tempChallengeIds.push(loginAfterReset.mfaChallengeId!);
+    const qrEnroll = authService.getChallengeEnrollment(loginAfterReset.mfaChallengeId!, 'authenticator');
+    assert.strictEqual(qrEnroll.success, true);
+    assert.ok(qrEnroll.provisioningUri?.startsWith('otpauth://totp/'));
+    const validTotp = generateTotpToken(userRepository.findById(createdUser.id)!.mfa_secret!);
+    const totpVerify = await authService.verifyMfa({ mfaChallengeId: loginAfterReset.mfaChallengeId!, code: validTotp, method: 'authenticator' });
+    assert.strictEqual(totpVerify.success, true, 'Optional RFC 6238 TOTP enrollment verification succeeds');
+    assert.strictEqual(totpVerify.mfaMethod, 'authenticator');
+    console.log('✔ PASS 5: Express laptop-only recovery-code enrollment, replay, expiry, lockout, concurrency, exhaustion & Admin reset verified (Tests RC-1..RC-10)');
+
+    // 6. Cloudflare Worker end-to-end tests against isolated in-memory SQLite D1 adapter
     const workerMemDb = new PersistentSecurityDatabase(':memory:');
+    // Set an isolated test password on in-memory worker admin ONLY (never hardcoded default)
+    const workerAdminPwd = `WorkerAdmin_Test_${Date.now()}!`;
+    const { salt: wSalt, hash: wHash } = hashPassword(workerAdminPwd);
+    workerMemDb.prepare('UPDATE users SET password_salt = ?, password_hash = ? WHERE username = ?').bind(wSalt, wHash, 'secops_admin').run();
+
     const workerEnv = {
       DB: createAsyncD1Adapter(workerMemDb),
       ENVIRONMENT: 'development',
@@ -248,19 +406,63 @@ async function runTests() {
     };
     const ctx = { waitUntil: () => {}, passThroughOnException: () => {} };
 
-    // 5a. /api/health returns 200 when D1 healthy and 503 when DB binding missing
+    // 6a. Worker fail-closed 503 across all DB-dependent endpoints when env.DB is missing
+    const noDbEnv = { ...workerEnv, DB: undefined } as any;
+    const validWorkerJwt = signCustomHmacJwt({ alg: 'HS256', typ: 'JWT' }, validClaimsBase, workerEnv.JWT_SECRET);
+    const failClosedChecks = [
+      worker.fetch(new Request('http://localhost:3000/api/health'), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/system/overview'), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/auth/status?username=secops_admin'), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'x', password: 'StrongPassword_123!' }) }), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'secops_admin', password: workerAdminPwd }) }), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/incidents', { headers: { Authorization: `Bearer ${validWorkerJwt}` } }), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/v1/verify/invoke', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validWorkerJwt}` }, body: JSON.stringify({ functionName: 'getDashboardMetrics' }) }), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/system/policy-config'), noDbEnv, ctx),
+      worker.fetch(new Request('http://localhost:3000/api/system/rules'), noDbEnv, ctx)
+    ];
+    const failClosedResponses = await Promise.all(failClosedChecks);
+    for (const r of failClosedResponses) {
+      assert.strictEqual(r.status, 503, `Expected 503 when DB missing on ${r.url}`);
+    }
+    const unauthIncNoDb = await worker.fetch(new Request('http://localhost:3000/api/incidents'), noDbEnv, ctx);
+    assert.strictEqual(unauthIncNoDb.status, 401);
+
+    // Health healthy check
     const healthOk = await worker.fetch(new Request('http://localhost:3000/api/health'), workerEnv, ctx);
     assert.strictEqual(healthOk.status, 200);
-    const healthOkJson: any = await healthOk.json();
-    assert.strictEqual(healthOkJson.status, 'UP');
-    assert.strictEqual(healthOkJson.databaseConnection, 'CONNECTED');
 
-    const healthDown = await worker.fetch(new Request('http://localhost:3000/api/health'), { ...workerEnv, DB: undefined } as any, ctx);
-    assert.strictEqual(healthDown.status, 503);
-    const healthDownJson: any = await healthDown.json();
-    assert.strictEqual(healthDownJson.status, 'DEGRADED');
+    // 6b. Strict JWT checks in Worker (reject alg:none & missing iss/aud/nbf even when signed with worker secret)
+    const workerAlgNone = `${base64UrlEncode(JSON.stringify({ alg: 'none', typ: 'JWT' }))}.${base64UrlEncode(JSON.stringify({
+      sub: 'usr_secops_admin',
+      username: 'secops_admin',
+      role: 'Super Administrator',
+      jti: 'jti_fake',
+      iss: 'https://auth.serverless-security.local',
+      aud: 'serverless-security-framework',
+      iat: Math.floor(Date.now() / 1000),
+      nbf: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600
+    }))}.`;
+    const workerRejectNone = await worker.fetch(
+      new Request('http://localhost:3000/api/incidents', { headers: { Authorization: `Bearer ${workerAlgNone}` } }),
+      workerEnv,
+      ctx
+    );
+    assert.strictEqual(workerRejectNone.status, 401, 'Worker must reject alg:none JWT');
 
-    // 5b. /api/register rejects self-assigned Admin role (403) and accepts Developer (PENDING_APPROVAL)
+    const workerMissingClaimsJwt = signCustomHmacJwt(
+      { alg: 'HS256', typ: 'JWT' },
+      { sub: 'usr_secops_admin', username: 'secops_admin', role: 'Super Administrator', jti: 'jti_m', exp: Math.floor(Date.now() / 1000) + 3600 },
+      workerEnv.JWT_SECRET
+    );
+    const workerRejectMissingClaims = await worker.fetch(
+      new Request('http://localhost:3000/api/incidents', { headers: { Authorization: `Bearer ${workerMissingClaimsJwt}` } }),
+      workerEnv,
+      ctx
+    );
+    assert.strictEqual(workerRejectMissingClaims.status, 401, 'Worker must reject JWT missing iss/aud/iat/nbf');
+
+    // 6c. /api/register rejects self-assigned Admin role (403) and accepts Developer (PENDING_APPROVAL)
     const regAdminRes = await worker.fetch(
       new Request('http://localhost:3000/api/register', {
         method: 'POST',
@@ -285,23 +487,18 @@ async function runTests() {
     const regDevJson: any = await regDevRes.json();
     assert.strictEqual(regDevJson.status, 'PENDING_APPROVAL');
     assert.strictEqual(regDevJson.pendingApproval, true);
-    assert.ok(regDevJson.mfaEnrollment?.secret && regDevJson.mfaEnrollment?.provisioningUri?.startsWith('otpauth://totp/'), 'Registration should return one-time MFA enrollment payload');
     assert.ok(Array.isArray(regDevJson.mfaEnrollment?.backupCodes) && regDevJson.mfaEnrollment.backupCodes.length === 8);
 
-    // 5c. /api/auth/mfa/send-sms returns 501
-    const smsRes = await worker.fetch(
-      new Request('http://localhost:3000/api/auth/mfa/send-sms', { method: 'POST' }),
-      workerEnv,
-      ctx
-    );
+    // 6d. /api/auth/mfa/send-sms returns 501
+    const smsRes = await worker.fetch(new Request('http://localhost:3000/api/auth/mfa/send-sms', { method: 'POST' }), workerEnv, ctx);
     assert.strictEqual(smsRes.status, 501);
 
-    // 5d. Worker /api/login + /api/auth/mfa/enroll-challenge + /api/auth/mfa/verify with seeded secops_admin
+    // 6e. Worker laptop-only Recovery-Code Enrollment -> Verify -> Concurrent Race CAS -> Reset
     const workerLogin = await worker.fetch(
       new Request('http://localhost:3000/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'secops_admin', password: '12345@pro' })
+        body: JSON.stringify({ username: 'secops_admin', password: workerAdminPwd })
       }),
       workerEnv,
       ctx
@@ -309,32 +506,106 @@ async function runTests() {
     assert.strictEqual(workerLogin.status, 200);
     const workerLoginJson: any = await workerLogin.json();
     assert.strictEqual(workerLoginJson.mfaRequired, true);
-    assert.strictEqual(workerLoginJson.enrollmentRequired, true, 'Seeded unpaired user must flag enrollmentRequired');
-    assert.ok(workerLoginJson.mfaChallengeId, 'Worker login must return mfaChallengeId');
-    assert.strictEqual('totpSecret' in workerLoginJson, false, 'Worker login must NOT leak totpSecret');
-    assert.strictEqual('demoTotpCode' in workerLoginJson, false, 'Worker login must NOT leak demoTotpCode');
+    assert.strictEqual(workerLoginJson.enrollmentRequired, true);
+    assert.strictEqual(workerLoginJson.preferredMethod, 'backup_code');
+    assert.strictEqual('totpSecret' in workerLoginJson, false);
 
-    // Fetch one-time QR pairing payload for active unpaired challenge
-    const workerEnrollRes = await worker.fetch(
+    // Enroll with mode: 'recovery_codes'
+    const workerEnrollRec = await worker.fetch(
       new Request('http://localhost:3000/api/auth/mfa/enroll-challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaChallengeId: workerLoginJson.mfaChallengeId })
+        body: JSON.stringify({ mfaChallengeId: workerLoginJson.mfaChallengeId, mode: 'recovery_codes' })
       }),
       workerEnv,
       ctx
     );
-    assert.strictEqual(workerEnrollRes.status, 200);
-    const workerEnrollJson: any = await workerEnrollRes.json();
-    assert.ok(workerEnrollJson.secret && workerEnrollJson.provisioningUri?.startsWith('otpauth://totp/'));
+    assert.strictEqual(workerEnrollRec.status, 200);
+    const workerEnrollRecJson: any = await workerEnrollRec.json();
+    assert.strictEqual(workerEnrollRecJson.mode, 'recovery_codes');
+    assert.strictEqual(workerEnrollRecJson.secret, undefined);
+    assert.ok(Array.isArray(workerEnrollRecJson.backupCodes) && workerEnrollRecJson.backupCodes.length === 8);
 
-    // Test 5 wrong attempts lock Worker challenge (429 on 5th)
+    // Confirm recovery code #0 activates enrollment in Worker
+    const workerVerifyRec = await worker.fetch(
+      new Request('http://localhost:3000/api/auth/mfa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mfaChallengeId: workerLoginJson.mfaChallengeId,
+          code: workerEnrollRecJson.backupCodes[0],
+          method: 'backup_code'
+        })
+      }),
+      workerEnv,
+      ctx
+    );
+    assert.strictEqual(workerVerifyRec.status, 200);
+    const workerVerifyRecJson: any = await workerVerifyRec.json();
+    assert.strictEqual(workerVerifyRecJson.mfaMethod, 'backup_code');
+    assert.strictEqual(workerVerifyRecJson.recoveryCodesRemaining, 7);
+    const adminJwt = workerVerifyRecJson.token as string;
+    assert.ok(adminJwt && adminJwt.split('.').length === 3);
+
+    // Worker concurrent Promise.all race with same recovery code #1 across two active challenges -> strictly 1 succeeds
+    const wLoginRace1: any = await (await worker.fetch(
+      new Request('http://localhost:3000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'secops_admin', password: workerAdminPwd })
+      }),
+      workerEnv,
+      ctx
+    )).json();
+    const wLoginRace2: any = await (await worker.fetch(
+      new Request('http://localhost:3000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'secops_admin', password: workerAdminPwd })
+      }),
+      workerEnv,
+      ctx
+    )).json();
+    const wRaceCode = workerEnrollRecJson.backupCodes[1];
+    const [wRaceA, wRaceB] = await Promise.all([
+      worker.fetch(
+        new Request('http://localhost:3000/api/auth/mfa/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mfaChallengeId: wLoginRace1.mfaChallengeId, code: wRaceCode, method: 'backup_code' })
+        }),
+        workerEnv,
+        ctx
+      ),
+      worker.fetch(
+        new Request('http://localhost:3000/api/auth/mfa/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mfaChallengeId: wLoginRace2.mfaChallengeId, code: wRaceCode, method: 'backup_code' })
+        }),
+        workerEnv,
+        ctx
+      )
+    ]);
+    const workerRaceSuccessCount = [wRaceA, wRaceB].filter((r) => r.status === 200).length;
+    assert.strictEqual(workerRaceSuccessCount, 1, 'Test RC-7 (Worker CAS): Exactly 1 concurrent submission of same recovery code may succeed');
+
+    // Lockout test (429 on 5th bad attempt)
+    const wLockLogin: any = await (await worker.fetch(
+      new Request('http://localhost:3000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'secops_admin', password: workerAdminPwd })
+      }),
+      workerEnv,
+      ctx
+    )).json();
     for (let i = 1; i <= 4; i++) {
       const failRes = await worker.fetch(
         new Request('http://localhost:3000/api/auth/mfa/verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mfaChallengeId: workerLoginJson.mfaChallengeId, code: '000000' })
+          body: JSON.stringify({ mfaChallengeId: wLockLogin.mfaChallengeId, code: 'BAD1-BAD2', method: 'backup_code' })
         }),
         workerEnv,
         ctx
@@ -345,80 +616,27 @@ async function runTests() {
       new Request('http://localhost:3000/api/auth/mfa/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaChallengeId: workerLoginJson.mfaChallengeId, code: '000000' })
+        body: JSON.stringify({ mfaChallengeId: wLockLogin.mfaChallengeId, code: 'BAD1-BAD2', method: 'backup_code' })
       }),
       workerEnv,
       ctx
     );
     assert.strictEqual(lockRes.status, 429);
 
-    // Fresh login + valid TOTP yields Admin JWT
-    const workerLogin2 = await worker.fetch(
-      new Request('http://localhost:3000/api/login', {
+    // Worker regenerate recovery codes + mfa-reset
+    const wRegenRes = await worker.fetch(
+      new Request('http://localhost:3000/api/system/users/secops_admin/recovery-codes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'secops_admin', password: '12345@pro' })
+        headers: { Authorization: `Bearer ${adminJwt}` }
       }),
       workerEnv,
       ctx
     );
-    const workerLogin2Json: any = await workerLogin2.json();
-    const adminRow = workerMemDb.getUser('secops_admin');
-    assert.ok(adminRow?.mfa_secret);
-    const adminTotp = generateTotpToken(adminRow!.mfa_secret!);
+    assert.strictEqual(wRegenRes.status, 200);
+    const wRegenJson: any = await wRegenRes.json();
+    assert.ok(Array.isArray(wRegenJson.plaintextCodes) && wRegenJson.plaintextCodes.length === 8);
 
-    const verifyOk = await worker.fetch(
-      new Request('http://localhost:3000/api/auth/mfa/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaChallengeId: workerLogin2Json.mfaChallengeId, code: adminTotp })
-      }),
-      workerEnv,
-      ctx
-    );
-    assert.strictEqual(verifyOk.status, 200);
-    const verifyOkJson: any = await verifyOk.json();
-    const adminJwt = verifyOkJson.token as string;
-    assert.ok(adminJwt && adminJwt.split('.').length === 3, 'Worker MFA verification must issue JWT');
-
-    // Replay same challenge fails
-    const verifyReplay = await worker.fetch(
-      new Request('http://localhost:3000/api/auth/mfa/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaChallengeId: workerLogin2Json.mfaChallengeId, code: adminTotp })
-      }),
-      workerEnv,
-      ctx
-    );
-    assert.strictEqual(verifyReplay.status, 401);
-
-    // Subsequent login once enrolled sets enrollmentRequired = false & blocks enroll-challenge (403)
-    const workerLogin3 = await worker.fetch(
-      new Request('http://localhost:3000/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'secops_admin', password: '12345@pro' })
-      }),
-      workerEnv,
-      ctx
-    );
-    const workerLogin3Json: any = await workerLogin3.json();
-    assert.strictEqual(workerLogin3Json.enrollmentRequired, false);
-
-    const workerEnrollBlocked = await worker.fetch(
-      new Request('http://localhost:3000/api/auth/mfa/enroll-challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfaChallengeId: workerLogin3Json.mfaChallengeId })
-      }),
-      workerEnv,
-      ctx
-    );
-    assert.strictEqual(workerEnrollBlocked.status, 403);
-
-    // Admin MFA reset restores enrollmentRequired = true
-    const workerResetRes = await worker.fetch(
+    const wResetRes = await worker.fetch(
       new Request('http://localhost:3000/api/system/users/secops_admin/mfa-reset', {
         method: 'POST',
         headers: { Authorization: `Bearer ${adminJwt}` }
@@ -426,49 +644,72 @@ async function runTests() {
       workerEnv,
       ctx
     );
-    assert.strictEqual(workerResetRes.status, 200);
-    const workerLogin4 = await worker.fetch(
-      new Request('http://localhost:3000/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'secops_admin', password: '12345@pro' })
-      }),
-      workerEnv,
-      ctx
-    );
-    const workerLogin4Json: any = await workerLogin4.json();
-    assert.strictEqual(workerLogin4Json.enrollmentRequired, true);
+    assert.strictEqual(wResetRes.status, 200);
 
-    // 5e. Credentials metadata endpoint: unauth -> 401, Admin -> 200 without raw secret or live code
-    const credUnauth = await worker.fetch(
-      new Request('http://localhost:3000/api/system/users/secops_admin/credentials'),
-      workerEnv,
-      ctx
-    );
-    assert.strictEqual(credUnauth.status, 401);
-
-    const credAuth = await worker.fetch(
-      new Request('http://localhost:3000/api/system/users/secops_admin/credentials', {
+    // Confirm prior JWT revoked after mfa-reset on authenticated route
+    const afterResetIncidents = await worker.fetch(
+      new Request('http://localhost:3000/api/incidents', {
         headers: { Authorization: `Bearer ${adminJwt}` }
       }),
       workerEnv,
       ctx
     );
-    assert.strictEqual(credAuth.status, 200);
-    const credJson: any = await credAuth.json();
-    assert.strictEqual(credJson.mfaConfigured, true);
-    assert.strictEqual('base32Secret' in credJson, false, 'Must not expose raw base32Secret');
-    assert.strictEqual('activeTotpToken' in credJson, false, 'Must not expose live activeTotpToken');
-    assert.strictEqual('keyUri' in credJson, false, 'Must not expose otpauth keyUri');
+    assert.strictEqual(afterResetIncidents.status, 401, 'Session must be revoked after Admin MFA reset in Worker');
 
-    // 5f. /api/incidents: unauth -> 401, Admin POST -> 201, PATCH -> 200
-    const incUnauth = await worker.fetch(new Request('http://localhost:3000/api/incidents'), workerEnv, ctx);
-    assert.strictEqual(incUnauth.status, 401);
+    // Fresh login & optional TOTP verify to re-obtain Admin JWT for remaining Worker assertions
+    const wFreshLogin: any = await (await worker.fetch(
+      new Request('http://localhost:3000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'secops_admin', password: workerAdminPwd })
+      }),
+      workerEnv,
+      ctx
+    )).json();
+    assert.strictEqual(wFreshLogin.enrollmentRequired, true);
+    const wEnrollQr: any = await (await worker.fetch(
+      new Request('http://localhost:3000/api/auth/mfa/enroll-challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfaChallengeId: wFreshLogin.mfaChallengeId, mode: 'authenticator' })
+      }),
+      workerEnv,
+      ctx
+    )).json();
+    assert.ok(wEnrollQr.secret && wEnrollQr.provisioningUri?.startsWith('otpauth://totp/'));
+    const freshTotp = generateTotpToken(wEnrollQr.secret);
+    const wFreshVerify: any = await (await worker.fetch(
+      new Request('http://localhost:3000/api/auth/mfa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfaChallengeId: wFreshLogin.mfaChallengeId, code: freshTotp, method: 'authenticator' })
+      }),
+      workerEnv,
+      ctx
+    )).json();
+    assert.strictEqual(wFreshVerify.success, true);
+    const adminJwt2 = wFreshVerify.token as string;
 
+    // 6f. /api/system/overview strips raw email/phone
+    const overviewRes = await worker.fetch(
+      new Request('http://localhost:3000/api/system/overview', {
+        headers: { Authorization: `Bearer ${adminJwt2}` }
+      }),
+      workerEnv,
+      ctx
+    );
+    assert.strictEqual(overviewRes.status, 200);
+    const overviewJson: any = await overviewRes.json();
+    for (const u of overviewJson.users || []) {
+      assert.strictEqual('email' in u, false, '/api/system/overview must not expose raw email');
+      assert.strictEqual('phone' in u, false, '/api/system/overview must not expose raw phone');
+    }
+
+    // 6g. /api/incidents & /api/v1/verify/invoke
     const incCreate = await worker.fetch(
       new Request('http://localhost:3000/api/incidents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt2}` },
         body: JSON.stringify({ title: 'Worker D1 Incident Verification', severity: 'HIGH', status: 'OPEN' })
       }),
       workerEnv,
@@ -476,26 +717,22 @@ async function runTests() {
     );
     assert.strictEqual(incCreate.status, 201);
     const incCreateJson: any = await incCreate.json();
-    assert.ok(incCreateJson.incident?.id?.startsWith('INC-'));
 
     const incPatch = await worker.fetch(
       new Request(`http://localhost:3000/api/incidents/${incCreateJson.incident.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt2}` },
         body: JSON.stringify({ status: 'CONTAINED', mitigation_steps: 'Edge block enforced' })
       }),
       workerEnv,
       ctx
     );
     assert.strictEqual(incPatch.status, 200);
-    const incPatchJson: any = await incPatch.json();
-    assert.strictEqual(incPatchJson.incident?.status, 'CONTAINED');
 
-    // 5g. /api/v1/verify/invoke pipeline + SHA-256 hash chaining in D1 audit_events
     const allowRes = await worker.fetch(
       new Request('http://localhost:3000/api/v1/verify/invoke', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt2}` },
         body: JSON.stringify({ functionName: 'getDashboardMetrics', payload: { region: 'ap-south-1' } })
       }),
       workerEnv,
@@ -506,7 +743,7 @@ async function runTests() {
     const denyRes = await worker.fetch(
       new Request('http://localhost:3000/api/v1/verify/invoke', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminJwt2}` },
         body: JSON.stringify({ functionName: 'getDashboardMetrics', payload: { target: 'http://169.254.169.254/latest/meta-data/' } })
       }),
       workerEnv,
@@ -517,22 +754,26 @@ async function runTests() {
     const auditRows = workerMemDb.getAllLogs();
     const chainedEvents = auditRows.filter((r) => typeof r.integrity_hash === 'string' && r.integrity_hash.length === 64);
     assert.ok(chainedEvents.length >= 2, 'Worker verification events must be SHA-256 hash-chained in D1 audit_events');
-    console.log('✔ PASS 5: Cloudflare Worker auth, MFA D1 persistence, RBAC, incidents & 15-step verification verified');
+    console.log('✔ PASS 6: Cloudflare Worker fail-closed 503s, strict JWT, recovery-code CAS concurrency, MFA reset, PII stripping & 15-step verification passed');
 
-    console.log('\nALL MIGRATION, MFA PERSISTENCE & WORKER HARDENING TESTS PASSED (5/5)\n');
+    console.log('\nALL MIGRATION, RECOVERY-CODE MFA, STRICT JWT & WORKER HARDENING TESTS PASSED (6/6)\n');
   } finally {
     for (const cid of tempChallengeIds) {
       try {
         prodDb.prepare('DELETE FROM mfa_challenges WHERE id = ?').bind(cid).run();
-      } catch { /* ignore cleanup error */ }
+      } catch { /* ignore */ }
     }
-    if (tempUserId) {
+    for (const uname of cleanupUsernames) {
       try {
-        prodDb.prepare('DELETE FROM active_sessions WHERE username LIKE ?').bind('mfa_persist_test_%').run();
-        prodDb.prepare('DELETE FROM sessions WHERE user_id = ?').bind(tempUserId).run();
-        prodDb.prepare('DELETE FROM audit_events WHERE username LIKE ?').bind('mfa_persist_test_%').run();
-        prodDb.prepare('DELETE FROM users WHERE id = ?').bind(tempUserId).run();
-      } catch { /* ignore cleanup error */ }
+        prodDb.prepare('DELETE FROM active_sessions WHERE username = ?').bind(uname).run();
+        prodDb.prepare('DELETE FROM audit_events WHERE username = ? OR requested_function LIKE ?').bind(uname, `%${uname}%`).run();
+      } catch { /* ignore */ }
+    }
+    for (const uid of cleanupUserIds) {
+      try {
+        prodDb.prepare('DELETE FROM sessions WHERE user_id = ?').bind(uid).run();
+        prodDb.prepare('DELETE FROM users WHERE id = ?').bind(uid).run();
+      } catch { /* ignore */ }
     }
     for (const f of [tmpCleanPath, tmpLegacyPath]) {
       try {

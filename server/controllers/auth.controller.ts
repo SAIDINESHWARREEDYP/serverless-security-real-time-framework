@@ -99,14 +99,16 @@ export const authController = {
         role: result.user?.role,
         phoneMasked: result.phoneMasked,
         emailMasked: result.emailMasked,
-        methods: result.methods || ['authenticator', 'backup_code'],
+        methods: result.methods || ['backup_code', 'authenticator'],
+        preferredMethod: result.preferredMethod || 'backup_code',
+        recoveryCodesRemaining: result.recoveryCodesRemaining ?? 0,
         attemptsLeft: result.attemptsLeft,
         serverTime: nowMs,
         stepSeconds: 30,
         user: result.user,
         message: result.enrollmentRequired
-          ? 'Password verified. First-time Authenticator setup required — scan the QR code or enter setup key, then enter the 6-digit TOTP code.'
-          : 'Password verified. Enter 6-digit TOTP code or single-use recovery code.'
+          ? 'Password verified. First-time MFA setup required — generate and confirm a single-use recovery code (no phone needed) or pair an Authenticator app.'
+          : 'Password verified. Enter a single-use recovery code or 6-digit Authenticator TOTP code.'
       });
     }
 
@@ -155,6 +157,8 @@ export const authController = {
       success: true,
       token: result.token,
       user: result.user,
+      mfaMethod: result.mfaMethod,
+      recoveryCodesRemaining: result.recoveryCodesRemaining,
       message: 'MFA verified successfully. High-assurance Zero-Trust token issued.'
     });
   },
@@ -177,15 +181,24 @@ export const authController = {
 
   async enrollChallenge(req: Request, res: Response) {
     const challengeId = (req.body?.mfaChallengeId || req.body?.mfaSessionId || '').trim();
-    const out = authService.getChallengeEnrollment(challengeId);
+    const rawMode = req.body?.mode;
+    const mode =
+      rawMode === 'recovery_codes'
+        ? 'recovery_codes'
+        : rawMode === 'authenticator'
+        ? 'authenticator'
+        : undefined;
+
+    const out = authService.getChallengeEnrollment(challengeId, mode);
     if (!out.success) {
       return res.status(out.status || 400).json({ success: false, error: out.error });
     }
     return res.json({
       success: true,
+      mode: out.mode,
       username: out.username,
-      secret: out.secret,
-      provisioningUri: out.provisioningUri,
+      ...(out.secret ? { secret: out.secret } : {}),
+      ...(out.provisioningUri ? { provisioningUri: out.provisioningUri } : {}),
       backupCodes: out.backupCodes,
       issuer: out.issuer || 'ServerlessSecOps'
     });

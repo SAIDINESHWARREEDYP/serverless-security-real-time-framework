@@ -114,15 +114,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON active_sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_username ON active_sessions(username);
 CREATE INDEX IF NOT EXISTS idx_sessions_revoked ON active_sessions(revoked);
 
--- Seed Initial Security Principals
+-- Seed Initial Security Principals (credentials bootstrapped securely on startup via CSPRNG PBKDF2-SHA512)
 INSERT OR IGNORE INTO users (id, username, password_hash, role, base_risk_score, status, department, email)
 VALUES
-  ('usr_secops_admin', 'secops_admin', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'Admin', 0, 'APPROVED', 'SecOps Core Operations', 'secops_admin@corp.internal'),
-  ('usr_cloud_dev', 'cloud_dev', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'Developer', 15, 'APPROVED', 'Cloud Platform Engineering', 'cloud_dev@corp.internal'),
-  ('usr_auditor_guest', 'auditor_guest', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'Guest', 30, 'APPROVED', 'Third-Party Compliance & SOC-2', 'auditor_guest@compliance-partner.com'),
-  ('usr_sarah_infra', 'sarah_infra', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'Developer', 10, 'APPROVED', 'Infrastructure & Edge Reliability', 'sarah_infra@corp.internal'),
-  ('usr_alex_contractor', 'alex_contractor', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'Developer', 25, 'PENDING_APPROVAL', 'Edge Pipeline Contractors', 'alex_contractor@contractor.internal'),
-  ('usr_threat_actor', 'threat_actor', '6fd9eca72eb6de8a3771a9eb5a932fe27ce2eca34c4542ef889021dbc1c8cef9d53beb2c69abf0eaf6ab8c72b6d73145ecab70bd0b3d6134a7b2343d970c302e', 'Guest', 70, 'SUSPENDED', 'Untrusted Public Origin', 'threat_actor@darknet-proxy.io');
+  ('usr_secops_admin', 'secops_admin', '!BOOTSTRAP_REQUIRED!', 'Admin', 0, 'APPROVED', 'SecOps Core Operations', 'secops_admin@corp.internal'),
+  ('usr_cloud_dev', 'cloud_dev', '!BOOTSTRAP_REQUIRED!', 'Developer', 15, 'APPROVED', 'Cloud Platform Engineering', 'cloud_dev@corp.internal'),
+  ('usr_auditor_guest', 'auditor_guest', '!BOOTSTRAP_REQUIRED!', 'Guest', 30, 'APPROVED', 'Third-Party Compliance & SOC-2', 'auditor_guest@compliance-partner.com'),
+  ('usr_sarah_infra', 'sarah_infra', '!BOOTSTRAP_REQUIRED!', 'Developer', 10, 'APPROVED', 'Infrastructure & Edge Reliability', 'sarah_infra@corp.internal'),
+  ('usr_alex_contractor', 'alex_contractor', '!BOOTSTRAP_REQUIRED!', 'Developer', 25, 'PENDING_APPROVAL', 'Edge Pipeline Contractors', 'alex_contractor@contractor.internal'),
+  ('usr_threat_actor', 'threat_actor', '!BOOTSTRAP_REQUIRED!', 'Guest', 70, 'SUSPENDED', 'Untrusted Public Origin', 'threat_actor@darknet-proxy.io');
 
 -- Seed Initial Markov Chain Sequences
 INSERT OR IGNORE INTO function_rules (current_function, allowed_next_function)
