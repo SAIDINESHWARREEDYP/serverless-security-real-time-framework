@@ -3,12 +3,12 @@
 [![Zero-Trust Architecture](https://img.shields.io/badge/Architecture-Zero--Trust-blue.svg)](#)
 [![TypeScript](https://img.shields.io/badge/Language-TypeScript%205.x-blue)](#)
 [![Cloudflare Workers & D1](https://img.shields.io/badge/Runtime-Cloudflare%20Workers%20%2B%20D1-orange)](#)
-[![Test Suite](https://img.shields.io/badge/Tests-44%2F44%20Passed%20(100%25)-brightgreen)](#)
+[![Test Suite](https://img.shields.io/badge/Tests-49%2F49%20Passed%20(100%25)-brightgreen)](#)
 [![Security Hardening](https://img.shields.io/badge/Security-Fail--Closed%20%7C%20OWASP%20Top%2010-emerald)](#)
 
 ## Overview
 
-The **Integrated Real-Time Security Verification Framework** is an enterprise-grade cloud security platform engineered for serverless microservices and edge compute runtimes. It enforces an in-line **15-Step Security Verification Pipeline** that validates requests before invoking business logic (measured mean latency of $0.586\text{ ms}$ isolated pipeline and $1.741\text{ ms}$ end-to-end Express HTTP verification).
+The **Integrated Real-Time Security Verification Framework** is an enterprise-grade cloud security platform engineered for serverless microservices and edge compute runtimes. It enforces an in-line **15-Step Security Verification Pipeline** that validates requests before invoking business logic (reproducible `npm run benchmark` measurements: $1.140\text{–}1.300\text{ ms}$ isolated pipeline mean, $1.577\text{–}1.622\text{ ms}$ Express gateway header latency, and $7.088\text{–}7.589\text{ ms}$ end-to-end HTTP round-trip).
 
 ---
 
@@ -51,13 +51,16 @@ The **Integrated Real-Time Security Verification Framework** is an enterprise-gr
 # 1. Install dependencies
 npm install
 
-# 2. Run all 6 automated security test suites (44 tests)
+# 2. Run all 7 automated security test suites (44 baseline + 5 recovery/D1/UI/real-time = 49 tests)
 npm test
 
-# 3. Run development server (Port 3000)
+# 3. Run reproducible latency benchmark (isolated SQLite WAL)
+npm run benchmark
+
+# 4. Run development server (Port 3000)
 npm run dev
 
-# 4. Build for production
+# 5. Build for production
 npm run build
 ```
 
@@ -82,7 +85,7 @@ To demonstrate the platform safely without exposing production secrets:
 - [SOURCE_TO_CLAIM_VERIFICATION_MATRIX.md](./SOURCE_TO_CLAIM_VERIFICATION_MATRIX.md): Traceability matrix verifying claims against source code
 - [BASE_PAPER_VS_PROPOSED_PROJECT_COMPARISON.md](./BASE_PAPER_VS_PROPOSED_PROJECT_COMPARISON.md): Detailed comparison against Shin et al.
 - [CITATION_AND_REFERENCE_AUDIT.md](./CITATION_AND_REFERENCE_AUDIT.md): Complete IEEE citation audit with RFC specifications
-- [TESTING_AND_VALIDATION.md](./TESTING_AND_VALIDATION.md): Execution logs and latency benchmarks across 44 automated tests
+- [TEST_RESULTS.md](./TEST_RESULTS.md): Execution logs across all 49 automated tests (44 core + 5 recovery/D1/UI/real-time) and [PERFORMANCE_EVALUATION.md](./PERFORMANCE_EVALUATION.md) (`npm run benchmark`)
 - [FINAL_SECURITY_REMEDIATION_REPORT.md](./FINAL_SECURITY_REMEDIATION_REPORT.md): Security audit and remediation verification report
 - [FINAL_PROJECT_ACCEPTANCE_REPORT.md](./FINAL_PROJECT_ACCEPTANCE_REPORT.md): Formal capstone acceptance sign-off
 - [VIVA_PREPARATION_GUIDE.md](./VIVA_PREPARATION_GUIDE.md): Technical defense questions and answers for external examination

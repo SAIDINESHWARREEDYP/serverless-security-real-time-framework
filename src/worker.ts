@@ -54,6 +54,7 @@ function resolveAllowedOrigin(origin: string, env?: Env): string | null {
 }
 
 let ephemeralWorkerDevSecret = '';
+const inFlightChallengeEnrollments = new Map<string, Promise<{ status: number; payload: Record<string, any> }>>();
 
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -784,88 +785,136 @@ export default {
         if (!env.DB) {
           return jsonResponse({ success: false, error: 'Database unavailable.' }, 503, origin, undefined, env);
         }
-        const challengeRow: any = await env.DB.prepare(
-          'SELECT * FROM mfa_challenges WHERE id = ? OR challenge_token = ? LIMIT 1'
-        ).bind(cid, cid).first();
-        if (!challengeRow || Number(challengeRow.consumed) === 1) {
-          return jsonResponse({ success: false, error: 'MFA challenge not found or already consumed.' }, 401, origin, undefined, env);
-        }
-        const expiredRow: any = await env.DB.prepare(
-          "SELECT 1 as expired FROM mfa_challenges WHERE id = ? AND expires_at <= datetime('now')"
-        ).bind(challengeRow.id).first();
-        if (expiredRow) {
-          return jsonResponse({ success: false, error: 'MFA challenge expired. Please sign in again.' }, 401, origin, undefined, env);
-        }
-        if (Number(challengeRow.attempts || 0) >= Number(challengeRow.max_attempts || 5)) {
-          return jsonResponse({ success: false, error: 'MFA challenge locked. Please sign in again.' }, 429, origin, undefined, env);
-        }
-        const user: any = await env.DB.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').bind(challengeRow.user_id).first();
-        if (!user) {
-          return jsonResponse({ success: false, error: 'User identity not found.' }, 404, origin, undefined, env);
-        }
-        if (Boolean(user.mfa_enrolled) || Number(user.last_totp_step || 0) > 0) {
-          return jsonResponse({
-            success: false,
-            error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
-          }, 403, origin, undefined, env);
+
+        const inflightKey = `${cid}:${mode}`;
+        let pendingTask = !body.forceRefresh ? inFlightChallengeEnrollments.get(inflightKey) : undefined;
+        if (!pendingTask) {
+          pendingTask = (async () => {
+            const challengeRow: any = await env.DB.prepare(
+              'SELECT * FROM mfa_challenges WHERE id = ? OR challenge_token = ? LIMIT 1'
+            ).bind(cid, cid).first();
+            if (!challengeRow || Number(challengeRow.consumed) === 1) {
+              return { status: 401, payload: { success: false, error: 'MFA challenge not found or already consumed.' } };
+            }
+            const expiredRow: any = await env.DB.prepare(
+              "SELECT 1 as expired FROM mfa_challenges WHERE id = ? AND expires_at <= datetime('now')"
+            ).bind(challengeRow.id).first();
+            if (expiredRow) {
+              return { status: 401, payload: { success: false, error: 'MFA challenge expired. Please sign in again.' } };
+            }
+            if (Number(challengeRow.attempts || 0) >= Number(challengeRow.max_attempts || 5)) {
+              return { status: 429, payload: { success: false, error: 'MFA challenge locked. Please sign in again.' } };
+            }
+            const user: any = await env.DB.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').bind(challengeRow.user_id).first();
+            if (!user) {
+              return { status: 404, payload: { success: false, error: 'User identity not found.' } };
+            }
+            if (Boolean(user.mfa_enrolled) || Number(user.last_totp_step || 0) > 0) {
+              return {
+                status: 403,
+                payload: {
+                  success: false,
+                  error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
+                }
+              };
+            }
+
+            const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
+
+            if (mode === 'recovery_codes') {
+              const updRes: any = await env.DB.prepare(
+                'UPDATE users SET mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ? AND COALESCE(mfa_enrolled, 0) = 0 AND COALESCE(last_totp_step, 0) = 0'
+              ).bind(JSON.stringify(hashedCodes), user.id).run();
+              const updChanges = updRes?.meta?.changes ?? updRes?.changes ?? 0;
+              if (updChanges === 0) {
+                return {
+                  status: 403,
+                  payload: {
+                    success: false,
+                    error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
+                  }
+                };
+              }
+
+              await logSecurityEvent(
+                env.DB,
+                user.username,
+                '/api/auth/mfa/enroll-challenge',
+                user.base_risk_score || 0,
+                'ALLOWED',
+                `[RECOVERY ENROLLMENT ISSUED] Issued 8 single-use hashed recovery codes for laptop-only MFA setup (${user.username}).`,
+                0.9,
+                'RECOVERY_CODE_ENROLLMENT_STARTED'
+              );
+
+              return {
+                status: 200,
+                payload: {
+                  success: true,
+                  mode: 'recovery_codes',
+                  username: user.username,
+                  backupCodes: plaintextCodes,
+                  issuer: 'ServerlessSecOps'
+                }
+              };
+            }
+
+            let cleanSecret = String(user.mfa_secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+            if (!cleanSecret || cleanSecret.length < 16) {
+              cleanSecret = generateBase32SecretWeb(20);
+            } else if (cleanSecret.length < 26) {
+              cleanSecret = cleanSecret.repeat(Math.ceil(32 / cleanSecret.length)).slice(0, 32);
+            }
+            const updAuthRes: any = await env.DB.prepare(
+              'UPDATE users SET mfa_secret = ?, mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ? AND COALESCE(mfa_enrolled, 0) = 0 AND COALESCE(last_totp_step, 0) = 0'
+            ).bind(cleanSecret, JSON.stringify(hashedCodes), user.id).run();
+            const updAuthChanges = updAuthRes?.meta?.changes ?? updAuthRes?.changes ?? 0;
+            if (updAuthChanges === 0) {
+              return {
+                status: 403,
+                payload: {
+                  success: false,
+                  error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
+                }
+              };
+            }
+
+            await logSecurityEvent(
+              env.DB,
+              user.username,
+              '/api/auth/mfa/enroll-challenge',
+              user.base_risk_score || 0,
+              'ALLOWED',
+              `[FIRST-TIME MFA PAIRING] Issued one-time Authenticator QR & recovery codes for ${user.username}.`,
+              0.9,
+              'MFA_PAIRING_ISSUED'
+            );
+
+            const provisioningUri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${cleanSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`;
+            return {
+              status: 200,
+              payload: {
+                success: true,
+                mode: 'authenticator',
+                username: user.username,
+                secret: cleanSecret,
+                provisioningUri,
+                backupCodes: plaintextCodes,
+                issuer: 'ServerlessSecOps'
+              }
+            };
+          })();
+
+          inFlightChallengeEnrollments.set(inflightKey, pendingTask);
+          pendingTask.finally(() => {
+            if (inFlightChallengeEnrollments.get(inflightKey) === pendingTask) {
+              inFlightChallengeEnrollments.delete(inflightKey);
+            }
+          });
         }
 
-        const { plaintextCodes, hashedCodes } = await generateBackupCodesWeb(8);
-
-        if (mode === 'recovery_codes') {
-          await env.DB.prepare('UPDATE users SET mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ?')
-            .bind(JSON.stringify(hashedCodes), user.id).run();
-
-          await logSecurityEvent(
-            env.DB,
-            user.username,
-            '/api/auth/mfa/enroll-challenge',
-            user.base_risk_score || 0,
-            'ALLOWED',
-            `[RECOVERY ENROLLMENT ISSUED] Issued 8 single-use hashed recovery codes for laptop-only MFA setup (${user.username}).`,
-            0.9,
-            'RECOVERY_CODE_ENROLLMENT_STARTED'
-          );
-
-          return jsonResponse({
-            success: true,
-            mode: 'recovery_codes',
-            username: user.username,
-            backupCodes: plaintextCodes,
-            issuer: 'ServerlessSecOps'
-          }, 200, origin, undefined, env);
-        }
-
-        let cleanSecret = String(user.mfa_secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
-        if (!cleanSecret || cleanSecret.length < 16) {
-          cleanSecret = generateBase32SecretWeb(20);
-        } else if (cleanSecret.length < 26) {
-          cleanSecret = cleanSecret.repeat(Math.ceil(32 / cleanSecret.length)).slice(0, 32);
-        }
-        await env.DB.prepare('UPDATE users SET mfa_secret = ?, mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ?')
-          .bind(cleanSecret, JSON.stringify(hashedCodes), user.id).run();
-
-        await logSecurityEvent(
-          env.DB,
-          user.username,
-          '/api/auth/mfa/enroll-challenge',
-          user.base_risk_score || 0,
-          'ALLOWED',
-          `[FIRST-TIME MFA PAIRING] Issued one-time Authenticator QR & recovery codes for ${user.username}.`,
-          0.9,
-          'MFA_PAIRING_ISSUED'
-        );
-
-        const provisioningUri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${cleanSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`;
-        return jsonResponse({
-          success: true,
-          mode: 'authenticator',
-          username: user.username,
-          secret: cleanSecret,
-          provisioningUri,
-          backupCodes: plaintextCodes,
-          issuer: 'ServerlessSecOps'
-        }, 200, origin, undefined, env);
+        const result = await pendingTask;
+        return jsonResponse(result.payload, result.status, origin, undefined, env);
       } catch (err: any) {
         return jsonResponse({ error: 'MFA enrollment fault: ' + err.message }, 500, origin, undefined, env);
       }

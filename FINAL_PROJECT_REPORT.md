@@ -8,7 +8,7 @@
 
 ## Abstract
 
-Serverless cloud computing introduces distinct operational vulnerabilities, including stateless identity fragmentation, out-of-order function invocations, and cloud metadata exploitation. While prior verification systems such as BAMBDA (Shin et al., IEEE Access 2025) evaluate runtime properties asynchronously through log-group analysis, modern serverless APIs require synchronous, in-line perimeter enforcement. This work presents an integrated real-time security verification framework engineered for Cloudflare Workers with Cloudflare D1 and Node.js Express with TypeScript. The gateway enforces a deterministic 15-step in-line pipeline before executing target handlers. Core security controls integrate PBKDF2-SHA512 credential hashing, strict HS256 JWT validation, stateful session revocation, role-based access control, rule-based workflow sequence validation, sliding-window burst detection, heuristic threat scanning across six serverless vectors, and tamper-evident SHA-256 hash-chained audit logging. To ensure laptop-only accessibility without mobile phone dependency, authentication pairs optional RFC 6238 TOTP with atomic, single-use SHA-256 recovery-code enrollment and verification. Evaluated across 44 automated tests in six suites, the framework enforces fail-closed containment and maintains audit integrity. Empirical benchmarking on Node.js Express measures 0.586 ms mean isolated pipeline overhead and 1.741 ms mean end-to-end HTTP verification latency.
+Serverless cloud computing introduces distinct operational vulnerabilities, including stateless identity fragmentation, out-of-order function invocations, and cloud metadata exploitation. While prior verification systems such as BAMBDA (Shin et al., IEEE Access 2025) evaluate runtime properties asynchronously through log-group analysis, modern serverless APIs require synchronous, in-line perimeter enforcement. This work presents an integrated real-time security verification framework engineered for Cloudflare Workers with Cloudflare D1 and Node.js Express with TypeScript. The gateway enforces a deterministic 15-step in-line pipeline before executing target handlers. Core security controls integrate PBKDF2-SHA512 credential hashing, strict HS256 JWT validation, stateful session revocation, role-based access control, rule-based workflow sequence validation, sliding-window burst detection, heuristic threat scanning across six serverless vectors, and tamper-evident SHA-256 hash-chained audit logging. To ensure laptop-only accessibility without mobile phone dependency, authentication pairs optional RFC 6238 TOTP with atomic, single-use SHA-256 recovery-code enrollment and verification. Evaluated across 49 automated tests in seven suites (44 baseline security/pipeline/migration tests plus 5 recovery-concurrency, disk-persisted D1 adapter, UI, and real-time SSE integration tests), the framework enforces fail-closed containment and maintains audit integrity. Reproducible benchmarking (`npm run benchmark`) on Node.js Express + WAL SQLite measures 1.140–1.300 ms mean isolated pipeline overhead, 1.577–1.622 ms gateway header processing latency, and 7.088–7.589 ms end-to-end HTTP round-trip latency.
 
 ---
 
@@ -72,7 +72,7 @@ In 2025, IEEE Access published the foundational benchmark paper:
 - Deterministic sequence anomaly detection for multi-function business workflows.
 
 The framework developed in this capstone investigates an alternative edge gateway architecture that implements an in-line, Zero-Trust defense layer featuring:
-- A 15-step in-line pipeline achieving an empirical mean isolated pipeline overhead of **0.586 ms** (median 0.499 ms, p95 0.822 ms) and **1.741 ms** mean end-to-end HTTP verification latency on Express + SQLite.
+- A 15-step in-line pipeline achieving reproducible `npm run benchmark` means of **1.140–1.300 ms** isolated pipeline overhead (median `1.017–1.111 ms`), **1.577–1.622 ms** server-side HTTP gateway header processing (`X-Verification-Latency-MS`), and **7.088–7.589 ms** full HTTP client-to-server round-trip latency on Express + SQLite WAL.
 - Laptop-only **single-use SHA-256 recovery-code enrollment and verification** without mobile dependency, alongside optional RFC 6238 TOTP MFA [2].
 - Cryptographic HMAC-SHA256 JWT tokens [3] enforcing strict `iss`, `aud`, `iat`, `nbf`, and `exp` claims conforming to NIST SP 800-207 Zero Trust Architecture [4].
 - A chained SHA-256 audit ledger ($H_t = \text{SHA256}(R_t \parallel H_{t-1})$) [11] with real-time SSE push telemetry.
@@ -303,26 +303,27 @@ To ensure policies do not disrupt legitimate production traffic, developers and 
 
 ### 17.1 Test Environment
 - **Node.js Backend**: Express API server backed by `node:sqlite` (`server/data/security_framework.sqlite`).
-- **Cloudflare Worker Verification**: `src/worker.ts` evaluated locally using an async D1 adapter over in-memory `node:sqlite` (remote Cloudflare D1 deployment pending external Cloudflare credentials).
-- **Automated Verification**: 44 executable test cases across 6 TypeScript test suites (`npm test`), plus live `localhost:3000` E2E verification.
+- **Cloudflare Worker Verification**: `src/worker.ts` evaluated locally using an async D1 adapter over persistent disk `node:sqlite` across close/reopen restart (remote Cloudflare Workers/D1 deployment was not executed because `wrangler` CLI and Cloudflare API credentials are absent in this offline environment).
+- **Automated Verification**: 49 executable test cases across 7 TypeScript test suites (`npm test`: 44 baseline tests in `npm run test:core` + 5 concurrency/persistence/UI/SSE tests in `npm run test:realtime`).
 
 ### 17.2 Measurement Metrics
-- Isolated 15-Step Verification Pipeline Latency ($N = 200$ invocations via `performance.now()`).
-- End-to-End HTTP Verification Latency (`X-Verification-Latency-MS` across $N = 20$ live requests).
+- Isolated 15-Step Verification Pipeline Latency ($W = 25$ warmup, $N = 200$ invocations via `performance.now()`).
+- Live Express HTTP Verification Latency ($W = 5$ warmup, $N = 50$ requests recording both `X-Verification-Latency-MS` and full HTTP round-trip).
 - Fail-Closed Integrity & Tamper-Evident Hash Chaining.
 
 ---
 
 ## 18. Latency & Overhead Performance Analysis
 
-Direct measurements executed on Node.js Express + `node:sqlite` in this workspace produced the following reproducible latency results:
+Direct measurements executed via `npm run benchmark` (`scripts/benchmark.ts`) on Node.js Express + isolated `/tmp` `node:sqlite` WAL across two consecutive runs produced the following reproducible latency results:
 
-| Measurement Scope | Sample Count ($N$) | Mean Latency | Median (p50) | p95 Latency |
+| Measurement Scope | Sample Count ($N$) | Run 1 Mean / p50 / p95 | Run 2 Mean / p50 / p95 | Throughput |
 |---|---|---|---|---|
-| **Isolated 15-Step Pipeline** (`execute15StepPipeline`) | 200 | **0.586 ms** | **0.499 ms** | **0.822 ms** |
-| **Live Express HTTP** (`POST /api/v1/verify/invoke`) | 20 | **1.741 ms** | **1.535 ms** | **4.346 ms** |
+| **Isolated 15-Step Pipeline** (`execute15StepPipeline`) | 200 | **1.140 / 1.111 / 1.442 ms** | **1.300 / 1.017 / 3.244 ms** | **766–873 req/s** |
+| **Live Express HTTP Gateway** (`X-Verification-Latency-MS`) | 50 | **1.577 / 1.247 / 1.755 ms** | **1.622 / 1.297 / 3.467 ms** | **126–135 req/s** |
+| **Live HTTP End-to-End Round-Trip** (`Client -> Express -> Client`) | 50 | **7.088 / 6.197 / 13.951 ms** | **7.589 / 6.494 / 12.915 ms** | **126–135 req/s** |
 
-**Key Finding**: In-line 15-step gateway inspection adds sub-millisecond core verification overhead (`0.586 ms` mean) and under 2 ms end-to-end HTTP overhead (`1.741 ms` mean) prior to target function execution.
+**Key Finding**: In-line 15-step gateway inspection adds ~1.14–1.30 ms isolated pipeline overhead and ~1.58–1.62 ms server-side HTTP gateway overhead (`~7.09–7.59 ms` full HTTP client round-trip including JWT verification, SQLite WAL audit hash chaining, and SSE emission) prior to target function execution.
 
 ---
 
@@ -334,7 +335,7 @@ The automated verification test suites (`test/verification-pipeline.test.ts` and
 
 ## 20. Security Hardening & Penetration Testing Results
 
-The hardened test suites (`npm test`, 44 / 44 cases) verify that:
+The hardened test suites (`npm test`, 49 / 49 cases across 7 suites) verify that:
 1. All SQLite and Worker D1 queries use parameterized prepared statements (`db.prepare(...).bind(...)`).
 2. Modified JWT signatures, `alg: none` tokens, or missing `iss`/`aud`/`iat`/`nbf` claims are immediately rejected.
 3. Mutating an audit record breaks the SHA-256 chain validation.
@@ -348,7 +349,7 @@ The hardened test suites (`npm test`, 44 / 44 cases) verify that:
 | Security Feature | IEEE Access *BAMBDA* (2025) [1] | Our Framework |
 |---|---|---|
 | Verification Model | Asynchronous log-group / Lambda layer instrumentation | **Synchronous 15-Step In-Line Edge/Express Gateway** |
-| Measured Overhead | 8.12% warm-start execution overhead (published) | **0.586 ms mean pipeline / 1.741 ms HTTP** (local measurement) |
+| Measured Overhead | 8.12% warm-start execution overhead (published) | **1.140–1.300 ms pipeline / 1.577–1.622 ms gateway HTTP (`7.088–7.589 ms` RTT)** |
 | Audit Integrity | CloudWatch log assertions | **SHA-256 Hash-Chained Audit Ledger** [11] |
 | Workflow Sequencing | Temporal property logic on logs | **Deterministic `function_rules` Lookup Table** |
 | Multi-Factor Auth | External to verification layer | **Laptop-Only Recovery Codes + Optional RFC 6238 TOTP** [2] |
@@ -374,9 +375,9 @@ The hardened test suites (`npm test`, 44 / 44 cases) verify that:
 
 ## 24. Conclusion & Academic Summary
 
-This capstone project demonstrates the design, implementation, and validation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications. Differentiated from the post-invocation log analysis approach of the IEEE Access 2025 *BAMBDA* paper [1], this framework enforces synchronous zero-trust checks—combining laptop-accessible single-use SHA-256 recovery-code MFA and optional RFC 6238 TOTP, granular RBAC, in-line payload inspection, rule-based sequence validation, and tamper-evident audit chaining—with measured latencies of **0.586 ms** (isolated pipeline) and **1.741 ms** (live HTTP API).
+This capstone project demonstrates the design, implementation, and validation of an Integrated Real-Time Security Verification Framework for Serverless Cloud Applications. Differentiated from the post-invocation log analysis approach of the IEEE Access 2025 *BAMBDA* paper [1], this framework enforces synchronous zero-trust checks—combining laptop-accessible single-use SHA-256 recovery-code MFA and optional RFC 6238 TOTP, granular RBAC, in-line payload inspection, rule-based sequence validation, and tamper-evident audit chaining—with reproducible `npm run benchmark` latencies of **1.140–1.300 ms** (isolated pipeline), **1.577–1.622 ms** (gateway header processing), and **7.088–7.589 ms** (live HTTP round-trip).
 
-The hardened codebase passes **44 out of 44** automated test cases across six suites (`npm test`) alongside live HTTP end-to-end verification, establishing a defensible capstone submission.
+The hardened codebase passes **49 out of 49** automated test cases across seven suites (`npm test`: 44 core baseline tests + 5 recovery-concurrency, disk-persisted D1 adapter, UI, and real-time SSE integration tests), establishing a defensible capstone submission with local SQLite/D1 adapter verification (remote Cloudflare D1 deployment remaining unexecuted offline).
 
 ---
 

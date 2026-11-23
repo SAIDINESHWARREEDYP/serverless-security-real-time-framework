@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx test/auth-security.test.ts && tsx test/rbac-security.test.ts && tsx test/verification-pipeline.test.ts && tsx test/security-hardening.test.ts && tsx test/identity-credentials-workflow.test.ts && tsx test/migration-and-hardening.test.ts"
+    "benchmark": "tsx scripts/benchmark.ts",
+    "test:core": "tsx test/auth-security.test.ts && tsx test/rbac-security.test.ts && tsx test/verification-pipeline.test.ts && tsx test/security-hardening.test.ts && tsx test/identity-credentials-workflow.test.ts && tsx test/migration-and-hardening.test.ts",
+    "test:realtime": "tsx test/recovery-realtime-ui.test.ts",
+    "test": "tsx test/auth-security.test.ts && tsx test/rbac-security.test.ts && tsx test/verification-pipeline.test.ts && tsx test/security-hardening.test.ts && tsx test/identity-credentials-workflow.test.ts && tsx test/migration-and-hardening.test.ts && tsx test/recovery-realtime-ui.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

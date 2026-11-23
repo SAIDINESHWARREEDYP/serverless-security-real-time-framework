@@ -605,10 +605,16 @@ class AuthService {
     const { plaintextCodes, hashedCodes } = generateRecoveryCodes(8);
 
     if (effectiveMode === 'recovery_codes') {
-      userRepository.update(user.id, {
-        mfa_backup_codes: hashedCodes,
-        mfa_enabled: true
-      });
+      const upd = db.prepare(
+        'UPDATE users SET mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ? AND COALESCE(mfa_enrolled, 0) = 0 AND COALESCE(last_totp_step, 0) = 0'
+      ).bind(JSON.stringify(hashedCodes), user.id).run();
+      if (!upd.changes) {
+        return {
+          success: false,
+          status: 403,
+          error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
+        };
+      }
 
       auditRepository.record({
         username: user.username,
@@ -633,11 +639,16 @@ class AuthService {
       ? normalizeBase32Secret(user.mfa_secret)
       : generateTotpSecret(20);
 
-    userRepository.update(user.id, {
-      mfa_secret: secret,
-      mfa_backup_codes: hashedCodes,
-      mfa_enabled: true
-    });
+    const updAuth = db.prepare(
+      'UPDATE users SET mfa_secret = ?, mfa_backup_codes = ?, mfa_enabled = 1 WHERE id = ? AND COALESCE(mfa_enrolled, 0) = 0 AND COALESCE(last_totp_step, 0) = 0'
+    ).bind(secret, JSON.stringify(hashedCodes), user.id).run();
+    if (!updAuth.changes) {
+      return {
+        success: false,
+        status: 403,
+        error: 'MFA is already enrolled for this identity. Enter a recovery code, your 6-digit TOTP code, or contact an Administrator to reset MFA.'
+      };
+    }
 
     const provisioningUri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${secret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`;
 

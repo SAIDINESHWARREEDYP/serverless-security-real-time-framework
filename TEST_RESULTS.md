@@ -2,21 +2,22 @@
 
 ## Test Suite Execution Summary
 
-**Runtime:** Node.js v22.x (`node:sqlite` + TypeScript via `tsx`) & Cloudflare Workers Local Adapter (`src/worker.ts`)  
-**Test Runner:** `npm test` (`package.json` orchestrator across 6 TypeScript test files)  
-**Total Test Suites:** 6  
-**Total Automated Test Sections / Cases:** 44  
-**Passed:** 44 (100.0%)  
-**Failed:** 0 (0.0%)  
+**Runtime:** Node.js v22.23.2 (`node:sqlite` + TypeScript via `tsx`) & Local Worker D1 Adapter (`src/worker.ts`)  
+**Test Runners:** `npm test` (7 TypeScript suites) & `npm run test:core` (6 core baseline suites)  
+**Total Test Suites:** 7  
+**Core Baseline Automated Tests:** 44 / 44 PASSED (`100.0%`)  
+**Recovery Concurrency, Local D1 Disk Persistence & UI/Real-Time Integration Tests:** 5 / 5 PASSED (`100.0%`)  
+**Combined Executed Test Count:** **49 / 49 PASSED (100.0%)**  
+**Failed:** 0 (0.0%)
 
-> **Scope Note:** `src/worker.ts` endpoint tests execute against an in-memory `node:sqlite` D1 adapter (`createAsyncD1Adapter`) rather than a remote Cloudflare production account. Remote Cloudflare D1 deployment requires external Cloudflare API credentials.
+> **Scope Note (Cloudflare D1):** Neither `wrangler` CLI (`~/.wrangler`) nor `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` exists in this sandbox environment. Therefore, remote Cloudflare account deployment (`wrangler deploy` / `wrangler d1 execute --remote`) was **not executed** and is **not claimed**. `src/worker.ts` database persistence was verified locally against a file-backed `node:sqlite` D1 adapter (`createAsyncD1Adapter`) across full DB close/reopen restarts.
 
 ---
 
 ## Detailed Test Suite Breakdown
 
 ### 1. `test/auth-security.test.ts` (9 / 9 PASSED)
-- `[PASS]` 1. Valid Login & PBKDF2 Verification: PBKDF2 SHA-512 derived key matches CSPRNG salt on dynamically created test accounts; seeded admin uses CSPRNG credentials (no hardcoded default password assertions).
+- `[PASS]` 1. Valid Login & PBKDF2 Verification: PBKDF2 SHA-512 derived key matches CSPRNG salt on dynamically created test accounts; seeded admin uses CSPRNG credentials.
 - `[PASS]` 2. Invalid Password Rejection: Incorrect password rejected without false positives.
 - `[PASS]` 3. Expired Token Rejection: Expired JWT rejected with code `TOKEN_EXPIRED`.
 - `[PASS]` 4. Invalid Signature Rejection: Forged signature rejected with error `SIGNATURE_INVALID`.
@@ -68,5 +69,12 @@
 - `[PASS]` 2. Clean SQLite database applies migrations `0001`–`0004`, creating `mfa_challenges`, `mfa_enrolled`, and CSPRNG seeded credentials.
 - `[PASS]` 3. Pre-`0003` database upgrades cleanly through `0004` without overwriting existing custom user hashes or losing audit records; re-initialization is idempotent.
 - `[PASS]` 4. Express `verifyJwt` strictly rejects `alg: none`, missing `iss`/`aud`/`iat`/`nbf`, and future `iat > now + 60`.
-- `[PASS]` 5. Express Laptop-Only Recovery Code MFA Suite (10 scenarios): first-time recovery-code enrollment (`mode: 'recovery_codes'` without QR/secret) issuing 8 codes, confirming 1 activates enrollment leaving 7, subsequent recovery-code login without authenticator, `403` blocking repeat enrollment, invalid code decrementing `attemptsLeft`, previously consumed code rejected, challenge replay rejected, expired challenge rejected, 5-attempt lockout, `Promise.all` concurrent race allowing strictly 1 success, exhaustion message at 0 codes, and Admin MFA reset revoking prior sessions & logging `MFA_ENROLLMENT_RESET`.
-- `[PASS]` 6. Cloudflare Worker (`src/worker.ts`) End-to-End Hardening: fail-closed `503` across DB-dependent routes when `env.DB` is missing, strict JWT rejection (`alg: none`, missing claims), `/api/register` role escalation rejection (`403`), `/api/auth/mfa/send-sms` returning `501`, laptop-only recovery-code enrollment & CAS concurrency control (`Promise.all` strictly 1 winner), Admin recovery regeneration & MFA reset revoking prior sessions, PII stripping in `/api/system/overview`, `/api/incidents`, and 15-step `/api/v1/verify/invoke` hash chaining.
+- `[PASS]` 5. Express Laptop-Only Recovery Code MFA Suite (10 scenarios: first-time enrollment, confirmation, replay, invalid decrement, expiry, 5-attempt lockout, `Promise.all` concurrent race, exhaustion & Admin MFA reset).
+- `[PASS]` 6. Cloudflare Worker (`src/worker.ts`) End-to-End Hardening (local SQLite D1 adapter: `503` fail-closed guards, strict JWT, role escalation rejection, recovery CAS concurrency, PII stripping, `/api/incidents`, `/api/v1/verify/invoke`).
+
+### 7. `test/recovery-realtime-ui.test.ts` (5 / 5 PASSED)
+- `[PASS]` 1. Persistent Local Worker D1 Disk Storage: Two-phase close/reopen test proves user enrollment, single-use spent recovery-code exclusion, remaining code counts (`6 -> 5`), and incident persistence survive DB restarts; production SQLite schema `0001`–`0004` intact.
+- `[PASS]` 2. Recovery Codes Concurrent Generation, Retry Safety & Single-Use CAS: Concurrent `Promise.all` `/api/auth/mfa/enroll-challenge` coalesces cleanly in Worker without DB corruption or mismatch, pre-verification retries succeed safely, post-activation retries are blocked (`403` preserving 7 codes), and parallel HTTP `/api/auth/mfa/verify` calls allow strictly 1 winner.
+- `[PASS]` 3. `MfaVerificationCard` UI Spinner, `AbortController` StrictMode & Tab Switching: React 19 StrictMode double-mount clears initial spinner and displays all 8 recovery tiles cleanly, tab switching (`Use a Recovery Code` <-> `Authenticator App (Optional)`) preserves code tiles without re-spinning, and click-to-fill completes MFA login.
+- `[PASS]` 4. `AuthModal` Real-Time Approval Polling: Submitting pending credentials opens `PENDING_APPROVAL`; approving via live `POST /api/system/users/approve` triggers the 2.5s `/api/auth/status` poll to transition automatically straight into Factor 2 MFA enrollment.
+- `[PASS]` 5. Live Express SSE Streaming & `useRealtimeMonitor` Reconnection: Real HTTP SSE `/api/v1/realtime/stream` delivers `CONNECTED` + live `NEW_INVOCATION` across client disconnect/reconnect; `useRealtimeMonitor` deduplicates events, transitions `LIVE_STREAMING -> POLLING_FALLBACK -> RECONNECTING -> LIVE_STREAMING` over backoff recovery, and resets `reconnectAttempts`.

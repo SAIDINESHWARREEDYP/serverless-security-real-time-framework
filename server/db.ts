@@ -239,7 +239,7 @@ export class PersistentSecurityDatabase {
       this.dbPath = ':memory:';
       this.sqlite = new DatabaseSync(':memory:');
     } else {
-      const resolvedPath = filePath || path.join(path.resolve(process.cwd(), 'server/data'), 'security_framework.sqlite');
+      const resolvedPath = filePath || process.env.SECURITY_DB_PATH || path.join(path.resolve(process.cwd(), 'server/data'), 'security_framework.sqlite');
       const parentDir = path.dirname(resolvedPath);
       if (!fs.existsSync(parentDir)) {
         fs.mkdirSync(parentDir, { recursive: true });
@@ -649,6 +649,14 @@ export class PersistentSecurityDatabase {
     ).get(username, cutoffIso, cutoffSql, cutoffIso) as any;
 
     return row?.count || 0;
+  }
+
+  public close(): void {
+    try {
+      this.sqlite.close();
+    } catch {
+      // ignore already-closed handle
+    }
   }
 }
 
