@@ -32,6 +32,7 @@ import {
 import { User, UserApprovalStatus } from '../types.ts';
 import { getTotpRemainingSeconds } from '../utils/mfa.ts';
 import { getAuthRequestHeaders } from '../utils/authTokenStore.ts';
+import { useTheme } from '../context/ThemeContext.tsx';
 
 export interface PasswordChangeRequestItem {
   id: string;
@@ -93,6 +94,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   onSelectUserForLogin,
   onRefreshUsers
 }) => {
+  const { isLight } = useTheme();
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | UserApprovalStatus>('ALL');
@@ -479,29 +481,39 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
   const approvedCount = users.filter((u) => u.status === 'APPROVED').length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden font-sans text-slate-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className={`border rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden font-sans ${
+        isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-200'
+      }`}>
         {/* Modal Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+        <div className={`p-5 border-b flex items-center justify-between ${
+          isLight ? 'border-slate-200 bg-slate-50/90' : 'border-slate-800 bg-slate-950/60'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
+            <div className={`p-2.5 rounded-xl border ${
+              isLight ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+            }`}>
               <Database className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-base font-semibold text-white tracking-tight">
+                <h3 className={`text-base font-semibold tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   Enterprise User Database &amp; Saved Logins
                 </h3>
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                <span className={`text-[11px] font-mono tabular-nums px-2 py-0.5 rounded border ${
+                  isLight ? 'bg-slate-100 text-slate-700 border-slate-200' : 'bg-slate-800 text-slate-300 border-slate-700'
+                }`}>
                   {users.length} Total Saved
                 </span>
                 {pendingCount > 0 && (
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold">
+                  <span className={`text-[11px] font-mono tabular-nums px-2 py-0.5 rounded border font-semibold ${
+                    isLight ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                  }`}>
                     {pendingCount} Pending Verification
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 Manage registered identities, generate single-use recovery bypass codes, and inspect MFA credentials in Dev Mode.
               </p>
             </div>
@@ -514,19 +526,25 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               onClick={() => setIsDevMode(!isDevMode)}
               className={`px-3 py-1.5 rounded-xl text-xs font-mono font-semibold border flex items-center gap-1.5 transition-all cursor-pointer ${
                 isDevMode
-                  ? 'bg-purple-600/20 text-purple-300 border-purple-500/40 shadow-xs'
+                  ? isLight
+                    ? 'bg-purple-100 text-purple-800 border-purple-300 shadow-xs'
+                    : 'bg-purple-600/20 text-purple-300 border-purple-500/40 shadow-xs'
+                  : isLight
+                  ? 'bg-white text-slate-600 border-slate-300 hover:text-slate-900'
                   : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-white'
               }`}
               title="Toggle Development Mode to inspect Base32 secrets and troubleshoot MFA mismatches"
             >
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <Sparkles className={`w-3.5 h-3.5 ${isLight ? 'text-purple-600' : 'text-purple-400'}`} />
               <span>Dev Mode: {isDevMode ? 'ON' : 'OFF'}</span>
             </button>
 
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                isLight ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-200' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
               title="Close"
             >
               <X className="w-5 h-5" />
@@ -536,15 +554,17 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
         {/* Real-time Session Revocation Feedback Notice */}
         {revocationNotice && (
-          <div className="px-5 py-2.5 bg-rose-500/15 border-b border-rose-500/30 text-rose-300 text-xs font-mono flex items-center justify-between animate-in fade-in">
+          <div className={`px-5 py-2.5 border-b text-xs font-mono flex items-center justify-between animate-in fade-in ${
+            isLight ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+          }`}>
             <div className="flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              <ShieldAlert className={`w-4 h-4 shrink-0 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
               <span>{revocationNotice}</span>
             </div>
             <button
               type="button"
               onClick={() => setRevocationNotice(null)}
-              className="text-slate-400 hover:text-white cursor-pointer"
+              className={`cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -552,14 +572,18 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         )}
 
         {/* View Switcher: Identities vs Pending User Requests vs Credential & Identity Change Requests */}
-        <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className={`px-4 py-2.5 border-b flex items-center justify-between gap-3 flex-wrap ${
+          isLight ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-900/60'
+        }`}>
+          <div className="flex items-center gap-2 flex-wrap tabular-nums">
             <button
               type="button"
               onClick={() => setModalTab('identities')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                 modalTab === 'identities'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20'
+                  : isLight
+                  ? 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
                   : 'bg-slate-800/80 text-slate-400 hover:text-white'
               }`}
             >
@@ -572,14 +596,16 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               onClick={() => setModalTab('pending_users')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                 modalTab === 'pending_users'
-                  ? 'bg-amber-600 text-white shadow-md shadow-amber-900/30'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-900/20'
+                  : isLight
+                  ? 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
                   : 'bg-slate-800/80 text-slate-400 hover:text-white'
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
               <span>Pending Requests</span>
               {pendingCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-400 text-slate-950 animate-pulse">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-400 text-slate-950">
                   {pendingCount} Pending
                 </span>
               )}
@@ -593,7 +619,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               }}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                 modalTab === 'password_requests'
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/30'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-900/20'
+                  : isLight
+                  ? 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
                   : 'bg-slate-800/80 text-slate-400 hover:text-white'
               }`}
             >
@@ -616,7 +644,11 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   if (modalTab === 'password_requests') fetchAllChangeRequests();
                 }}
                 disabled={isLoadingRequests}
-                className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                className={`px-2.5 py-1 text-[11px] rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  isLight
+                    ? 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                }`}
                 title="Refresh users and requests from database"
               >
                 <RefreshCw className={`w-3 h-3 ${isLoadingRequests ? 'animate-spin' : ''}`} />
@@ -628,15 +660,17 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
         {/* Real-time Password Request Feedback Notice */}
         {requestNotice && (
-          <div className="px-5 py-2.5 bg-emerald-500/15 border-b border-emerald-500/30 text-emerald-300 text-xs font-mono flex items-center justify-between animate-in fade-in">
+          <div className={`px-5 py-2.5 border-b text-xs font-mono flex items-center justify-between animate-in fade-in ${
+            isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+          }`}>
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <CheckCircle2 className={`w-4 h-4 shrink-0 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
               <span>{requestNotice}</span>
             </div>
             <button
               type="button"
               onClick={() => setRequestNotice(null)}
-              className="text-slate-400 hover:text-white cursor-pointer"
+              className={`cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -647,11 +681,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
           <>
             {/* Real-time Pending Approvals Alert Callout */}
             {pendingCount > 0 && (
-              <div className="mx-4 mt-3 p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-center justify-between gap-3 animate-in fade-in">
+              <div className={`mx-4 mt-3 p-3 rounded-xl border text-xs flex items-center justify-between gap-3 animate-in fade-in ${
+                isLight ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+              }`}>
                 <div className="flex items-center gap-2.5">
-                  <Clock className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                  <Clock className={`w-4 h-4 shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
                   <span>
-                    <strong>{pendingCount} Identity Registration Request{pendingCount > 1 ? 's' : ''}</strong> awaiting administrator review and clearance.
+                    <strong className="tabular-nums">{pendingCount} Identity Registration Request{pendingCount > 1 ? 's' : ''}</strong> awaiting administrator review and clearance.
                   </span>
                 </div>
                 <button
@@ -666,17 +702,23 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             )}
 
             {/* Action Toolbar */}
-            <div className="p-4 border-b border-slate-800/80 bg-slate-900/40 flex flex-col gap-3">
+            <div className={`p-4 border-b flex flex-col gap-3 ${
+              isLight ? 'border-slate-200 bg-slate-50/70' : 'border-slate-800/80 bg-slate-900/40'
+            }`}>
           {/* Top Risk Visual Spectrum Bar */}
-          <div className="p-2.5 bg-slate-950/80 border border-slate-800/80 rounded-xl">
+          <div className={`p-2.5 border rounded-xl tabular-nums ${
+            isLight ? 'bg-white border-slate-200' : 'bg-slate-950/80 border-slate-800/80'
+          }`}>
             <div className="flex items-center justify-between text-[11px] mb-1.5">
-              <span className="text-slate-400 font-semibold flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+              <span className={`font-semibold flex items-center gap-1.5 ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>
+                <ShieldCheck className={`w-3.5 h-3.5 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                 Identity Risk Spectrum Distribution
               </span>
               <span className="text-slate-500 text-[10px]">{users.length} Registered Identities</span>
             </div>
-            <div className="h-2 w-full rounded-full overflow-hidden flex bg-slate-900 border border-slate-800">
+            <div className={`h-2 w-full rounded-full overflow-hidden flex border ${
+              isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-900 border-slate-800'
+            }`}>
               <div
                 style={{ width: `${Math.round((userRiskStats.nominal / userRiskStats.total) * 100)}%` }}
                 className="bg-emerald-500 transition-all"
@@ -698,12 +740,14 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 title={`Critical (≥75%): ${userRiskStats.critical}`}
               />
             </div>
-            <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-400 flex-wrap">
+            <div className={`flex items-center gap-3 mt-2 text-[10px] flex-wrap ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'NOMINAL' ? 'ALL' : 'NOMINAL')}
-                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
-                  riskFilter === 'NOMINAL' ? 'text-emerald-300 font-bold' : ''
+                className={`flex items-center gap-1 transition-colors cursor-pointer ${
+                  riskFilter === 'NOMINAL'
+                    ? isLight ? 'text-emerald-700 font-bold' : 'text-emerald-300 font-bold'
+                    : isLight ? 'hover:text-slate-900' : 'hover:text-white'
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -712,8 +756,10 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'MODERATE' ? 'ALL' : 'MODERATE')}
-                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
-                  riskFilter === 'MODERATE' ? 'text-cyan-300 font-bold' : ''
+                className={`flex items-center gap-1 transition-colors cursor-pointer ${
+                  riskFilter === 'MODERATE'
+                    ? isLight ? 'text-cyan-700 font-bold' : 'text-cyan-300 font-bold'
+                    : isLight ? 'hover:text-slate-900' : 'hover:text-white'
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-cyan-500" />
@@ -722,8 +768,10 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'ELEVATED' ? 'ALL' : 'ELEVATED')}
-                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
-                  riskFilter === 'ELEVATED' ? 'text-amber-300 font-bold' : ''
+                className={`flex items-center gap-1 transition-colors cursor-pointer ${
+                  riskFilter === 'ELEVATED'
+                    ? isLight ? 'text-amber-700 font-bold' : 'text-amber-300 font-bold'
+                    : isLight ? 'hover:text-slate-900' : 'hover:text-white'
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-amber-400" />
@@ -732,8 +780,10 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRiskFilter(riskFilter === 'CRITICAL' ? 'ALL' : 'CRITICAL')}
-                className={`flex items-center gap-1 hover:text-white transition-colors cursor-pointer ${
-                  riskFilter === 'CRITICAL' ? 'text-rose-300 font-bold' : ''
+                className={`flex items-center gap-1 transition-colors cursor-pointer ${
+                  riskFilter === 'CRITICAL'
+                    ? isLight ? 'text-rose-700 font-bold' : 'text-rose-300 font-bold'
+                    : isLight ? 'hover:text-slate-900' : 'hover:text-white'
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-rose-500" />
@@ -743,7 +793,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setRiskFilter('ALL')}
-                  className="text-blue-400 hover:underline text-[10px] ml-auto cursor-pointer"
+                  className="text-blue-500 hover:underline text-[10px] ml-auto cursor-pointer"
                 >
                   Clear Risk Filter
                 </button>
@@ -755,13 +805,15 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex items-center gap-2 flex-1 min-w-[240px] flex-wrap sm:flex-nowrap">
               <div className="relative flex-1 min-w-[180px]">
-                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search username, department, or role..."
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
+                  className={`w-full pl-8 pr-3 py-1.5 text-xs border rounded-lg focus:outline-none focus:border-blue-500/50 ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400' : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                  }`}
                 />
               </div>
 
@@ -769,7 +821,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                className={`border text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 ${
+                  isLight ? 'bg-white border-slate-300 text-slate-700' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
               >
                 <option value="ALL">All Statuses</option>
                 <option value="APPROVED">Approved ({approvedCount})</option>
@@ -782,7 +836,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value as any)}
-                className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                className={`border text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 ${
+                  isLight ? 'bg-white border-slate-300 text-slate-700' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
               >
                 <option value="ALL">All Roles</option>
                 <option value="Admin">Admin</option>
@@ -794,7 +850,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <select
                 value={riskFilter}
                 onChange={(e) => setRiskFilter(e.target.value as any)}
-                className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                className={`border text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 ${
+                  isLight ? 'bg-white border-slate-300 text-slate-700' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
               >
                 <option value="ALL">All Risk Levels</option>
                 <option value="NOMINAL">Nominal (&lt;25%)</option>
@@ -807,7 +865,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                className={`border text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 ${
+                  isLight ? 'bg-white border-slate-300 text-slate-700' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
               >
                 <option value="name">Sort: Name (A-Z)</option>
                 <option value="risk_desc">Sort: Highest Risk</option>
@@ -820,10 +880,12 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => onBatchSeed()}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  isLight ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                }`}
                 title="Populate test corporate users in database"
               >
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <Sparkles className={`w-3.5 h-3.5 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
                 <span>Seed Enterprise Users</span>
               </button>
 
@@ -843,56 +905,68 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         {showAddForm && (
           <form
             onSubmit={handleCreateUser}
-            className="p-4 bg-slate-950/80 border-b border-slate-800 animate-in slide-in-from-top-2 duration-150"
+            className={`p-4 border-b animate-in slide-in-from-top-2 duration-150 ${
+              isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/80 border-slate-800'
+            }`}
           >
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-xs font-semibold text-white uppercase tracking-wider flex items-center gap-1.5">
-                <UserPlus className="w-3.5 h-3.5 text-blue-400" />
+              <h4 className={`text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5 ${
+                isLight ? 'text-slate-900' : 'text-white'
+              }`}>
+                <UserPlus className={`w-3.5 h-3.5 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                 Register New Identity into Database
               </h4>
-              <span className="text-[11px] text-slate-400">
+              <span className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 Saves login credentials and sets initial clearance
               </span>
             </div>
 
             {actionError && (
-              <div className="p-2 mb-3 rounded bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
-                <ShieldAlert className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+              <div className={`p-2 mb-3 rounded border text-xs flex items-center gap-2 ${
+                isLight ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
+              }`}>
+                <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
                 <span>{actionError}</span>
               </div>
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">Username *</label>
+                <label className={`block mb-1 font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>Username *</label>
                 <input
                   type="text"
                   required
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   placeholder="e.g. devops_elena"
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+                  className={`w-full px-2.5 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 font-mono ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400' : 'bg-slate-900 border-slate-700 text-white placeholder-slate-500'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">Password (Min 8 chars) *</label>
+                <label className={`block mb-1 font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>Password (Min 8 chars) *</label>
                 <input
                   type="password"
                   required
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Create user password"
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+                  className={`w-full px-2.5 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 font-mono ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400' : 'bg-slate-900 border-slate-700 text-white placeholder-slate-500'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">Role Clearance</label>
+                <label className={`block mb-1 font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>Role Clearance</label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                  className={`w-full px-2.5 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-700 text-white'
+                  }`}
                 >
                   <option value="Developer">Developer (Tier 1 &amp; 2)</option>
                   <option value="Admin">Admin (Full Control)</option>
@@ -901,18 +975,20 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">Department / Team</label>
+                <label className={`block mb-1 font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>Department / Team</label>
                 <input
                   type="text"
                   value={newDept}
                   onChange={(e) => setNewDept(e.target.value)}
                   placeholder="e.g. Threat Intelligence"
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className={`w-full px-2.5 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400' : 'bg-slate-900 border-slate-700 text-white placeholder-slate-500'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">
+                <label className={`block mb-1 font-medium tabular-nums ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>
                   Base Threat Score ({newRisk}%)
                 </label>
                 <input
@@ -922,16 +998,18 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   step="5"
                   value={newRisk}
                   onChange={(e) => setNewRisk(Number(e.target.value))}
-                  className="w-full accent-blue-500 h-2 bg-slate-800 rounded-lg cursor-pointer mt-1"
+                  className={`w-full accent-blue-600 h-2 rounded-lg cursor-pointer mt-1 ${isLight ? 'bg-slate-200' : 'bg-slate-800'}`}
                 />
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1 font-medium">Initial Approval Status</label>
+                <label className={`block mb-1 font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>Initial Approval Status</label>
                 <select
                   value={newStatus}
                   onChange={(e) => setNewStatus(e.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                  className={`w-full px-2.5 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-700 text-white'
+                  }`}
                 >
                   <option value="APPROVED">APPROVED (Immediate Clearance)</option>
                   <option value="PENDING_APPROVAL">PENDING_APPROVAL (Gated for Verification)</option>
@@ -939,7 +1017,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               </div>
 
               <div className="sm:col-span-2 md:col-span-3">
-                <label className="block text-slate-400 mb-1 font-medium">
+                <label className={`block mb-1 font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>
                   Access Justification / Note (Optional)
                 </label>
                 <input
@@ -947,16 +1025,20 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   value={newJustification}
                   onChange={(e) => setNewJustification(e.target.value)}
                   placeholder="e.g. SRE contractor for edge pipeline deployments"
-                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className={`w-full px-2.5 py-1.5 border rounded-lg focus:outline-none focus:border-blue-500 ${
+                    isLight ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400' : 'bg-slate-900 border-slate-700 text-white placeholder-slate-500'
+                  }`}
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-slate-800">
+            <div className={`flex justify-end gap-2 mt-3 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+                className={`px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+                  isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white'
+                }`}
               >
                 Cancel
               </button>
@@ -975,7 +1057,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4">
           {filteredUsers.length === 0 ? (
             <div className="text-center py-12 text-slate-500 text-xs">
-              <Users className="w-8 h-8 mx-auto mb-2 text-slate-600 opacity-60" />
+              <Users className={`w-8 h-8 mx-auto mb-2 opacity-60 ${isLight ? 'text-slate-400' : 'text-slate-600'}`} />
               <p>No identities matched your filter query.</p>
               <button
                 type="button"
@@ -984,7 +1066,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   setStatusFilter('ALL');
                   setRoleFilter('ALL');
                 }}
-                className="mt-2 text-blue-400 hover:underline text-xs cursor-pointer"
+                className="mt-2 text-blue-500 hover:underline text-xs cursor-pointer"
               >
                 Reset Search Filters
               </button>
@@ -1001,16 +1083,26 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 return (
                   <div
                     key={user.id || user.username}
-                    className="p-3.5 rounded-xl border border-slate-800/80 bg-slate-950/50 hover:border-slate-700/80 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                    className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                      isLight
+                        ? 'border-slate-200 bg-white hover:border-slate-300 shadow-xs'
+                        : 'border-slate-800/80 bg-slate-950/50 hover:border-slate-700/80'
+                    }`}
                   >
                     {/* User Identity Info */}
                     <div className="flex items-start gap-3 min-w-0">
                       <div
                         className={`w-9 h-9 rounded-xl flex items-center justify-center font-mono font-bold text-xs shrink-0 border ${
                           user.role === 'Admin'
-                            ? 'bg-purple-950/40 border-purple-500/30 text-purple-300'
+                            ? isLight
+                              ? 'bg-purple-50 border-purple-200 text-purple-700'
+                              : 'bg-purple-950/40 border-purple-500/30 text-purple-300'
                             : user.role === 'Developer'
-                            ? 'bg-blue-950/40 border-blue-500/30 text-blue-300'
+                            ? isLight
+                              ? 'bg-blue-50 border-blue-200 text-blue-700'
+                              : 'bg-blue-950/40 border-blue-500/30 text-blue-300'
+                            : isLight
+                            ? 'bg-slate-100 border-slate-200 text-slate-700'
                             : 'bg-slate-800 border-slate-700 text-slate-300'
                         }`}
                       >
@@ -1019,15 +1111,21 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-white font-mono text-sm">
+                          <span className={`font-semibold font-mono text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>
                             {user.username}
                           </span>
                           <span
                             className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
                               user.role === 'Admin'
-                                ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                                ? isLight
+                                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                  : 'bg-purple-500/10 text-purple-400 border-purple-500/30'
                                 : user.role === 'Developer'
-                                ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                ? isLight
+                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                  : 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                : isLight
+                                ? 'bg-slate-100 text-slate-600 border-slate-200'
                                 : 'bg-slate-800 text-slate-400 border-slate-700'
                             }`}
                           >
@@ -1036,25 +1134,33 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
                           {/* Approval Status Badge */}
                           {isApproved && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
+                              isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            }`}>
                               <CheckCircle2 className="w-2.5 h-2.5" />
                               Approved
                             </span>
                           )}
                           {isPending && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1 font-semibold animate-pulse">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 font-semibold ${
+                              isLight ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            }`}>
                               <Clock className="w-2.5 h-2.5" />
                               Pending Verification
                             </span>
                           )}
                           {isRejected && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
+                              isLight ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                            }`}>
                               <XCircle className="w-2.5 h-2.5" />
                               Rejected
                             </span>
                           )}
                           {isSuspended && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
+                              isLight ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                            }`}>
                               <ShieldAlert className="w-2.5 h-2.5" />
                               Suspended
                             </span>
@@ -1062,47 +1168,55 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
                           <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
                             user.mfa_enrolled
-                              ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                              ? isLight
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                              : isLight
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
                               : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
                           }`}>
-                            <Smartphone className={`w-2.5 h-2.5 ${user.mfa_enrolled ? 'text-blue-400' : 'text-amber-400'}`} />
+                            <Smartphone className={`w-2.5 h-2.5 ${user.mfa_enrolled ? (isLight ? 'text-blue-600' : 'text-blue-400') : (isLight ? 'text-amber-600' : 'text-amber-400')}`} />
                             {user.mfa_enrolled ? 'MFA Enrolled' : 'Pairing Pending (QR Next Login)'}
                           </span>
 
                           {backupCount > 0 && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                              <LifeBuoy className="w-2.5 h-2.5 text-amber-400" />
+                            <span className={`text-[10px] font-mono tabular-nums px-2 py-0.5 rounded border flex items-center gap-1 ${
+                              isLight ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                            }`}>
+                              <LifeBuoy className={`w-2.5 h-2.5 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
                               {backupCount} Recovery Codes
                             </span>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1 flex-wrap">
+                        <div className={`flex items-center gap-3 text-[11px] mt-1 flex-wrap ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                           {user.department && (
                             <span className="flex items-center gap-1">
                               <Building2 className="w-3 h-3 text-slate-500" />
                               {user.department}
                             </span>
                           )}
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 tabular-nums">
                             <span className="font-mono">
                               Risk:{' '}
                               <span
                                 className={
                                   user.base_risk_score >= 75
-                                    ? 'text-rose-400 font-bold'
+                                    ? isLight ? 'text-rose-600 font-bold' : 'text-rose-400 font-bold'
                                     : user.base_risk_score >= 50
-                                    ? 'text-amber-400 font-bold'
+                                    ? isLight ? 'text-amber-600 font-bold' : 'text-amber-400 font-bold'
                                     : user.base_risk_score >= 25
-                                    ? 'text-cyan-400 font-bold'
-                                    : 'text-emerald-400 font-bold'
+                                    ? isLight ? 'text-cyan-600 font-bold' : 'text-cyan-400 font-bold'
+                                    : isLight ? 'text-emerald-600 font-bold' : 'text-emerald-400 font-bold'
                                 }
                               >
                                 {user.base_risk_score}%
                               </span>
                             </span>
 
-                            <div className="w-16 h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800 hidden sm:block">
+                            <div className={`w-16 h-1.5 rounded-full overflow-hidden border hidden sm:block ${
+                              isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-900 border-slate-800'
+                            }`}>
                               <div
                                 className={`h-full transition-all ${
                                   user.base_risk_score >= 75
@@ -1118,14 +1232,14 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                             </div>
 
                             <span
-                              className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold uppercase tracking-wider ${
+                              className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold uppercase tracking-wider border ${
                                 user.base_risk_score >= 75
-                                  ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                                  ? isLight ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
                                   : user.base_risk_score >= 50
-                                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                  ? isLight ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                                   : user.base_risk_score >= 25
-                                  ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
-                                  : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                  ? isLight ? 'bg-cyan-50 text-cyan-800 border-cyan-200' : 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+                                  : isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
                               }`}
                             >
                               {user.base_risk_score >= 75
@@ -1140,7 +1254,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         </div>
 
                         {user.requestJustification && (
-                          <p className="text-[11px] text-slate-400 mt-1 italic border-l-2 border-slate-700 pl-2">
+                          <p className={`text-[11px] mt-1.5 italic px-2.5 py-1 rounded-md border ${
+                            isLight ? 'text-slate-600 bg-slate-50 border-slate-200' : 'text-slate-400 bg-slate-900/60 border-slate-800'
+                          }`}>
                             "{user.requestJustification}"
                           </p>
                         )}
@@ -1155,20 +1271,28 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                             type="button"
                             disabled={processingApprovalUser === user.username}
                             onClick={() => handleApprovePendingUser(user.username)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-lg disabled:opacity-50 border flex items-center gap-1 transition-colors cursor-pointer ${
+                              isLight
+                                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                                : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/30'
+                            }`}
                             title="Verify and Approve user for login"
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <CheckCircle2 className={`w-3.5 h-3.5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
                             <span>{processingApprovalUser === user.username ? 'Approving...' : 'Approve'}</span>
                           </button>
                           <button
                             type="button"
                             disabled={processingApprovalUser === user.username}
                             onClick={() => handleRejectPendingUser(user.username)}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 disabled:opacity-50 text-rose-300 border border-rose-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-lg disabled:opacity-50 border flex items-center gap-1 transition-colors cursor-pointer ${
+                              isLight
+                                ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300'
+                                : 'bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border-rose-500/30'
+                            }`}
                             title="Reject user request"
                           >
-                            <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                            <XCircle className={`w-3.5 h-3.5 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
                             <span>{processingApprovalUser === user.username ? 'Rejecting...' : 'Reject'}</span>
                           </button>
                         </>
@@ -1180,10 +1304,14 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                           type="button"
                           onClick={() => handleOpenSecurityCredentials(user)}
                           disabled={isLoadingCredentials === user.username}
-                          className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/60 hover:border-blue-500 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                          className={`px-2.5 py-1 text-xs font-semibold rounded-lg border flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                            isLight
+                              ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 hover:border-blue-400'
+                              : 'bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border-blue-800/60 hover:border-blue-500'
+                          }`}
                           title="Inspect Base32 TOTP secret, live token, and OTP auth URI for troubleshooting MFA mismatches"
                         >
-                          <KeyRound className="w-3.5 h-3.5 text-blue-400" />
+                          <KeyRound className={`w-3.5 h-3.5 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                           <span>
                             {isLoadingCredentials === user.username ? 'Loading...' : 'Security Credentials'}
                           </span>
@@ -1195,10 +1323,14 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         type="button"
                         onClick={() => handleGenerateRecoveryCodes(user.username)}
                         disabled={isGeneratingRecovery === user.username}
-                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border border-amber-800/60 hover:border-amber-500 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                        className={`px-2.5 py-1 text-xs font-semibold rounded-lg border flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                          isLight
+                            ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 hover:border-amber-400'
+                            : 'bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border-amber-800/60 hover:border-amber-500'
+                        }`}
                         title="Generate 8 single-use high-entropy recovery bypass codes and store in user profile"
                       >
-                        <LifeBuoy className="w-3.5 h-3.5 text-amber-400" />
+                        <LifeBuoy className={`w-3.5 h-3.5 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
                         <span>
                           {isGeneratingRecovery === user.username ? 'Generating...' : 'Recovery Codes'}
                         </span>
@@ -1209,10 +1341,14 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         type="button"
                         onClick={() => handleResetMfaEnrollment(user.username)}
                         disabled={resettingMfaUser === user.username}
-                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/60 hover:border-indigo-500 flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                        className={`px-2.5 py-1 text-xs font-semibold rounded-lg border flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                          isLight
+                            ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 hover:border-indigo-400'
+                            : 'bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 border-indigo-800/60 hover:border-indigo-500'
+                        }`}
                         title="Rotate MFA key and enable one-time QR pairing on next login"
                       >
-                        <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${resettingMfaUser === user.username ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 ${isLight ? 'text-indigo-600' : 'text-indigo-400'} ${resettingMfaUser === user.username ? 'animate-spin' : ''}`} />
                         <span>
                           {resettingMfaUser === user.username ? 'Resetting...' : 'Reset MFA'}
                         </span>
@@ -1229,12 +1365,16 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                           }}
                           className={`px-2.5 py-1 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
                             revokedUsersList.has(user.username)
-                              ? 'bg-rose-500/30 text-rose-300 border border-rose-500/60'
+                              ? isLight
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : 'bg-rose-500/30 text-rose-300 border border-rose-500/60'
+                              : isLight
+                              ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 hover:border-rose-400'
                               : 'bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 hover:border-rose-500'
                           }`}
                           title={`Terminate ${user.username}'s active session record in the database.`}
                         >
-                          <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                          <ShieldAlert className={`w-3.5 h-3.5 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
                           <span>
                             {revokingUser === user.username
                               ? 'Revoking...'
@@ -1249,7 +1389,9 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         <button
                           type="button"
                           onClick={() => onDeleteUser(user.username)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
+                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                            isLight ? 'text-slate-500 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-500 hover:text-rose-400 hover:bg-rose-950/40'
+                          }`}
                           title="Delete from database"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1269,25 +1411,35 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     {modalTab === 'pending_users' && (
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
         {/* Banner with Zero-Trust Policy Notice */}
-        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 space-y-2">
-          <div className="flex items-center gap-2 font-bold text-amber-300">
-            <ShieldCheck className="w-4 h-4 text-amber-400" />
+        <div
+          className={`p-4 rounded-xl border text-xs space-y-2 ${
+            isLight
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-200/90'
+          }`}
+        >
+          <div className={`flex items-center gap-2 font-bold ${isLight ? 'text-amber-800' : 'text-amber-300'}`}>
+            <ShieldCheck className={`w-4 h-4 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
             <span>Zero-Trust Pending Identity Clearances &amp; Verification Gate</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-slate-300">
+          <p className={`text-[11px] leading-relaxed ${isLight ? 'text-amber-900/90' : 'text-slate-300'}`}>
             Principals who self-register are held in <strong>PENDING_APPROVAL</strong> status until authorized by a SecOps Administrator. Clicking <strong>"Approve"</strong> transitions the user record to <code>APPROVED</code>, enables RFC 6238 MFA token issuance, and records an administrative decision in the tamper-evident audit ledger. Clicking <strong>"Reject"</strong> denies access fail-closed.
           </p>
         </div>
 
         {/* Section Header */}
-        <div className="flex items-center justify-between text-xs text-slate-400 px-1 border-b border-slate-800 pb-2.5">
+        <div
+          className={`flex items-center justify-between text-xs px-1 border-b pb-2.5 ${
+            isLight ? 'text-slate-600 border-slate-200' : 'text-slate-400 border-slate-800'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-400" />
-            <span className="font-bold text-white text-sm">
+            <Clock className={`w-4 h-4 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
+            <span className={`font-bold text-sm tabular-nums ${isLight ? 'text-slate-900' : 'text-white'}`}>
               Pending Clearance Requests ({pendingUsers.length})
             </span>
           </div>
-          <span className="text-[11px] font-mono text-amber-400">
+          <span className={`text-[11px] font-mono tabular-nums ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
             {pendingUsers.length === 1 ? '1 User Awaiting Review' : `${pendingUsers.length} Users Awaiting Review`}
           </span>
         </div>
@@ -1295,10 +1447,16 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
         {/* Pending Users List */}
         {pendingUsers.length === 0 ? (
           <div className="text-center py-16 text-slate-500 text-xs space-y-3">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+            <div
+              className={`w-12 h-12 rounded-full border flex items-center justify-center mx-auto ${
+                isLight
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              }`}
+            >
               <CheckCircle2 className="w-6 h-6" />
             </div>
-            <p className="font-semibold text-slate-300 text-sm">No Pending Requests</p>
+            <p className={`font-semibold text-sm ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>No Pending Requests</p>
             <p className="text-[11px] text-slate-500 max-w-md mx-auto">
               All user registrations and access requests have been cleared. New accounts submitted through the Zero-Trust Gateway will appear here for verification.
             </p>
@@ -1308,35 +1466,61 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             {pendingUsers.map((user) => (
               <div
                 key={user.id || user.username}
-                className="p-4 rounded-xl border border-amber-500/30 bg-slate-950/90 hover:border-amber-500/50 transition-all space-y-3 text-xs shadow-lg shadow-black/40"
+                className={`p-4 rounded-xl border transition-all space-y-3 text-xs ${
+                  isLight
+                    ? 'border-amber-200 bg-white hover:border-amber-300 shadow-sm'
+                    : 'border-amber-500/30 bg-slate-950/90 hover:border-amber-500/50 shadow-lg shadow-black/40'
+                }`}
               >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                <div
+                  className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3 ${
+                    isLight ? 'border-slate-200' : 'border-slate-800/80'
+                  }`}
+                >
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center font-mono font-bold text-sm text-amber-300 shrink-0">
+                    <div
+                      className={`w-10 h-10 rounded-xl border flex items-center justify-center font-mono font-bold text-sm shrink-0 ${
+                        isLight
+                          ? 'bg-amber-50 border-amber-200 text-amber-700'
+                          : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                      }`}
+                    >
                       {user.username.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-white font-mono text-sm">
+                        <span className={`font-bold font-mono text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>
                           {user.username}
                         </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                            isLight
+                              ? 'bg-blue-50 text-blue-700 border-blue-200'
+                              : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                          }`}
+                        >
                           Role: {user.role}
                         </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold flex items-center gap-1 animate-pulse">
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded border font-semibold flex items-center gap-1 ${
+                            isLight
+                              ? 'bg-amber-50 text-amber-700 border-amber-300'
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          }`}
+                        >
                           <Clock className="w-2.5 h-2.5" />
                           PENDING_APPROVAL
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                      <div className={`text-[11px] mt-0.5 flex items-center gap-2 flex-wrap ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                         {user.department && (
                           <span className="flex items-center gap-1">
                             <Building2 className="w-3 h-3 text-slate-500" />
                             {user.department}
                           </span>
                         )}
-                        <span>•</span>
-                        <span className="font-mono text-slate-500">
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono text-slate-500 tabular-nums">
                           Registered: {user.created_at || user.createdAt ? new Date(user.created_at || user.createdAt).toISOString() : 'Recent registration'}
                         </span>
                       </div>
@@ -1349,7 +1533,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                       type="button"
                       disabled={processingApprovalUser === user.username}
                       onClick={() => handleApprovePendingUser(user.username)}
-                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-emerald-900/30 cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
                       title={`Approve ${user.username} and activate access in database`}
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1359,7 +1543,11 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                       type="button"
                       disabled={processingApprovalUser === user.username}
                       onClick={() => handleRejectPendingUser(user.username)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/50 disabled:opacity-50 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-700/50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      className={`px-3 py-1.5 rounded-lg disabled:opacity-50 border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        isLight
+                          ? 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border-slate-300 hover:border-rose-300'
+                          : 'bg-slate-800 hover:bg-rose-950/50 text-slate-300 hover:text-rose-300 border-slate-700 hover:border-rose-700/50'
+                      }`}
                       title={`Reject ${user.username}'s clearance request`}
                     >
                       <XCircle className="w-3.5 h-3.5" />
@@ -1369,17 +1557,31 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                 </div>
 
                 {/* Justification & Risk Info */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/60">
+                <div
+                  className={`grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] p-2.5 rounded-lg border ${
+                    isLight
+                      ? 'text-slate-600 bg-slate-50 border-slate-200'
+                      : 'text-slate-400 bg-slate-900/60 border-slate-800/60'
+                  }`}
+                >
                   <div>
                     <span className="text-slate-500 font-medium">Access Justification: </span>
-                    <span className="text-slate-300 italic">{user.requestJustification || 'Self-service identity clearance request'}</span>
+                    <span className={`italic ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                      {user.requestJustification || 'Self-service identity clearance request'}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between sm:justify-end gap-2">
                     <span className="text-slate-500 font-medium">Base Risk Assessment: </span>
-                    <span className="font-mono font-bold text-amber-400">{user.base_risk_score}%</span>
-                    <div className="w-16 h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                    <span className={`font-mono font-bold tabular-nums ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
+                      {user.base_risk_score}%
+                    </span>
+                    <div
+                      className={`w-16 h-1.5 rounded-full overflow-hidden border ${
+                        isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-900 border-slate-800'
+                      }`}
+                    >
                       <div
-                        className="h-full bg-amber-400"
+                        className="h-full bg-amber-500"
                         style={{ width: `${Math.min(user.base_risk_score, 100)}%` }}
                       />
                     </div>
@@ -1395,26 +1597,38 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     {/* Credential & Identity Change Requests Tab Panel */}
     {modalTab === 'password_requests' && (
       <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200/90 space-y-2">
-          <div className="flex items-center gap-2 font-bold text-amber-300">
-            <ShieldCheck className="w-4 h-4 text-amber-400" />
+        <div
+          className={`p-4 rounded-xl border text-xs space-y-2 ${
+            isLight
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-200/90'
+          }`}
+        >
+          <div className={`flex items-center gap-2 font-bold ${isLight ? 'text-amber-800' : 'text-amber-300'}`}>
+            <ShieldCheck className={`w-4 h-4 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
             <span>Zero-Trust Credential &amp; Identity Governance Policy</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-slate-300">
+          <p className={`text-[11px] leading-relaxed ${isLight ? 'text-amber-900/90' : 'text-slate-300'}`}>
             To guarantee fail-closed security, all password and username change requests submitted by users are held in a pending state until explicitly accepted by an Administrator. Upon clicking <strong>"Accept &amp; Save to DB"</strong>, changes are atomically committed into the Cloudflare D1 / SQLite database (passwords stored as salted PBKDF2 hashes; usernames checked for uniqueness and updated), and any active sessions are revoked. Plaintext passwords are never displayed or stored.
           </p>
         </div>
 
         {/* Sub-Filters: All, Password, Username */}
-        <div className="flex items-center justify-between gap-3 flex-wrap border-b border-slate-800 pb-3">
+        <div
+          className={`flex items-center justify-between gap-3 flex-wrap border-b pb-3 ${
+            isLight ? 'border-slate-200' : 'border-slate-800'
+          }`}
+        >
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setChangeRequestFilter('ALL')}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer tabular-nums ${
                 changeRequestFilter === 'ALL'
                   ? 'bg-blue-600 text-white'
-                  : 'bg-slate-850 text-slate-400 hover:text-white'
+                  : isLight
+                  ? 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
               }`}
             >
               All Requests ({passwordRequests.length + usernameRequests.length})
@@ -1422,16 +1636,18 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             <button
               type="button"
               onClick={() => setChangeRequestFilter('PASSWORD')}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 tabular-nums ${
                 changeRequestFilter === 'PASSWORD'
                   ? 'bg-amber-600 text-white'
-                  : 'bg-slate-850 text-slate-400 hover:text-white'
+                  : isLight
+                  ? 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
               }`}
             >
               <KeyRound className="w-3 h-3" />
               <span>Password ({passwordRequests.length})</span>
               {pendingPasswordRequestsCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 font-mono">
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950 font-mono tabular-nums">
                   {pendingPasswordRequestsCount}
                 </span>
               )}
@@ -1439,23 +1655,25 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             <button
               type="button"
               onClick={() => setChangeRequestFilter('USERNAME')}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 tabular-nums ${
                 changeRequestFilter === 'USERNAME'
                   ? 'bg-purple-600 text-white'
-                  : 'bg-slate-850 text-slate-400 hover:text-white'
+                  : isLight
+                  ? 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
               }`}
             >
               <Users className="w-3 h-3" />
               <span>Username ({usernameRequests.length})</span>
               {pendingUsernameRequestsCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-purple-400 text-slate-950 font-mono">
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-purple-400 text-slate-950 font-mono tabular-nums">
                   {pendingUsernameRequestsCount}
                 </span>
               )}
             </button>
           </div>
 
-          <span className="text-[11px] font-mono text-amber-400">
+          <span className={`text-[11px] font-mono tabular-nums ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
             {totalPendingChangeRequests} Total Pending Acceptance
           </span>
         </div>
@@ -1465,8 +1683,8 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
           (changeRequestFilter === 'PASSWORD' && passwordRequests.length === 0) ||
           (changeRequestFilter === 'USERNAME' && usernameRequests.length === 0)) ? (
           <div className="text-center py-16 text-slate-500 text-xs space-y-2">
-            <KeyRound className="w-10 h-10 mx-auto text-slate-600 opacity-60" />
-            <p className="font-medium text-slate-400">No change requests matching the selected filter.</p>
+            <KeyRound className="w-10 h-10 mx-auto text-slate-500 opacity-60" />
+            <p className={`font-medium ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>No change requests matching the selected filter.</p>
             <p className="text-[11px] text-slate-500">
               Users can submit password and username change requests from the Login Gateway or profile interface.
             </p>
@@ -1476,7 +1694,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             {/* 1. PASSWORD REQUESTS */}
             {(changeRequestFilter === 'ALL' || changeRequestFilter === 'PASSWORD') && passwordRequests.length > 0 && (
               <div className="space-y-2.5">
-                <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5 px-1">
+                <div className={`text-xs font-bold flex items-center gap-1.5 px-1 tabular-nums ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>
                   <KeyRound className="w-3.5 h-3.5" />
                   <span>Password Change Requests ({passwordRequests.length})</span>
                 </div>
@@ -1484,32 +1702,52 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   {passwordRequests.map((req) => (
                     <div
                       key={req.id}
-                      className="p-4 rounded-xl border border-slate-800 bg-slate-950/80 hover:border-slate-700 transition-all space-y-3 text-xs"
+                      className={`p-4 rounded-xl border transition-all space-y-3 text-xs ${
+                        isLight
+                          ? 'border-slate-200 bg-white hover:border-slate-300 shadow-sm'
+                          : 'border-slate-800 bg-slate-950/80 hover:border-slate-700'
+                      }`}
                     >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                      <div
+                        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2.5 ${
+                          isLight ? 'border-slate-200' : 'border-slate-800/80'
+                        }`}
+                      >
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-mono font-bold">
+                          <div
+                            className={`w-8 h-8 rounded-lg border flex items-center justify-center font-mono font-bold ${
+                              isLight
+                                ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                            }`}
+                          >
                             <KeyRound className="w-4 h-4" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-sm font-bold text-white">
+                              <span className={`font-mono text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
                                 {req.username}
                               </span>
                               <span
                                 className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
                                   req.status === 'PENDING'
-                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    ? isLight
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                                     : req.status === 'APPROVED'
-                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                    ? isLight
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                    : isLight
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
                                     : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
                                 }`}
                               >
                                 {req.status === 'PENDING' ? 'Awaiting Admin Acceptance' : req.status}
                               </span>
                             </div>
-                            <span className="text-[11px] text-slate-500 font-mono">
-                              Request ID: {req.id} • Requested {new Date(req.requested_at).toLocaleString()}
+                            <span className="text-[11px] text-slate-500 font-mono tabular-nums">
+                              Request ID: {req.id} · Requested {new Date(req.requested_at).toLocaleString()}
                             </span>
                           </div>
                         </div>
@@ -1520,7 +1758,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               type="button"
                               disabled={processingRequestId === req.id}
                               onClick={() => handleApprovePasswordRequest(req.id)}
-                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm shadow-emerald-900/30 cursor-pointer disabled:opacity-50"
+                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
                             >
                               <Check className="w-3.5 h-3.5" />
                               <span>{processingRequestId === req.id ? 'Saving to DB...' : 'Accept & Save to DB'}</span>
@@ -1529,7 +1767,11 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               type="button"
                               disabled={processingRequestId === req.id}
                               onClick={() => handleRejectPasswordRequest(req.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-700/50 text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                              className={`px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 ${
+                                isLight
+                                  ? 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border-slate-300 hover:border-rose-300'
+                                  : 'bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border-slate-700 hover:border-rose-700/50'
+                              }`}
                             >
                               <X className="w-3.5 h-3.5" />
                               <span>Reject</span>
@@ -1538,28 +1780,34 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         )}
 
                         {req.status === 'APPROVED' && (
-                          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px]">
+                          <div className={`flex items-center gap-1.5 font-mono text-[11px] ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
                             <CheckCircle2 className="w-4 h-4" />
                             <span>Saved in Database by {req.reviewed_by || 'secops_admin'}</span>
                           </div>
                         )}
 
                         {req.status === 'REJECTED' && (
-                          <div className="flex items-center gap-1.5 text-rose-400 font-mono text-[11px]">
+                          <div className={`flex items-center gap-1.5 font-mono text-[11px] ${isLight ? 'text-rose-700' : 'text-rose-400'}`}>
                             <XCircle className="w-4 h-4" />
                             <span>Rejected by {req.reviewed_by || 'secops_admin'}</span>
                           </div>
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/60">
+                      <div
+                        className={`grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] p-2.5 rounded-lg border ${
+                          isLight
+                            ? 'text-slate-600 bg-slate-50 border-slate-200'
+                            : 'text-slate-400 bg-slate-900/50 border-slate-800/60'
+                        }`}
+                      >
                         <div>
                           <span className="text-slate-500 font-medium">Justification: </span>
-                          <span className="text-slate-300">{req.justification || 'Standard rotation'}</span>
+                          <span className={isLight ? 'text-slate-700' : 'text-slate-300'}>{req.justification || 'Standard rotation'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 font-medium">Cryptographic Storage: </span>
-                          <span className="text-emerald-400 font-mono">PBKDF2 SHA-512 (Secret masked: ••••••••)</span>
+                          <span className={`font-mono ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>PBKDF2 SHA-512 (Secret masked: ••••••••)</span>
                         </div>
                       </div>
                     </div>
@@ -1571,7 +1819,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             {/* 2. USERNAME REQUESTS */}
             {(changeRequestFilter === 'ALL' || changeRequestFilter === 'USERNAME') && usernameRequests.length > 0 && (
               <div className="space-y-2.5">
-                <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5 px-1">
+                <div className={`text-xs font-bold flex items-center gap-1.5 px-1 tabular-nums ${isLight ? 'text-purple-700' : 'text-purple-300'}`}>
                   <Users className="w-3.5 h-3.5" />
                   <span>Username Change Requests ({usernameRequests.length})</span>
                 </div>
@@ -1579,36 +1827,56 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   {usernameRequests.map((req) => (
                     <div
                       key={req.id}
-                      className="p-4 rounded-xl border border-slate-800 bg-slate-950/80 hover:border-slate-700 transition-all space-y-3 text-xs"
+                      className={`p-4 rounded-xl border transition-all space-y-3 text-xs ${
+                        isLight
+                          ? 'border-slate-200 bg-white hover:border-slate-300 shadow-sm'
+                          : 'border-slate-800 bg-slate-950/80 hover:border-slate-700'
+                      }`}
                     >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                      <div
+                        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2.5 ${
+                          isLight ? 'border-slate-200' : 'border-slate-800/80'
+                        }`}
+                      >
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 font-mono font-bold">
+                          <div
+                            className={`w-8 h-8 rounded-lg border flex items-center justify-center font-mono font-bold ${
+                              isLight
+                                ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                : 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                            }`}
+                          >
                             <UserCheck className="w-4 h-4" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-sm font-bold text-slate-300 line-through">
+                              <span className={`font-mono text-sm font-bold line-through ${isLight ? 'text-slate-500' : 'text-slate-300'}`}>
                                 {req.current_username}
                               </span>
                               <span className="text-slate-400 text-xs">→</span>
-                              <span className="font-mono text-sm font-bold text-purple-300">
+                              <span className={`font-mono text-sm font-bold ${isLight ? 'text-purple-700' : 'text-purple-300'}`}>
                                 {req.requested_username}
                               </span>
                               <span
                                 className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
                                   req.status === 'PENDING'
-                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    ? isLight
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                                     : req.status === 'APPROVED'
-                                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                    ? isLight
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                    : isLight
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
                                     : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
                                 }`}
                               >
                                 {req.status === 'PENDING' ? 'Awaiting Admin Acceptance' : req.status}
                               </span>
                             </div>
-                            <span className="text-[11px] text-slate-500 font-mono">
-                              Request ID: {req.id} • Requested {new Date(req.requested_at).toLocaleString()}
+                            <span className="text-[11px] text-slate-500 font-mono tabular-nums">
+                              Request ID: {req.id} · Requested {new Date(req.requested_at).toLocaleString()}
                             </span>
                           </div>
                         </div>
@@ -1619,7 +1887,7 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               type="button"
                               disabled={processingRequestId === req.id}
                               onClick={() => handleApproveUsernameRequest(req.id)}
-                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm shadow-emerald-900/30 cursor-pointer disabled:opacity-50"
+                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
                             >
                               <Check className="w-3.5 h-3.5" />
                               <span>{processingRequestId === req.id ? 'Updating DB...' : 'Accept & Save to DB'}</span>
@@ -1628,7 +1896,11 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                               type="button"
                               disabled={processingRequestId === req.id}
                               onClick={() => handleRejectUsernameRequest(req.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-700/50 text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                              className={`px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 ${
+                                isLight
+                                  ? 'bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border-slate-300 hover:border-rose-300'
+                                  : 'bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border-slate-700 hover:border-rose-700/50'
+                              }`}
                             >
                               <X className="w-3.5 h-3.5" />
                               <span>Reject</span>
@@ -1637,28 +1909,34 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                         )}
 
                         {req.status === 'APPROVED' && (
-                          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px]">
+                          <div className={`flex items-center gap-1.5 font-mono text-[11px] ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
                             <CheckCircle2 className="w-4 h-4" />
                             <span>Updated in Database by {req.reviewed_by || 'secops_admin'}</span>
                           </div>
                         )}
 
                         {req.status === 'REJECTED' && (
-                          <div className="flex items-center gap-1.5 text-rose-400 font-mono text-[11px]">
+                          <div className={`flex items-center gap-1.5 font-mono text-[11px] ${isLight ? 'text-rose-700' : 'text-rose-400'}`}>
                             <XCircle className="w-4 h-4" />
                             <span>Rejected by {req.reviewed_by || 'secops_admin'}</span>
                           </div>
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/60">
+                      <div
+                        className={`grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] p-2.5 rounded-lg border ${
+                          isLight
+                            ? 'text-slate-600 bg-slate-50 border-slate-200'
+                            : 'text-slate-400 bg-slate-900/50 border-slate-800/60'
+                        }`}
+                      >
                         <div>
                           <span className="text-slate-500 font-medium">Justification: </span>
-                          <span className="text-slate-300">{req.justification || 'Self-service identity update'}</span>
+                          <span className={isLight ? 'text-slate-700' : 'text-slate-300'}>{req.justification || 'Self-service identity update'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 font-medium">Database Action on Approval: </span>
-                          <span className="text-purple-400 font-mono">Updates users.username &amp; invalidates old sessions</span>
+                          <span className={`font-mono ${isLight ? 'text-purple-700' : 'text-purple-400'}`}>Updates users.username &amp; invalidates old sessions</span>
                         </div>
                       </div>
                     </div>
@@ -1672,14 +1950,24 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
     )}
 
         {/* Modal Footer */}
-        <div className="p-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs text-slate-400">
+        <div
+          className={`p-3.5 border-t flex items-center justify-between text-xs ${
+            isLight
+              ? 'border-slate-200 bg-slate-50 text-slate-600'
+              : 'border-slate-800 bg-slate-950/60 text-slate-400'
+          }`}
+        >
           <span className="font-mono text-[11px]">
-            Cloudflare D1 SQLite &amp; Edge IAM Engine • RFC 6238 MFA Protected
+            Cloudflare D1 SQLite &amp; Edge IAM Engine · RFC 6238 MFA Protected
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer"
+            className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium ${
+              isLight
+                ? 'bg-slate-200 hover:bg-slate-300 text-slate-800'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+            }`}
           >
             Close Directory
           </button>
@@ -1688,23 +1976,41 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
       {/* MODAL 1: SECURITY CREDENTIALS INSPECTOR (Enrollment & Window Metadata Only) */}
       {securityCredentialsUser && (
-        <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-blue-500/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4">
+        <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
+            className={`border rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4 ${
+              isLight ? 'bg-white border-blue-200' : 'bg-slate-900 border-blue-500/50'
+            }`}
+          >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0">
+                <div
+                  className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
+                    isLight
+                      ? 'bg-blue-50 border-blue-200 text-blue-600'
+                      : 'bg-blue-500/20 border-blue-500/40 text-blue-400'
+                  }`}
+                >
                   <KeyRound className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <h3 className={`text-base font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                     <span>Security Credentials Status</span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        isLight
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      }`}
+                    >
                       Protected
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-400">
+                  <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     Inspect RFC 6238 enrollment posture and 30s time window alignment for{' '}
-                    <span className="text-white font-mono font-semibold">[{securityCredentialsUser.username}]</span>.
+                    <span className={`font-mono font-semibold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      [{securityCredentialsUser.username}]
+                    </span>.
                   </p>
                 </div>
               </div>
@@ -1712,25 +2018,31 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setSecurityCredentialsUser(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                  isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Synchronized 30s Window Telemetry */}
-            <div className="p-4 rounded-xl bg-slate-950 border border-blue-500/30 space-y-2.5">
+            <div
+              className={`p-4 rounded-xl border space-y-2.5 ${
+                isLight ? 'bg-slate-50 border-blue-200' : 'bg-slate-950 border-blue-500/30'
+              }`}
+            >
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                <span className={`flex items-center gap-1.5 tabular-nums ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                  <Clock className={`w-3.5 h-3.5 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                   TOTP 30-Second Time-Step Window #{securityCredentialsUser.timeStep30s}
                 </span>
-                <span className="text-[11px] font-mono text-blue-400 font-bold">
+                <span className={`text-[11px] font-mono font-bold tabular-nums ${isLight ? 'text-blue-700' : 'text-blue-400'}`}>
                   {securityCredentialsUser.secondsRemaining}s remaining
                 </span>
               </div>
 
-              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+              <div className={`w-full h-1.5 rounded-full overflow-hidden ${isLight ? 'bg-slate-200' : 'bg-slate-800'}`}>
                 <div
                   className="bg-blue-500 h-full transition-all duration-1000 ease-linear rounded-full"
                   style={{ width: `${(securityCredentialsUser.secondsRemaining / 30) * 100}%` }}
@@ -1738,15 +2050,43 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">MFA Enforcement</span>
-                  <span className={securityCredentialsUser.mfa_enabled ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                <div
+                  className={`p-2.5 rounded-lg border ${
+                    isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <span className={`block text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>MFA Enforcement</span>
+                  <span
+                    className={
+                      securityCredentialsUser.mfa_enabled
+                        ? isLight
+                          ? 'text-emerald-700 font-bold'
+                          : 'text-emerald-400 font-bold'
+                        : isLight
+                        ? 'text-amber-700 font-bold'
+                        : 'text-amber-400 font-bold'
+                    }
+                  >
                     {securityCredentialsUser.mfa_enabled ? 'ENABLED (RFC 6238)' : 'DISABLED'}
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">Secret Enrollment</span>
-                  <span className={securityCredentialsUser.mfaConfigured ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                <div
+                  className={`p-2.5 rounded-lg border ${
+                    isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <span className={`block text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Secret Enrollment</span>
+                  <span
+                    className={
+                      securityCredentialsUser.mfaConfigured
+                        ? isLight
+                          ? 'text-emerald-700 font-bold'
+                          : 'text-emerald-400 font-bold'
+                        : isLight
+                        ? 'text-rose-700 font-bold'
+                        : 'text-rose-400 font-bold'
+                    }
+                  >
                     {securityCredentialsUser.mfaConfigured ? 'CONFIGURED (SEALED)' : 'NOT ENROLLED'}
                   </span>
                 </div>
@@ -1754,30 +2094,43 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
             </div>
 
             {/* Enrollment Issuer & Server Time Metadata */}
-            <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs">
+            <div
+              className={`p-3.5 rounded-xl border space-y-2 text-xs ${
+                isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/80 border-slate-800'
+              }`}
+            >
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Authenticator Issuer:</span>
-                <span className="font-mono text-slate-200">{securityCredentialsUser.issuer}</span>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Authenticator Issuer:</span>
+                <span className={`font-mono ${isLight ? 'text-slate-900' : 'text-slate-200'}`}>{securityCredentialsUser.issuer}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Assigned Principal Role:</span>
-                <span className="font-mono text-blue-300">{securityCredentialsUser.role}</span>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Assigned Principal Role:</span>
+                <span className={`font-mono ${isLight ? 'text-blue-700' : 'text-blue-300'}`}>{securityCredentialsUser.role}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Server Sync Timestamp:</span>
-                <span className="font-mono text-slate-300">{securityCredentialsUser.serverTimeIso}</span>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Server Sync Timestamp:</span>
+                <span className={`font-mono tabular-nums ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>{securityCredentialsUser.serverTimeIso}</span>
               </div>
-              <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-800">
+              <p className={`text-[11px] pt-1 border-t ${isLight ? 'text-slate-600 border-slate-200' : 'text-slate-500 border-slate-800'}`}>
                 For Zero-Trust compliance, shared Base32 TOTP keys and live OTPs remain sealed on the server and are never exposed via API responses. Use Regenerate Recovery Codes if an authenticator device is lost.
               </p>
             </div>
 
-            <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-              <span>Single-use bypass codes stored: <strong className="text-amber-400 font-mono">{securityCredentialsUser.backupCodesCount}</strong></span>
+            <div className={`flex items-center justify-between text-xs pt-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+              <span>
+                Single-use bypass codes stored:{' '}
+                <strong className={`font-mono tabular-nums ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
+                  {securityCredentialsUser.backupCodesCount}
+                </strong>
+              </span>
               <button
                 type="button"
                 onClick={() => setSecurityCredentialsUser(null)}
-                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold cursor-pointer"
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+                  isLight
+                    ? 'bg-slate-200 hover:bg-slate-300 text-slate-800'
+                    : 'bg-slate-800 hover:bg-slate-700 text-white'
+                }`}
               >
                 Close Inspector
               </button>
@@ -1788,18 +2141,32 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
 
       {/* MODAL 2: GENERATED RECOVERY CODES MODAL */}
       {recoveryCodesModal && (
-        <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-amber-500/50 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4">
+        <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
+            className={`border rounded-2xl p-6 max-w-lg w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 space-y-4 ${
+              isLight ? 'bg-white border-amber-300' : 'bg-slate-900 border-amber-500/50'
+            }`}
+          >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                <div
+                  className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
+                    isLight
+                      ? 'bg-amber-50 border-amber-200 text-amber-600'
+                      : 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                  }`}
+                >
                   <LifeBuoy className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Single-Use Recovery Bypass Codes</h3>
-                  <p className="text-xs text-slate-400">
+                  <h3 className={`text-base font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    Single-Use Recovery Bypass Codes
+                  </h3>
+                  <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     Generated 8 emergency bypass codes for{' '}
-                    <span className="text-white font-mono font-semibold">[{recoveryCodesModal.username}]</span>.
+                    <span className={`font-mono font-semibold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      [{recoveryCodesModal.username}]
+                    </span>.
                   </p>
                 </div>
               </div>
@@ -1807,26 +2174,44 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setRecoveryCodesModal(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                  isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed">
-              <strong className="block text-amber-300 font-bold mb-0.5">Important Security Notice:</strong>
+            <div
+              className={`p-3 rounded-xl border text-xs leading-relaxed ${
+                isLight
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+              }`}
+            >
+              <strong className={`block font-bold mb-0.5 ${isLight ? 'text-amber-800' : 'text-amber-300'}`}>
+                Important Security Notice:
+              </strong>
               Each code can only be used once to bypass MFA if the physical TOTP authenticator device is lost. Once consumed, the code is permanently invalidated. Store these codes in an encrypted password vault.
             </div>
 
             {/* 8 Codes Grid */}
-            <div className="grid grid-cols-2 gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800 font-mono text-sm">
+            <div
+              className={`grid grid-cols-2 gap-2 p-3 rounded-xl border font-mono text-sm tabular-nums ${
+                isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+              }`}
+            >
               {recoveryCodesModal.codes.map((code, idx) => (
                 <div
                   key={idx}
-                  className="p-2 rounded bg-slate-900 border border-slate-800 flex items-center justify-between text-white font-bold tracking-wider"
+                  className={`p-2 rounded border flex items-center justify-between font-bold tracking-wider ${
+                    isLight
+                      ? 'bg-white border-slate-200 text-slate-900'
+                      : 'bg-slate-900 border-slate-800 text-white'
+                  }`}
                 >
-                  <span className="text-slate-500 text-xs font-normal">#{idx + 1}</span>
-                  <span className="text-amber-300">{code}</span>
+                  <span className="text-slate-500 text-xs font-normal tabular-nums">#{idx + 1}</span>
+                  <span className={`tabular-nums ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>{code}</span>
                 </div>
               ))}
             </div>
@@ -1844,7 +2229,11 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
-                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+                  isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                }`}
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Download .txt</span>
@@ -1859,9 +2248,13 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
                     setCopiedCodes(true);
                     setTimeout(() => setCopiedCodes(false), 2000);
                   }}
-                  className="px-3.5 py-2 rounded-xl bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 border border-blue-500/40 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  className={`px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    isLight
+                      ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
+                      : 'bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 border-blue-500/40'
+                  }`}
                 >
-                  {copiedCodes ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedCodes ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copiedCodes ? 'Copied All' : 'Copy All Codes'}</span>
                 </button>
 
@@ -1881,45 +2274,78 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
       {/* CONFIRM REVOCATION MODAL */}
       {confirmRevokeUser && (
         <div className="fixed inset-0 z-60 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-rose-500/50 rounded-2xl p-5 max-w-md w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
+          <div
+            className={`border rounded-2xl p-5 max-w-md w-full shadow-2xl relative animate-in fade-in zoom-in-95 duration-150 ${
+              isLight ? 'bg-white border-rose-300' : 'bg-slate-900 border-rose-500/50'
+            }`}
+          >
             <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
+              <div
+                className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
+                  isLight
+                    ? 'bg-rose-50 border-rose-200 text-rose-600'
+                    : 'bg-rose-500/20 border-rose-500/40 text-rose-400'
+                }`}
+              >
                 <ShieldAlert className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                <h3 className={`text-sm font-bold uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   Confirm Session Revocation
                 </h3>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className={`text-xs mt-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                   Are you sure you want to terminate the active session for principal{' '}
-                  <span className="text-white font-mono font-bold">[{confirmRevokeUser.username}]</span> in Cloudflare D1?
+                  <span className={`font-mono font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    [{confirmRevokeUser.username}]
+                  </span>{' '}
+                  in Cloudflare D1?
                 </p>
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5 text-xs font-mono mb-4">
+            <div
+              className={`p-3 rounded-xl border space-y-1.5 text-xs font-mono mb-4 ${
+                isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/80 border-slate-800'
+              }`}
+            >
               <div className="flex justify-between">
-                <span className="text-slate-400">Principal:</span>
-                <span className="text-white font-bold">{confirmRevokeUser.username}</span>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Principal:</span>
+                <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{confirmRevokeUser.username}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Assigned Role:</span>
-                <span className="text-purple-400">{confirmRevokeUser.role}</span>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Assigned Role:</span>
+                <span className={isLight ? 'text-purple-700' : 'text-purple-400'}>{confirmRevokeUser.role}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Base Risk:</span>
-                <span className={confirmRevokeUser.base_risk_score >= 50 ? 'text-rose-400' : 'text-emerald-400'}>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Base Risk:</span>
+                <span
+                  className={`tabular-nums ${
+                    confirmRevokeUser.base_risk_score >= 50
+                      ? isLight
+                        ? 'text-rose-700'
+                        : 'text-rose-400'
+                      : isLight
+                      ? 'text-emerald-700'
+                      : 'text-emerald-400'
+                  }`}
+                >
                   {confirmRevokeUser.base_risk_score}%
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Token Status:</span>
-                <span className="text-rose-400 font-bold">WILL BE REVOKED IMMEDIATELY</span>
+                <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>Token Status:</span>
+                <span className={`font-bold ${isLight ? 'text-rose-700' : 'text-rose-400'}`}>WILL BE REVOKED IMMEDIATELY</span>
               </div>
             </div>
 
-            <div className="text-[11px] text-slate-300 mb-4 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-lg flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div
+              className={`text-[11px] mb-4 border p-2.5 rounded-lg flex items-center gap-2 ${
+                isLight
+                  ? 'text-rose-900 bg-rose-50 border-rose-200'
+                  : 'text-slate-300 bg-rose-500/10 border-rose-500/20'
+              }`}
+            >
+              <AlertTriangle className={`w-4 h-4 shrink-0 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
               <span>
                 All subsequent API requests using this user's current Bearer token will immediately fail with HTTP 403 Forbidden.
               </span>
@@ -1929,7 +2355,11 @@ export const UserDatabaseModal: React.FC<UserDatabaseModalProps> = ({
               <button
                 type="button"
                 onClick={() => setConfirmRevokeUser(null)}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  isLight
+                    ? 'bg-slate-200 hover:bg-slate-300 text-slate-800'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                }`}
               >
                 Cancel
               </button>

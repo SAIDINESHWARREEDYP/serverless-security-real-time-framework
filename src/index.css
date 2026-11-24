@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --bg: #030712;
@@ -34,6 +35,24 @@ body {
 
 .terminal-font {
   font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+h1, h2, h3, h4 {
+  text-wrap: balance;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 /* ==========================================================================
@@ -266,6 +285,9 @@ html.light ::-webkit-scrollbar-thumb:hover,
 [data-theme="light"] .bg-\[\#101b2f\],
 [data-theme="light"] .bg-\[\#12233f\],
 [data-theme="light"] .bg-\[\#15233c\],
+[data-theme="light"] .bg-\[\#0d1728\],
+[data-theme="light"] .bg-\[\#0f192d\],
+[data-theme="light"] .bg-\[\#0a101d\],
 [data-theme="light"] .bg-\[\#02060c\]:not(#terminalOutput) {
   background-color: #ffffff !important;
   color: #0f172a !important;
@@ -288,16 +310,30 @@ html.light ::-webkit-scrollbar-thumb:hover,
 [data-theme="light"] thead.bg-slate-950,
 [data-theme="light"] thead {
   background-color: #f8fafc !important;
+  color: #0f172a !important;
 }
 
-/* Malicious Exploit Card in Light Mode */
-[data-theme="light"] .bg-\[\#1c0f14\] {
+/* Elevated Risk / Exploit Scenario Surfaces in Light Mode */
+[data-theme="light"] .bg-\[\#1c0f14\],
+[data-theme="light"] .bg-\[\#1f0e13\],
+[data-theme="light"] .bg-\[\#2e121a\] {
   background-color: #fff1f2 !important;
   border-color: #fecdd3 !important;
   color: #9f1239 !important;
 }
-[data-theme="light"] .hover\:bg-\[\#2a131b\]:hover {
+[data-theme="light"] .hover\:bg-\[\#2a131b\]:hover,
+[data-theme="light"] .hover\:bg-\[\#2e121a\]:hover {
   background-color: #ffe4e6 !important;
+}
+
+[data-theme="light"] .bg-\[\#17120a\],
+[data-theme="light"] .bg-\[\#251b0d\] {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+  color: #92400e !important;
+}
+[data-theme="light"] .hover\:bg-\[\#251b0d\]:hover {
+  background-color: #fef3c7 !important;
 }
 
 /* Gauge tracks */
@@ -403,7 +439,10 @@ html.light ::-webkit-scrollbar-thumb:hover,
 }
 
 /* Secondary and Subtitle Text */
-[data-theme="light"] .text-slate-300:not([class*="bg-"]) {
+[data-theme="light"] .text-slate-300:not([class*="bg-"]),
+[data-theme="light"] .bg-slate-800.text-slate-300,
+[data-theme="light"] .bg-slate-800.text-slate-200,
+[data-theme="light"] .bg-slate-800 .text-slate-300 {
   color: #1e293b !important;
 }
 
@@ -565,11 +604,12 @@ html.light ::-webkit-scrollbar-thumb:hover,
   color: #581c87 !important;
 }
 
-/* Neutral Slate Badges */
+/* Neutral Slate Badges & Interactive Secondary Buttons */
 [data-theme="light"] .bg-slate-700\/60,
-[data-theme="light"] span.bg-slate-800 {
+[data-theme="light"] span.bg-slate-800,
+[data-theme="light"] button.bg-slate-800:not([class*="bg-blue-600"]):not([class*="bg-emerald-600"]):not([class*="bg-rose-600"]) {
   background-color: #f1f5f9 !important;
-  color: #334155 !important;
+  color: #1e293b !important;
   border-color: #cbd5e1 !important;
 }
 
@@ -643,7 +683,6 @@ html.light ::-webkit-scrollbar-thumb:hover,
 [data-theme="light"] #terminalOutput {
   background-color: #f8fafc !important;
   border: 1px solid #cbd5e1 !important;
-  border-left: 3px solid #0284c7 !important;
   color: #0f172a !important;
 }
 [data-theme="light"] #terminalOutput div {
@@ -694,5 +733,68 @@ html.light ::-webkit-scrollbar-thumb:hover,
 }
 .cli-terminal-screen * {
   color: inherit;
+}
+
+/* Glossy Enterprise SOC Heatmap Surface & Coordinate Tile Physics */
+.glossy-soc-card {
+  position: relative;
+  background: linear-gradient(155deg, rgba(15, 23, 42, 0.88) 0%, rgba(9, 13, 22, 0.94) 100%);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  box-shadow:
+    0 12px 32px -8px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="light"] .glossy-soc-card,
+html.light .glossy-soc-card {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.94) 100%) !important;
+  border: 1px solid rgba(203, 213, 225, 0.9) !important;
+  box-shadow:
+    0 12px 30px -8px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 0 rgba(255, 255, 255, 1) !important;
+}
+
+.glossy-heatmap-cell {
+  position: relative;
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.16s ease, box-shadow 0.16s ease;
+  will-change: transform;
+}
+
+.glossy-heatmap-cell:hover {
+  transform: scale(1.06);
+  z-index: 10;
+}
+
+.glossy-heatmap-cell:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+  z-index: 15;
+}
+
+@keyframes heatmap-cell-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.65);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(56, 189, 248, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+}
+
+.heatmap-cell-live {
+  animation: heatmap-cell-flash 1.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glossy-heatmap-cell,
+  .heatmap-cell-live,
+  .animate-section-glossy {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 

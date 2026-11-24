@@ -3,7 +3,7 @@
 [![Zero-Trust Architecture](https://img.shields.io/badge/Architecture-Zero--Trust-blue.svg)](#)
 [![TypeScript](https://img.shields.io/badge/Language-TypeScript%205.x-blue)](#)
 [![Cloudflare Workers & D1](https://img.shields.io/badge/Runtime-Cloudflare%20Workers%20%2B%20D1-orange)](#)
-[![Test Suite](https://img.shields.io/badge/Tests-49%2F49%20Passed%20(100%25)-brightgreen)](#)
+[![Test Suite](https://img.shields.io/badge/Tests-55%2F55%20Passed%20(100%25)-brightgreen)](#)
 [![Security Hardening](https://img.shields.io/badge/Security-Fail--Closed%20%7C%20OWASP%20Top%2010-emerald)](#)
 
 ## Overview
@@ -35,13 +35,13 @@ The **Integrated Real-Time Security Verification Framework** is an enterprise-gr
    - Guaranteed Zero-Trust fail-closed containment: unhandled exceptions assign 100% Critical Risk and return HTTP 403 Forbidden.
 
 5. **Tamper-Evident SHA-256 Audit Ledger**:
-   - Cryptographic sequential hash chaining ($H_t = \text{SHA256}(R_t \parallel H_{t-1})$).
-   - Real-time Server-Sent Events (SSE) live streaming with automatic reconnection, deduplication, and fallback polling.
+   - Full-ledger cryptographic sequential hash chaining ($H_t = \text{SHA256}(R_t \parallel H_{t-1})$) anchored to a trusted 64-zero genesis hash (`TRUSTED_AUDIT_GENESIS_HASH`) and HMAC-SHA256 sealed head checkpoint (`audit_chain_anchor`) with live server-side verification (`GET /api/v1/audit/verify-chain`) on both Express and Cloudflare Worker.
+   - Real-time Server-Sent Events (SSE) live streaming with automatic reconnection, missed-event polling fallback, and cross-mode deduplication.
    - Client-side structured JSON download of audit logs with metadata, filters, and statistics.
    - Full incident response lifecycle management (Open, Investigating, Contained, Resolved).
 
 6. **Interactive Zero-Trust Frontend**:
-   - Command Center, Interactive Security Timeline, Function Inventory, Invocation Explorer, 15-Step Pipeline Trace Viewer, Threat Center, Incident Console, User Database, RBAC Console, Policy Management, Simulation Workbench, and Health Dashboard featuring a 50-log historical risk trend Recharts line graph.
+   - Command Center, Interactive Security Timeline, Function Inventory, Invocation Explorer, 15-Step Pipeline Trace Viewer, Threat Center, Incident Console, User Database, RBAC Console, Policy Management, Simulation Workbench, and Health & Risk Analytics featuring a 50-log historical risk trend Recharts line graph and a real-time **Threat Heatmap** (`Time × Function` and `Vector × Function` intensity coordinate mapping with forensic drill-down).
 
 ---
 
@@ -51,7 +51,7 @@ The **Integrated Real-Time Security Verification Framework** is an enterprise-gr
 # 1. Install dependencies
 npm install
 
-# 2. Run all 7 automated security test suites (44 baseline + 5 recovery/D1/UI/real-time = 49 tests)
+# 2. Run all 8 automated security test suites (44 baseline + 6 recovery/D1/UI + 5 pre-finalization audit = 55 tests)
 npm test
 
 # 3. Run reproducible latency benchmark (isolated SQLite WAL)
@@ -85,7 +85,7 @@ To demonstrate the platform safely without exposing production secrets:
 - [SOURCE_TO_CLAIM_VERIFICATION_MATRIX.md](./SOURCE_TO_CLAIM_VERIFICATION_MATRIX.md): Traceability matrix verifying claims against source code
 - [BASE_PAPER_VS_PROPOSED_PROJECT_COMPARISON.md](./BASE_PAPER_VS_PROPOSED_PROJECT_COMPARISON.md): Detailed comparison against Shin et al.
 - [CITATION_AND_REFERENCE_AUDIT.md](./CITATION_AND_REFERENCE_AUDIT.md): Complete IEEE citation audit with RFC specifications
-- [TEST_RESULTS.md](./TEST_RESULTS.md): Execution logs across all 49 automated tests (44 core + 5 recovery/D1/UI/real-time) and [PERFORMANCE_EVALUATION.md](./PERFORMANCE_EVALUATION.md) (`npm run benchmark`)
+- [TEST_RESULTS.md](./TEST_RESULTS.md): Execution logs across all 55 automated tests (44 core + 6 recovery/D1/`ThreatHeatmap`/UI/real-time + 5 pre-finalization verification) and [PERFORMANCE_EVALUATION.md](./PERFORMANCE_EVALUATION.md) (`npm run benchmark`)
 - [FINAL_SECURITY_REMEDIATION_REPORT.md](./FINAL_SECURITY_REMEDIATION_REPORT.md): Security audit and remediation verification report
 - [FINAL_PROJECT_ACCEPTANCE_REPORT.md](./FINAL_PROJECT_ACCEPTANCE_REPORT.md): Formal capstone acceptance sign-off
 - [VIVA_PREPARATION_GUIDE.md](./VIVA_PREPARATION_GUIDE.md): Technical defense questions and answers for external examination

@@ -1,77 +1,104 @@
-# PHASE 13 — Production Deployment Guide
+# Production & Cloudflare Edge Deployment Guide
 
 ## 1. Prerequisites
-- **Node.js**: v18.0.0 or later (Node.js 20.x recommended)
-- **Package Manager**: npm or bun
-- **Cloud Platform**: Cloudflare Workers / Pages or containerized Node.js (Docker, Google Cloud Run)
+- **Node.js**: v20.0.0 or later
+- **Package Manager**: `npm`
+- **Cloudflare CLI** (for Workers + D1 deployment): `wrangler` (`npx wrangler --version`)
+
+> **Verification Scope Note**: Offline sandbox environments validate the Worker TypeScript bundle (`esbuild`) and local SQLite-backed D1 emulation (`D1Database.prepare/bind/batch`), not live remote Cloudflare infrastructure. Execute Sections 4–6 against your Cloudflare account to verify remote Worker + D1 persistence and concurrency.
 
 ---
 
-## 2. Environment Configuration
+## 2. Environment & Anchor Key Configuration
 
-Create a `.env` file in the project root based on `.env.example`:
+Copy `.env.example` to `.env` for Node/Express deployments:
 
 ```bash
 PORT=3000
 NODE_ENV=production
-JWT_SECRET=production_enterprise_master_jwt_secret_2026_change_in_prod
-JWT_ISSUER=https://auth.serverless-security.local
-JWT_AUDIENCE=serverless-security-framework
-MAX_PAYLOAD_BYTES=1048576
-MFA_WINDOW=2
-MFA_STEP_SECONDS=30
+JWT_SECRET=<at_least_32_char_random_hex_secret>
+AUDIT_ANCHOR_KEY=<at_least_32_char_dedicated_anchor_hmac_secret>
+AUDIT_ANCHOR_KEY_ID=anchor-v1
+AUDIT_ANCHOR_PREVIOUS_KEYS=""
 ```
+
+For Cloudflare Workers (`wrangler`):
+
+```bash
+npx wrangler secret put JWT_SECRET
+npx wrangler secret put AUDIT_ANCHOR_KEY
+npx wrangler secret put INITIAL_ADMIN_PASSWORD
+```
+
+Never commit plaintext secrets or expose `JWT_SECRET` / `AUDIT_ANCHOR_KEY` to client bundles or logs.
 
 ---
 
 ## 3. Local & Containerized Build & Run
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Compile application (frontend bundle + TypeScript backend check)
 npm run build
-
-# 3. Run production server
 npm start
 ```
 
 ---
 
-## 4. Cloudflare Workers & D1 Deployment
+## 4. Cloudflare Workers & Remote D1 Deployment Verification
+
+Apply **all** D1 migrations in strict numerical order before serving traffic:
 
 ```bash
-# 1. Login to Cloudflare CLI
+# 1. Authenticate & create remote D1 database
 npx wrangler login
-
-# 2. Provision Cloudflare D1 Database
 npx wrangler d1 create serverless-security-db
 
-# 3. Apply SQL migrations
-npx wrangler d1 execute serverless-security-db --file=./migrations/0001_initial_schema.sql
+# 2. Apply migrations 0001 through 0004 cleanly to remote D1
+npx wrangler d1 execute serverless-security-db --remote --file=./migrations/0001_initial_schema.sql
+npx wrangler d1 execute serverless-security-db --remote --file=./migrations/0002_normalized_d1_schema.sql
+npx wrangler d1 execute serverless-security-db --remote --file=./migrations/0003_secure_auth_and_persistence.sql
+npx wrangler d1 execute serverless-security-db --remote --file=./migrations/0004_mfa_enrollment_status.sql
 
-# 4. Deploy Serverless Worker
+# 3. Verify applied schema migrations & tables on remote D1
+npx wrangler d1 execute serverless-security-db --remote --command="SELECT version, applied_at FROM schema_migrations ORDER BY version ASC;"
+
+# 4. Deploy Worker bundle
 npx wrangler deploy
 ```
 
 ---
 
-## 5. Production Health Verification
+## 5. Legacy Audit Baseline & Key Rotation Procedures
 
-After deploying, verify the health status:
+### A. Inspect & Seal Archived Legacy History (Never Alters Historical Rows)
+If an upgraded database contains historical rows created prior to full-ledger SHA-256 hash chaining:
 
 ```bash
-curl -i https://<your-domain>/api/system/health
+# Dry-run inspection (reports suggested cutoff & broken rows without mutating DB)
+npm run audit:baseline -- --inspect
+
+# Seal archived legacy rows up to suggested cutoff & establish a verified modern epoch
+npm run audit:baseline -- --apply --admin=secops_admin
 ```
 
-Expected response:
-```json
-{
-  "status": "HEALTHY",
-  "d1_database": "CONNECTED",
-  "auth_service": "OPERATIONAL",
-  "verification_engine": "ACTIVE",
-  "fail_closed_mode": "ACTIVE"
-}
-```
+Or via authenticated Administrator API:
+- `POST /api/v1/audit/baseline-legacy` (body: `{ cutoffMaxId?, epochLabel?, reason? }`)
+
+### B. Audit Chain Anchor Key Rotation
+To rotate the HMAC signing key protecting `audit_chain_anchor`:
+1. Configure `AUDIT_ANCHOR_PREVIOUS_KEYS="anchor-v1:<old_secret>"` if supplying an external secret so historical `audit_ledger_epochs` records continue verifying.
+2. Call `POST /api/v1/audit/rotate-anchor-key` as an Administrator (`newKeyId`, optional `newSecret`).
+
+---
+
+## 6. Remote Post-Deployment Verification Checklist
+
+Run against your deployed `https://<worker-subdomain>.workers.dev` URL:
+
+1. **Health & D1 Connectivity**: `GET /api/system/health` -> HTTP `200`, `isConnected: true`.
+2. **Remote Persistence & Audit Chain Integrity**:
+   - Authenticate via `POST /api/login` + `POST /api/auth/mfa/verify`.
+   - Trigger traffic via `POST /api/getDashboardMetrics`, then query `GET /api/v1/audit/verify-chain`.
+   - Confirm `chainIntact: true` (or `VERIFIED_EPOCH_WITH_ARCHIVED_LEGACY` if legacy epochs are sealed) and `anchorVerified: true`.
+3. **Recovery-Code Concurrency on Remote D1**:
+   - Trigger parallel `POST /api/auth/mfa/enroll-challenge` calls during enrollment and confirm identical recovery code set / single-use CAS consumption under parallel verify retries.

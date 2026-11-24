@@ -219,6 +219,26 @@ function installMinimalDomShim() {
       this.attributes.set('class', String(val || ''));
     }
 
+    classList = {
+      add: (...tokens: string[]) => {
+        const set = new Set((this.attributes.get('class') || '').split(/\s+/).filter(Boolean));
+        tokens.forEach((t) => set.add(t));
+        this.attributes.set('class', Array.from(set).join(' '));
+      },
+      remove: (...tokens: string[]) => {
+        const set = new Set((this.attributes.get('class') || '').split(/\s+/).filter(Boolean));
+        tokens.forEach((t) => set.delete(t));
+        this.attributes.set('class', Array.from(set).join(' '));
+      },
+      contains: (token: string) => {
+        return (this.attributes.get('class') || '').split(/\s+/).includes(token);
+      },
+      toggle: (token: string) => {
+        if (this.classList.contains(token)) this.classList.remove(token);
+        else this.classList.add(token);
+      }
+    };
+
     get value() {
       return this._value;
     }
@@ -364,6 +384,18 @@ function installMinimalDomShim() {
       configurable: true
     });
   }
+  if (!(globalThis as any).localStorage) {
+    const store = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => { store.set(k, String(v)); },
+        removeItem: (k: string) => { store.delete(k); },
+        clear: () => store.clear()
+      },
+      configurable: true
+    });
+  }
   return { doc, MiniElement, MiniEvent };
 }
 
@@ -421,6 +453,8 @@ async function runTests() {
   const { MfaVerificationCard } = await import('../src/components/MfaVerificationCard.tsx');
   const { AuthModal } = await import('../src/components/AuthModal.tsx');
   const { useRealtimeMonitor } = await import('../src/hooks/useRealtimeMonitor.ts');
+  const { ThemeProvider } = await import('../src/context/ThemeContext.tsx');
+  const { ThreatHeatmap, buildHeatmapModel } = await import('../src/components/ThreatHeatmap.tsx');
 
   const app = express();
   app.use(express.json({ limit: '1mb' }));
@@ -789,11 +823,15 @@ async function runTests() {
         React.createElement(
           React.StrictMode,
           null,
-          React.createElement(MfaVerificationCard, {
-            challenge: challengeObj,
-            onVerifySuccess: (s: any) => { verifiedSessionFromUi = s; },
-            onCancel: () => {}
-          })
+          React.createElement(
+            ThemeProvider,
+            null,
+            React.createElement(MfaVerificationCard, {
+              challenge: challengeObj,
+              onVerifySuccess: (s: any) => { verifiedSessionFromUi = s; },
+              onCancel: () => {}
+            })
+          )
         )
       );
     });
@@ -864,14 +902,18 @@ async function runTests() {
     const authRoot = createRoot(authContainer as any);
     await React.act(async () => {
       authRoot.render(
-        React.createElement(AuthModal, {
-          isOpen: true,
-          onClose: () => {},
-          users: [],
-          currentSession: null,
-          onLoginSuccess: () => {},
-          onLogout: () => {}
-        })
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(AuthModal, {
+            isOpen: true,
+            onClose: () => {},
+            users: [],
+            currentSession: null,
+            onLoginSuccess: () => {},
+            onLogout: () => {}
+          })
+        )
       );
     });
 
@@ -1106,7 +1148,130 @@ async function runTests() {
     doc.body.removeChild(hookContainer);
     console.log('✔ PASS 5: Live Express SSE stream reconnect & useRealtimeMonitor fallback/backoff recovery verified');
 
-    console.log('\nALL RECOVERY CONCURRENCY, LOCAL D1 PERSISTENCE & UI/REALTIME TESTS PASSED (5/5)\n');
+    // =========================================================================
+    // TEST 6: ThreatHeatmap Intensity Coordinate Mapping, React 19 UI & SHA-256 Chain Check
+    // =========================================================================
+    const sampleHeatmapLogs = [
+      {
+        id: 1,
+        timestamp: '2026-11-23T10:00:00.000Z',
+        username: 'threat_actor',
+        requested_function: '/api/deployWorkerCode',
+        calculated_risk: 95,
+        status: 'BLOCKED' as const,
+        reason: 'Link-Local IMDS Probe (169.254.169.254)',
+        verification_latency_ms: 0.42,
+        event_type: 'CLOUD_METADATA_SSRF'
+      },
+      {
+        id: 2,
+        timestamp: '2026-11-23T10:01:00.000Z',
+        username: 'threat_actor',
+        requested_function: '/api/deployWorkerCode',
+        calculated_risk: 90,
+        status: 'BLOCKED' as const,
+        reason: 'Markov sequence deviation: abnormal invocation order',
+        verification_latency_ms: 0.38,
+        event_type: 'SEQUENCE_VIOLATION'
+      },
+      {
+        id: 3,
+        timestamp: '2026-11-23T10:02:00.000Z',
+        username: 'cloud_dev',
+        requested_function: '/api/getDashboardMetrics',
+        calculated_risk: 15,
+        status: 'ALLOWED' as const,
+        reason: 'Passed 15-step verification',
+        verification_latency_ms: 0.31,
+        event_type: 'STANDARD_VERIFICATION'
+      }
+    ];
+
+    const vectorModel = buildHeatmapModel({
+      logs: sampleHeatmapLogs,
+      axisMode: 'vector',
+      intensityBasis: 'composite',
+      trafficFilter: 'ALL',
+      functionQuery: '',
+      maxThreshold: 75
+    });
+    assert.strictEqual(vectorModel.rows[0].functionName, 'deployWorkerCode', 'Most frequently attacked function must rank first');
+    assert.strictEqual(vectorModel.rows[0].blockedHits, 2);
+    assert.ok(vectorModel.hottestCell && vectorModel.hottestCell.functionName === 'deployWorkerCode');
+    assert.strictEqual(vectorModel.hottestCell.severityLabel, 'Critical');
+
+    // Mount real ThreatHeatmap React 19 tree + verify interactive axis toggle, cell selection & live /api/v1/audit/verify-chain
+    const adminForChain = userRepository.findByUsername('secops_admin')!;
+    const chainToken = signJwt({
+      sub: adminForChain.id,
+      username: adminForChain.username,
+      role: 'Admin',
+      jti: `jti_chain_${crypto.randomBytes(4).toString('hex')}`,
+      expiresInSeconds: 3600
+    });
+    sessionRepository.createSession({
+      userId: adminForChain.id,
+      username: adminForChain.username,
+      role: 'Admin',
+      token: chainToken,
+      expiresInSeconds: 3600
+    });
+    const { setActiveAuthToken } = await import('../src/utils/authTokenStore.ts');
+    setActiveAuthToken(chainToken);
+
+    const heatmapContainer = doc.createElement('div');
+    doc.body.appendChild(heatmapContainer);
+    const heatmapRoot = createRoot(heatmapContainer as any);
+    await React.act(async () => {
+      heatmapRoot.render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(ThreatHeatmap, {
+            logs: sampleHeatmapLogs,
+            maxThreshold: 75,
+            realtimeTelemetry: {
+              connectionStatus: 'LIVE_STREAMING',
+              lastServerTime: new Date().toISOString(),
+              streamEventsCount: 12,
+              reconnectAttempts: 0,
+              isLive: true
+            }
+          })
+        )
+      );
+    });
+    assert.ok(heatmapContainer.textContent.includes('Threat Coordinate Heatmap'));
+    assert.ok(heatmapContainer.textContent.includes('deployWorkerCode'));
+    assert.ok(heatmapContainer.textContent.includes('SSE Stream Live (12)'));
+
+    // Switch to Vector x Function mode and click Verify SHA-256 Chain
+    const vectorBtn = heatmapContainer.querySelectorAll('button').find((b: any) => b.getAttribute('id') === 'btn-heatmap-axis-vector');
+    assert.ok(vectorBtn, 'Vector x Function button must render');
+    await React.act(async () => {
+      vectorBtn!.click();
+    });
+    assert.ok(heatmapContainer.textContent.includes('Cloud SSRF'), 'Vector axis header must appear after mode switch');
+
+    const verifyChainBtn = heatmapContainer.querySelectorAll('button').find((b: any) => b.getAttribute('id') === 'btn-verify-audit-chain');
+    assert.ok(verifyChainBtn, 'Verify SHA-256 Chain button must render');
+    await React.act(async () => {
+      verifyChainBtn!.click();
+      await new Promise((r) => setTimeout(r, 120));
+    });
+    assert.ok(
+      heatmapContainer.textContent.includes('SHA-256 Chain Verified Intact'),
+      `Live /api/v1/audit/verify-chain must report intact SHA-256 chain; got: ${heatmapContainer.textContent.slice(0, 350)}`
+    );
+
+    setActiveAuthToken(null);
+    await React.act(async () => {
+      heatmapRoot.unmount();
+    });
+    doc.body.removeChild(heatmapContainer);
+    console.log('✔ PASS 6: ThreatHeatmap coordinate mapping, React 19 vector/temporal UI & live SHA-256 chain check verified');
+
+    console.log('\nALL RECOVERY CONCURRENCY, LOCAL D1 PERSISTENCE, HEATMAP & UI/REALTIME TESTS PASSED (6/6)\n');
   } finally {
     globalThis.fetch = originalFetch;
     if (originalEventSource) (globalThis as any).EventSource = originalEventSource;

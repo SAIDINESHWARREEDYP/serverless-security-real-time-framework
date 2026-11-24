@@ -83,6 +83,16 @@ export interface SecurityAuditLog {
   reason: string;
   verification_latency_ms?: number;
   event_type?: string;
+  integrity_hash?: string;
+  prev_hash?: string;
+}
+
+export interface RealtimeTelemetrySnapshot {
+  connectionStatus: 'LIVE_STREAMING' | 'POLLING_FALLBACK' | 'RECONNECTING';
+  lastServerTime: string;
+  streamEventsCount: number;
+  reconnectAttempts: number;
+  isLive: boolean;
 }
 
 export type AuditEvent = SecurityAuditLog;
@@ -123,4 +133,74 @@ export interface AnomalyAlert {
   mitigation: string;
   acknowledged: boolean;
 }
+
+export type AuditVerificationStatus =
+  | 'FULL_LEDGER_VERIFIED'
+  | 'VERIFIED_EPOCH_WITH_ARCHIVED_LEGACY'
+  | 'LEGACY_SNAPSHOT_TAMPERED'
+  | 'INTEGRITY_DISCREPANCY'
+  | 'EMPTY_LEDGER';
+
+export interface AuditLedgerEpoch {
+  id: number;
+  epochLabel: string;
+  legacyCutoffMaxId: number;
+  legacyRecordCount: number;
+  legacySnapshotSha256: string;
+  epochStartId: number;
+  epochGenesisHash: string;
+  reason: string | null;
+  createdBy: string;
+  createdAt: string;
+  keyId: string;
+  snapshotVerified: boolean;
+  epochHmacVerified: boolean;
+}
+
+export interface AuditChainAnchorStatus {
+  present: boolean;
+  verified: boolean;
+  keyId: string | null;
+  previousKeyId: string | null;
+  rotatedAt: string | null;
+  activeKeyId: string;
+  keySource: string;
+  keyFingerprint: string;
+  activeEpoch: AuditLedgerEpoch | null;
+  genesisHash: string;
+  headId: number;
+  headHash: string | null;
+  recordCount: number;
+  updatedAt: string | null;
+}
+
+export interface AuditChainVerificationResult {
+  chainIntact: boolean;
+  fullLedgerVerified?: boolean;
+  verifiedEpochIntact?: boolean;
+  verificationStatus?: AuditVerificationStatus;
+  genesisVerified?: boolean;
+  trustedGenesisHash?: string;
+  anchorPresent?: boolean;
+  anchorVerified?: boolean;
+  anchorKeyId?: string | null;
+  anchorPreviousKeyId?: string | null;
+  anchorRotatedAt?: string | null;
+  keySource?: string;
+  keyFingerprint?: string;
+  legacyRecordsCount?: number;
+  legacyCutoffMaxId?: number;
+  legacySnapshotVerified?: boolean | null;
+  verifiedEpochCount?: number;
+  suggestedLegacyCutoffMaxId?: number | null;
+  epochLabel?: string | null;
+  activeEpoch?: AuditLedgerEpoch | null;
+  totalInLedger?: number;
+  totalChecked: number;
+  verifiedCount: number;
+  brokenLinks: Array<{ id: number; reason: string; detail?: string }>;
+  headHash: string | null;
+  verifiedAt: string;
+}
+
 

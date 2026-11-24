@@ -30,6 +30,7 @@ import {
 import { User, AuthSession, UserApprovalStatus, MfaPendingChallenge } from '../types.ts';
 import { MfaVerificationCard } from './MfaVerificationCard.tsx';
 import { MfaEnrollmentPanel, MfaEnrollmentPayload } from './MfaEnrollmentPanel.tsx';
+import { useTheme } from '../context/ThemeContext.tsx';
 
 interface ZeroTrustLoginGatewayProps {
   users: User[];
@@ -44,6 +45,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
   onAddTerminalLog,
   onOpenUserDatabase
 }) => {
+  const { isLight } = useTheme();
   // Default to secure Sign In credentials tab
   const [activeTab, setActiveTab] = useState<'signin' | 'register' | 'directory' | 'password_reset'>('signin');
 
@@ -518,25 +520,33 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
     <div className="max-w-4xl mx-auto my-6 space-y-6 font-sans">
       {/* 1. Header Banner */}
       <div className="text-center space-y-2 py-4 px-4">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-xs font-mono shadow-xs">
-          <Fingerprint className="w-3.5 h-3.5 text-blue-400" />
+        <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-mono shadow-xs ${
+          isLight
+            ? 'bg-white border-slate-200 text-slate-700'
+            : 'bg-slate-900 border-slate-800 text-slate-300'
+        }`}>
+          <Fingerprint className="w-3.5 h-3.5 text-blue-500" />
           <span>Zero-Trust Enterprise IAM Gateway • IEEE Access Bλambda Architecture</span>
         </div>
-        <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+        <h2 className={`text-2xl sm:text-3xl font-extrabold tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
           Role-Gated Identity &amp; Verification Terminal
         </h2>
-        <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto">
+        <p className={`text-xs sm:text-sm max-w-xl mx-auto ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
           Every principal undergoes strict RBAC validation, Markov sequence evaluation, and administrator clearance verification before being granted system access.
         </p>
 
         {/* Real-time NTP-Style Time Synchronization Telemetry Strip */}
-        <div className="pt-2 flex items-center justify-center gap-2 flex-wrap text-[11px] font-mono">
+        <div className="pt-2 flex items-center justify-center gap-2 flex-wrap text-[11px] font-mono tabular-nums">
           <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border ${
             isTimeMismatch
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold animate-pulse'
+              ? isLight
+                ? 'bg-amber-50 border-amber-300 text-amber-800 font-semibold'
+                : 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
+              : isLight
+              ? 'bg-white border-slate-200 text-slate-600'
               : 'bg-slate-900/90 border-slate-800 text-slate-400'
           }`}>
-            <Clock className={`w-3.5 h-3.5 ${isSyncingTime ? 'animate-spin text-blue-400' : isTimeMismatch ? 'text-amber-400' : 'text-emerald-400'}`} />
+            <Clock className={`w-3.5 h-3.5 ${isSyncingTime ? 'animate-spin text-blue-500' : isTimeMismatch ? 'text-amber-500' : 'text-emerald-500'}`} />
             <span>
               Edge NTP Sync: {isTimeMismatch ? 'SKEW DETECTED' : 'SYNCHRONIZED'} ({ntpLatencyMs}ms RTT, Skew: {effectiveDriftSeconds > 0 ? `+${effectiveDriftSeconds}` : effectiveDriftSeconds}s)
             </span>
@@ -546,7 +556,11 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
             type="button"
             onClick={syncNtpClock}
             disabled={isSyncingTime}
-            className="px-2.5 py-1 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+            className={`px-2.5 py-1 rounded-full border transition-colors cursor-pointer flex items-center gap-1 ${
+              isLight
+                ? 'bg-white hover:bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-white'
+            }`}
             title="Poll /api/system/time to calculate precision drift between client and server"
           >
             <RefreshCw className={`w-3 h-3 ${isSyncingTime ? 'animate-spin' : ''}`} />
@@ -559,36 +573,52 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
             onClick={() => setSimulatedDriftSeconds(prev => prev === 0 ? 45 : 0)}
             className={`px-2.5 py-1 rounded-full border text-[10px] transition-colors cursor-pointer flex items-center gap-1 ${
               simulatedDriftSeconds !== 0
-                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold'
+                ? isLight
+                  ? 'bg-amber-100 border-amber-400 text-amber-900 font-bold'
+                  : 'bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold'
+                : isLight
+                ? 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
                 : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
             title="Simulate 45s clock variance to verify Time Mismatch detection and client skew compensation"
           >
-            <span>{simulatedDriftSeconds !== 0 ? '✓ Drift Simulated (+45s)' : 'Simulate 45s Skew'}</span>
+            <span>{simulatedDriftSeconds !== 0 ? 'Drift Simulated (+45s)' : 'Simulate 45s Skew'}</span>
           </button>
         </div>
       </div>
 
       {/* Real-Time 'Time Mismatch' Warning Banner (>30s window drift) */}
       {isTimeMismatch && (
-        <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/50 text-amber-200 text-xs shadow-xl animate-in fade-in space-y-2">
+        <div className={`p-4 rounded-2xl border text-xs shadow-xl space-y-2 ${
+          isLight
+            ? 'bg-amber-50 border-amber-300 text-amber-900'
+            : 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+        }`}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-2.5">
-              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+              <div className={`p-1.5 rounded-lg shrink-0 ${isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/20 text-amber-400'}`}>
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <h4 className={`text-sm font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   <span>Time Mismatch Warning: Local Clock Variance Exceeds 30s Window</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+                  <span className={`text-[10px] px-2 py-0.5 rounded border font-mono tabular-nums ${
+                    isLight
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  }`}>
                     Drift: {effectiveDriftSeconds > 0 ? `+${effectiveDriftSeconds}` : effectiveDriftSeconds}s
                   </span>
                 </h4>
-                <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
+                <p className={`text-xs mt-1 leading-relaxed ${isLight ? 'text-amber-800' : 'text-amber-200/90'}`}>
                   The client system clock is out of synchronization with the Zero-Trust Edge clock by more than 30 seconds. Without clock compensation, standard TOTP authenticator validation will fail due to mismatched time-step windows.
                 </p>
-                <div className="mt-2 text-[11px] font-mono text-emerald-300 flex items-center gap-1.5 bg-emerald-950/40 p-2 rounded-lg border border-emerald-500/30">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <div className={`mt-2 text-[11px] font-mono tabular-nums flex items-center gap-1.5 p-2 rounded-lg border ${
+                  isLight
+                    ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                    : 'text-emerald-300 bg-emerald-950/40 border-emerald-500/30'
+                }`}>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                   <span>
                     Client-Side Clock Skew Correction Active: Offsetting TOTP generation by {effectiveDriftSeconds > 0 ? `+${effectiveDriftSeconds}` : effectiveDriftSeconds}s to guarantee token synchronization.
                   </span>
@@ -602,7 +632,11 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                 setSimulatedDriftSeconds(0);
                 syncNtpClock();
               }}
-              className="px-3 py-1.5 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/50 text-amber-200 text-xs font-semibold shrink-0 cursor-pointer flex items-center gap-1"
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold shrink-0 cursor-pointer flex items-center gap-1 ${
+                isLight
+                  ? 'bg-amber-600 hover:bg-amber-500 border-amber-600 text-white'
+                  : 'bg-amber-600/30 hover:bg-amber-600/40 border-amber-500/50 text-amber-200'
+              }`}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingTime ? 'animate-spin' : ''}`} />
               <span>Resync NTP</span>
@@ -613,15 +647,19 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
       {/* Error / Status Notice */}
       {errorMsg && (
-        <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between gap-3 animate-in fade-in">
+        <div className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+          isLight
+            ? 'bg-rose-50 border-rose-200 text-rose-800'
+            : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
+        }`}>
           <div className="flex items-center gap-2.5">
-            <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400" />
+            <ShieldAlert className="w-4 h-4 shrink-0 text-rose-500" />
             <span>{errorMsg}</span>
           </div>
           <button
             type="button"
             onClick={() => setErrorMsg(null)}
-            className="text-rose-400 hover:text-white font-mono text-[11px] cursor-pointer"
+            className={`font-mono text-[11px] cursor-pointer ${isLight ? 'text-rose-700 hover:text-rose-950' : 'text-rose-400 hover:text-white'}`}
           >
             Dismiss
           </button>
@@ -629,15 +667,19 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
       )}
 
       {statusNotice && (
-        <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between gap-3 animate-in fade-in">
+        <div className={`p-3.5 rounded-xl border text-xs flex items-center justify-between gap-3 ${
+          isLight
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            : 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+        }`}>
           <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
             <span>{statusNotice}</span>
           </div>
           <button
             type="button"
             onClick={() => setStatusNotice(null)}
-            className="text-emerald-400 hover:text-white font-mono text-[11px] cursor-pointer"
+            className={`font-mono text-[11px] cursor-pointer ${isLight ? 'text-emerald-700 hover:text-emerald-950' : 'text-emerald-400 hover:text-white'}`}
           >
             Dismiss
           </button>
@@ -664,51 +706,63 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         />
       ) : pendingUser ? (
         /* 3. ZERO-TRUST APPROVAL GATE / LIVE POLLING SCREEN */
-        <div className="p-6 rounded-2xl border border-amber-500/30 bg-slate-900/95 shadow-xl space-y-5 animate-in fade-in zoom-in-95">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+        <div className={`p-6 rounded-2xl border shadow-xl space-y-5 ${
+          isLight
+            ? 'border-amber-300 bg-white'
+            : 'border-amber-500/30 bg-slate-900/95'
+        }`}>
+          <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4 ${
+            isLight ? 'border-slate-200' : 'border-slate-800'
+          }`}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+              <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
+                isLight ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+              }`}>
                 <Clock className="w-5 h-5 animate-spin" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-white">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className={`text-base font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
                     Administrator Verification Required
                   </h3>
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold">
+                  <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border font-semibold ${
+                    isLight
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  }`}>
                     Awaiting Approval
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                   Your identity has been registered in the database, but access is gated until approved by SecOps Admin.
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 self-start sm:self-auto">
-              <span className="text-[11px] font-mono text-slate-400">
+              <span className={`text-[11px] font-mono tabular-nums ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 Polls: #{approvalPollCount}
               </span>
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono tabular-nums">
+            <div className={`p-3 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
               <span className="text-slate-500 block text-[10px]">USERNAME</span>
-              <span className="text-white font-bold">{pendingUser.username}</span>
+              <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{pendingUser.username}</span>
             </div>
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <div className={`p-3 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
               <span className="text-slate-500 block text-[10px]">REQUESTED ROLE</span>
-              <span className="text-amber-400 font-bold">{pendingUser.role}</span>
+              <span className="text-amber-500 font-bold">{pendingUser.role}</span>
             </div>
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <div className={`p-3 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
               <span className="text-slate-500 block text-[10px]">BASE RISK EVALUATION</span>
-              <span className="text-cyan-400 font-bold">{pendingUser.base_risk_score}%</span>
+              <span className="text-cyan-600 dark:text-cyan-400 font-bold">{pendingUser.base_risk_score}%</span>
             </div>
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <div className={`p-3 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
               <span className="text-slate-500 block text-[10px]">GATE STATUS</span>
-              <span className="text-amber-300 font-bold">POLLING IN REAL-TIME</span>
+              <span className={`font-bold ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>POLLING IN REAL-TIME</span>
             </div>
           </div>
 
@@ -721,7 +775,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           )}
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs">
-            <span className="text-slate-400">
+            <span className={isLight ? 'text-slate-600' : 'text-slate-400'}>
               To approve this user, an Administrator can approve via the SecOps Command Center or User Database.
             </span>
             <button
@@ -731,7 +785,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                 setPendingUser(null);
                 setRegisteredEnrollment(null);
               }}
-              className="text-slate-400 hover:text-white font-medium hover:underline cursor-pointer"
+              className={`font-medium hover:underline cursor-pointer ${isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
             >
               Cancel &amp; Return to Sign In
             </button>
@@ -739,19 +793,29 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
         </div>
       ) : (
         /* 4. MAIN IDENTITY & AUTHENTICATION PORTAL */
-        <div className="rounded-2xl border border-slate-800/90 bg-slate-900/90 shadow-2xl backdrop-blur-md overflow-hidden">
+        <div className={`rounded-2xl border shadow-2xl backdrop-blur-md overflow-hidden ${
+          isLight
+            ? 'border-slate-200 bg-white'
+            : 'border-slate-800/90 bg-slate-900/90'
+        }`}>
           {/* Tabs */}
-          <div className="flex items-center border-b border-slate-800 bg-slate-950/50 p-1.5 gap-1.5">
+          <div className={`flex flex-wrap sm:flex-nowrap items-center border-b p-1.5 gap-1.5 ${
+            isLight ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-950/50'
+          }`}>
             <button
               type="button"
               onClick={() => setActiveTab('signin')}
               className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'signin'
-                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30 shadow-xs'
+                  ? isLight
+                    ? 'bg-blue-50 text-blue-700 border border-blue-200 shadow-xs'
+                    : 'bg-blue-600/20 text-blue-300 border border-blue-500/30 shadow-xs'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900 hover:bg-white'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <Lock className="w-4 h-4 text-blue-400" />
+              <Lock className="w-4 h-4 text-blue-500" />
               <span>Real-Time Sign In &amp; Verification</span>
             </button>
 
@@ -760,24 +824,32 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               onClick={() => setActiveTab('register')}
               className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'register'
-                  ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 shadow-xs'
+                  ? isLight
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs'
+                    : 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 shadow-xs'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900 hover:bg-white'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <UserPlus className="w-4 h-4 text-emerald-400" />
+              <UserPlus className="w-4 h-4 text-emerald-500" />
               <span>Provision New Identity</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('directory')}
-              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer tabular-nums ${
                 activeTab === 'directory'
-                  ? 'bg-purple-600/20 text-purple-300 border border-purple-500/30 shadow-xs'
+                  ? isLight
+                    ? 'bg-purple-50 text-purple-700 border border-purple-200 shadow-xs'
+                    : 'bg-purple-600/20 text-purple-300 border border-purple-500/30 shadow-xs'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900 hover:bg-white'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <Users className="w-4 h-4 text-purple-400" />
+              <Users className="w-4 h-4 text-purple-500" />
               <span>Directory ({users.length})</span>
             </button>
 
@@ -786,11 +858,15 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               onClick={() => setActiveTab('password_reset')}
               className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 activeTab === 'password_reset'
-                  ? 'bg-amber-600/20 text-amber-300 border border-amber-500/30 shadow-xs'
+                  ? isLight
+                    ? 'bg-amber-50 text-amber-700 border border-amber-200 shadow-xs'
+                    : 'bg-amber-600/20 text-amber-300 border border-amber-500/30 shadow-xs'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900 hover:bg-white'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
             >
-              <KeyRound className="w-4 h-4 text-amber-400" />
+              <KeyRound className="w-4 h-4 text-amber-500" />
               <span>Change Credentials</span>
             </button>
           </div>
@@ -805,11 +881,11 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               className="p-6 sm:p-8 space-y-5 max-w-xl mx-auto"
             >
               <div className="text-center space-y-1">
-                <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                <h3 className={`text-base font-bold tracking-tight flex items-center justify-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  <ShieldCheck className="w-4 h-4 text-blue-500" />
                   <span>Authenticated Identity Gateway</span>
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                   Enter any username. Identity is dynamically verified in real-time with Zero-Trust compliance.
                 </p>
               </div>
@@ -817,16 +893,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               {/* Username Input with Live Validation Feedback */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
-                  <label className="text-slate-300 font-medium">
-                    Username / Principal ID <span className="text-rose-400">*</span>
+                  <label className={`font-medium ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                    Username / Principal ID <span className="text-rose-500">*</span>
                   </label>
                   {matchedExistingUser ? (
-                    <span className="text-[11px] font-mono text-emerald-400 flex items-center gap-1 font-semibold">
+                    <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-semibold">
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       Database Record Found ({matchedExistingUser.role})
                     </span>
                   ) : username.trim().length > 0 ? (
-                    <span className="text-[11px] font-mono text-cyan-400 flex items-center gap-1">
+                    <span className="text-[11px] font-mono text-cyan-600 dark:text-cyan-400 flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5" />
                       Dynamic Onboarding (New Identity)
                     </span>
@@ -840,16 +916,20 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder="Enter any username (e.g. secops_admin, cloud_dev, Alex_Sec2026)"
-                    className="w-full pl-3.5 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs sm:text-sm font-mono transition-colors shadow-inner"
+                    className={`w-full pl-3.5 pr-10 py-2.5 border rounded-xl focus:outline-none focus:border-blue-500 text-xs sm:text-sm font-mono transition-colors shadow-inner ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                   {username && (
                     <div className="absolute right-3 top-2.5 text-slate-400">
                       {matchedExistingUser ? (
-                        <UserCheck className="w-4 h-4 text-emerald-400" />
+                        <UserCheck className="w-4 h-4 text-emerald-500" />
                       ) : usernameRules.isValid ? (
-                        <CheckCircle2 className="w-4 h-4 text-cyan-400" />
+                        <CheckCircle2 className="w-4 h-4 text-cyan-500" />
                       ) : (
-                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
                       )}
                     </div>
                   )}
@@ -857,25 +937,27 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
                 {/* Real-time Username Compliance Rule Badges */}
                 {username.trim().length > 0 && !usernameRules.isBuiltIn && (
-                  <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800/80 space-y-1.5">
-                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-mono font-semibold block">
+                  <div className={`p-2.5 rounded-lg border space-y-1.5 ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/70 border-slate-800/80'
+                  }`}>
+                    <span className={`text-[10px] uppercase tracking-wider font-mono font-semibold block ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       Zero-Trust Identity Format Rules:
                     </span>
-                    <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
-                      <div className={`flex items-center gap-1.5 ${usernameRules.hasMinLength ? 'text-emerald-400' : 'text-slate-500'}`}>
-                        {usernameRules.hasMinLength ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono tabular-nums">
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasMinLength ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasMinLength ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-400 dark:border-slate-600" />}
                         <span>Length &gt; 5 chars ({username.trim().length})</span>
                       </div>
-                      <div className={`flex items-center gap-1.5 ${usernameRules.hasUpper ? 'text-emerald-400' : 'text-slate-500'}`}>
-                        {usernameRules.hasUpper ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasUpper ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasUpper ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-400 dark:border-slate-600" />}
                         <span>Uppercase (A-Z)</span>
                       </div>
-                      <div className={`flex items-center gap-1.5 ${usernameRules.hasLower ? 'text-emerald-400' : 'text-slate-500'}`}>
-                        {usernameRules.hasLower ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasLower ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasLower ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-400 dark:border-slate-600" />}
                         <span>Lowercase (a-z)</span>
                       </div>
-                      <div className={`flex items-center gap-1.5 ${usernameRules.hasAlphaNum ? 'text-emerald-400' : 'text-slate-500'}`}>
-                        {usernameRules.hasAlphaNum ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-600" />}
+                      <div className={`flex items-center gap-1.5 ${usernameRules.hasAlphaNum ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                        {usernameRules.hasAlphaNum ? <CheckCircle2 className="w-3 h-3" /> : <div className="w-2.5 h-2.5 rounded-full border border-slate-400 dark:border-slate-600" />}
                         <span>Alphanumeric char</span>
                       </div>
                     </div>
@@ -886,14 +968,14 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               {/* Password Input with Visibility Toggle */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
-                  <label className="text-slate-300 font-medium">
-                    Password / Access Key <span className="text-rose-400">*</span>
+                  <label className={`font-medium ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                    Password / Access Key <span className="text-rose-500">*</span>
                   </label>
                   <span className="text-[11px] font-mono">
                     {matchedExistingUser ? (
-                      <span className="text-emerald-400">Identity Registered</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">Identity Registered</span>
                     ) : (
-                      <span className="text-cyan-400">Custom Key (Min 8 chars)</span>
+                      <span className="text-cyan-600 dark:text-cyan-400">Custom Key (Min 8 chars)</span>
                     )}
                   </span>
                 </div>
@@ -905,12 +987,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter security password"
-                    className="w-full pl-3.5 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs sm:text-sm font-mono transition-colors shadow-inner"
+                    className={`w-full pl-3.5 pr-10 py-2.5 border rounded-xl focus:outline-none focus:border-blue-500 text-xs sm:text-sm font-mono transition-colors shadow-inner ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-2.5 text-slate-400 hover:text-white"
+                    className={`absolute right-3 top-2.5 cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -923,9 +1009,9 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                       setResetUsername(username);
                       setActiveTab('password_reset');
                     }}
-                    className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline cursor-pointer flex items-center gap-1 transition-colors"
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline cursor-pointer flex items-center gap-1 transition-colors"
                   >
-                    <KeyRound className="w-3 h-3 text-amber-400" />
+                    <KeyRound className="w-3 h-3 text-amber-500" />
                     <span>Need to change password? Request Admin approval →</span>
                   </button>
                 </div>
@@ -933,17 +1019,25 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
 
               {/* If identity is not yet in directory, offer clean redirect to Register tab */}
               {!matchedExistingUser && username.trim().length > 0 && (
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 animate-in fade-in">
-                  <div className="flex items-center justify-between text-xs font-semibold text-cyan-300 border-b border-slate-800/80 pb-2">
+                <div className={`p-3.5 rounded-xl border space-y-2.5 ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+                }`}>
+                  <div className={`flex items-center justify-between text-xs font-semibold border-b pb-2 ${
+                    isLight ? 'text-cyan-800 border-slate-200' : 'text-cyan-300 border-slate-800/80'
+                  }`}>
                     <span className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-500" />
                       Identity Not Found in Local Directory
                     </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      isLight
+                        ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                        : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
+                    }`}>
                       Onboarding Required
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400">
+                  <p className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     Unregistered handles cannot sign in directly. Provision this identity through the Registration tab (Admin privilege requires Administrator assignment).
                   </p>
                   <button
@@ -954,7 +1048,11 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                       setRegisterDept(dynamicDept);
                       setActiveTab('register');
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 text-[11px] font-semibold cursor-pointer"
+                    className={`px-3 py-1.5 rounded-lg border text-[11px] font-semibold cursor-pointer ${
+                      isLight
+                        ? 'bg-cyan-50 hover:bg-cyan-100 border-cyan-300 text-cyan-800'
+                        : 'bg-cyan-600/20 hover:bg-cyan-600/30 border-cyan-500/40 text-cyan-300'
+                    }`}
                   >
                     Provision [{username.trim()}] in Register Tab →
                   </button>
@@ -962,17 +1060,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               )}
 
               {/* Security Telemetry Assurance Badges */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px] font-mono text-slate-400">
-                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
-                  <KeyRound className="w-3 h-3 text-emerald-400" />
+              <div className={`grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px] font-mono ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                <div className={`flex items-center gap-1.5 p-2 rounded-lg border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
+                  <KeyRound className="w-3 h-3 text-emerald-500" />
                   <span>2FA / MFA Enforced</span>
                 </div>
-                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
-                  <Activity className="w-3 h-3 text-cyan-400" />
+                <div className={`flex items-center gap-1.5 p-2 rounded-lg border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
+                  <Activity className="w-3 h-3 text-cyan-500" />
                   <span>Sub-ms Latency</span>
                 </div>
-                <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
-                  <ShieldCheck className="w-3 h-3 text-blue-400" />
+                <div className={`col-span-2 sm:col-span-1 flex items-center gap-1.5 p-2 rounded-lg border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
+                  <ShieldCheck className="w-3 h-3 text-blue-500" />
                   <span>Fail-Closed Mesh</span>
                 </div>
               </div>
@@ -981,7 +1079,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               <button
                 type="submit"
                 disabled={loading || !username.trim()}
-                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-blue-900/30 flex items-center justify-center gap-2 cursor-pointer mt-3"
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2 cursor-pointer mt-3"
               >
                 {loading ? (
                   <>
@@ -1007,18 +1105,18 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           {activeTab === 'register' && (
             <form onSubmit={handleRegister} className="p-6 sm:p-8 space-y-4 max-w-xl mx-auto">
               <div className="text-center space-y-1 mb-2">
-                <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
-                  <UserPlus className="w-4 h-4 text-emerald-400" />
+                <h3 className={`text-base font-bold tracking-tight flex items-center justify-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  <UserPlus className="w-4 h-4 text-emerald-500" />
                   <span>Provision New System Identity</span>
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                   Register a new principal directly into Cloudflare D1. Clearance status is verified upon entry.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">
+                  <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Username *
                   </label>
                   <input
@@ -1027,12 +1125,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={registerUsername}
                     onChange={(e) => setRegisterUsername(e.target.value)}
                     placeholder="e.g. Jordan_SecOps26"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-emerald-500 font-mono ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">
+                  <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Password (Min 8 chars) *
                   </label>
                   <input
@@ -1041,12 +1143,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={registerPassword}
                     onChange={(e) => setRegisterPassword(e.target.value)}
                     placeholder="Create secure password"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-emerald-500 font-mono ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">
+                  <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Confirm Password *
                   </label>
                   <input
@@ -1055,18 +1161,26 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={registerConfirmPassword}
                     onChange={(e) => setRegisterConfirmPassword(e.target.value)}
                     placeholder="Re-enter password"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-emerald-500 font-mono ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">
+                  <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Requested Clearance Role
                   </label>
                   <select
                     value={registerRole}
                     onChange={(e) => setRegisterRole(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-emerald-500 ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900'
+                        : 'bg-slate-950 border-slate-800 text-white'
+                    }`}
                   >
                     <option value="Developer">Developer (Tier 1 &amp; Tier 2)</option>
                     <option value="Guest">Guest (Tier 1 Read Only)</option>
@@ -1074,7 +1188,7 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">
+                  <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Department / Team
                   </label>
                   <input
@@ -1082,12 +1196,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={registerDept}
                     onChange={(e) => setRegisterDept(e.target.value)}
                     placeholder="e.g. Edge Core Engineering"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-emerald-500 ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block text-slate-300 font-medium mb-1">
+                  <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Access Justification (Submitted to SecOps Admin)
                   </label>
                   <input
@@ -1095,25 +1213,31 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     value={registerJustification}
                     onChange={(e) => setRegisterJustification(e.target.value)}
                     placeholder="e.g. Microservices deployment and live telemetry audit"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-emerald-500 ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+              <div className={`p-3 rounded-lg border text-[11px] space-y-1 ${
+                isLight ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-slate-950 border-slate-800 text-slate-400'
+              }`}>
+                <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
                   <Clock className="w-3.5 h-3.5" />
                   <span>Zero-Trust Verification Policy</span>
                 </div>
                 <p>
-                  Upon submission, this account will be committed to the database with <code className="text-amber-300">PENDING_APPROVAL</code> status. Access will be granted once approved by SecOps Admin.
+                  Upon submission, this account will be committed to the database with <code className="text-amber-700 dark:text-amber-300 font-semibold">PENDING_APPROVAL</code> status. Access will be granted once approved by SecOps Admin.
                 </p>
               </div>
 
               <button
                 type="submit"
                 disabled={loading || !registerUsername.trim()}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {loading ? (
                   <>
@@ -1133,25 +1257,31 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           {/* TAB 3: DIRECTORY REFERENCE (NO 1-CLICK BYPASS) */}
           {activeTab === 'directory' && (
             <div className="p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3 ${
+                isLight ? 'border-slate-200' : 'border-slate-800'
+              }`}>
                 <div>
-                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <Database className="w-4 h-4 text-purple-400" />
+                  <h3 className={`text-sm font-semibold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    <Database className="w-4 h-4 text-purple-500" />
                     <span>Registered Identities Reference</span>
                   </h3>
-                  <p className="text-xs text-slate-400">
+                  <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                     Click "Use Identity" to pre-fill the username. Passwords and MFA verification are strictly required.
                   </p>
                 </div>
 
                 <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                   <input
                     type="text"
                     value={dirSearch}
                     onChange={(e) => setDirSearch(e.target.value)}
                     placeholder="Filter identities..."
-                    className="pl-8 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                    className={`pl-8 pr-3 py-1.5 text-xs border rounded-lg focus:outline-none focus:border-purple-500 ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                    }`}
                   />
                 </div>
               </div>
@@ -1160,16 +1290,26 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                 {filteredUsers.map((u) => (
                   <div
                     key={u.id || u.username}
-                    className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-slate-700 flex items-center justify-between gap-2 transition-all"
+                    className={`p-3 rounded-xl border flex items-center justify-between gap-2 transition-all ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                        : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
+                    }`}
                   >
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-white">{u.username}</span>
+                        <span className={`font-mono text-xs font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{u.username}</span>
                         <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
                           u.role === 'Admin'
-                            ? 'bg-purple-500/20 text-purple-300'
+                            ? isLight
+                              ? 'bg-purple-100 text-purple-800'
+                              : 'bg-purple-500/20 text-purple-300'
                             : u.role === 'Developer'
-                            ? 'bg-blue-500/20 text-blue-300'
+                            ? isLight
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-blue-500/20 text-blue-300'
+                            : isLight
+                            ? 'bg-slate-200 text-slate-700'
                             : 'bg-slate-700 text-slate-300'
                         }`}>
                           {u.role}
@@ -1187,7 +1327,11 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         setPassword('');
                         setActiveTab('signin');
                       }}
-                      className="px-2.5 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-mono transition-colors cursor-pointer shrink-0"
+                      className={`px-2.5 py-1 text-xs rounded-lg border font-mono transition-colors cursor-pointer shrink-0 ${
+                        isLight
+                          ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                      }`}
                     >
                       Use Identity →
                     </button>
@@ -1201,13 +1345,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
           {activeTab === 'password_reset' && (
             <div className="p-6 sm:p-8 space-y-5 max-w-xl mx-auto">
               {/* Mode Toggle: Password vs Username */}
-              <div className="flex items-center justify-center gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+              <div className={`flex items-center justify-center gap-2 p-1 rounded-xl border ${
+                isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-950 border-slate-800'
+              }`}>
                 <button
                   type="button"
                   onClick={() => setCredentialTabMode('password')}
                   className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                     credentialTabMode === 'password'
                       ? 'bg-amber-600 text-white shadow-xs'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -1220,6 +1368,8 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                   className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                     credentialTabMode === 'username'
                       ? 'bg-purple-600 text-white shadow-xs'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -1232,19 +1382,19 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
               {credentialTabMode === 'password' ? (
                 <form onSubmit={handlePasswordChangeRequest} className="space-y-4">
                   <div className="text-center space-y-1 mb-2">
-                    <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
-                      <KeyRound className="w-4 h-4 text-amber-400" />
+                    <h3 className={`text-base font-bold tracking-tight flex items-center justify-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      <KeyRound className="w-4 h-4 text-amber-500" />
                       <span>Request Password Rotation</span>
                     </h3>
-                    <p className="text-xs text-slate-400">
+                    <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       Per Zero-Trust policy, all password change requests are submitted to the database and require Administrator approval before being activated.
                     </p>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
-                        Username / Principal ID <span className="text-rose-400">*</span>
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        Username / Principal ID <span className="text-rose-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -1252,13 +1402,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={resetUsername}
                         onChange={(e) => setResetUsername(e.target.value)}
                         placeholder="Enter account username"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-amber-500 font-mono ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
-                        Requested New Password (Min 8 chars) <span className="text-rose-400">*</span>
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        Requested New Password (Min 8 chars) <span className="text-rose-500">*</span>
                       </label>
                       <input
                         type="password"
@@ -1266,13 +1420,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={resetNewPassword}
                         onChange={(e) => setResetNewPassword(e.target.value)}
                         placeholder="Enter new password"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-amber-500 font-mono ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
-                        Confirm New Password <span className="text-rose-400">*</span>
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        Confirm New Password <span className="text-rose-500">*</span>
                       </label>
                       <input
                         type="password"
@@ -1280,12 +1438,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={resetConfirmPassword}
                         onChange={(e) => setResetConfirmPassword(e.target.value)}
                         placeholder="Re-enter new password"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-amber-500 font-mono ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                         Reason / Justification for Change (Optional)
                       </label>
                       <input
@@ -1293,13 +1455,19 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={resetJustification}
                         onChange={(e) => setResetJustification(e.target.value)}
                         placeholder="e.g. Scheduled quarterly credential rotation"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-amber-500 ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
                   </div>
 
-                  <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                    <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                  <div className={`p-3 rounded-lg border text-[11px] space-y-1 ${
+                    isLight ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
                       <ShieldCheck className="w-3.5 h-3.5" />
                       <span>Zero-Trust Credential Security Notice</span>
                     </div>
@@ -1312,14 +1480,18 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     <button
                       type="button"
                       onClick={() => setActiveTab('signin')}
-                      className="w-1/3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                      className={`w-1/3 py-2.5 rounded-xl font-semibold text-xs transition-colors cursor-pointer ${
+                        isLight
+                          ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                      }`}
                     >
                       Back to Sign In
                     </button>
                     <button
                       type="submit"
                       disabled={loading || !resetUsername.trim() || !resetNewPassword}
-                      className="w-2/3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-lg shadow-amber-900/30 flex items-center justify-center gap-2 cursor-pointer"
+                      className="w-2/3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-lg shadow-amber-900/20 flex items-center justify-center gap-2 cursor-pointer"
                     >
                       {loading ? 'Submitting Request...' : 'Submit Password Change to Admin'}
                     </button>
@@ -1329,19 +1501,19 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                 /* 2. USERNAME CHANGE REQUEST FORM */
                 <form onSubmit={handleUsernameChangeRequest} className="space-y-4">
                   <div className="text-center space-y-1 mb-2">
-                    <h3 className="text-base font-bold text-white tracking-tight flex items-center justify-center gap-2">
-                      <Users className="w-4 h-4 text-purple-400" />
+                    <h3 className={`text-base font-bold tracking-tight flex items-center justify-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      <Users className="w-4 h-4 text-purple-500" />
                       <span>Request Username Change</span>
                     </h3>
-                    <p className="text-xs text-slate-400">
+                    <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       Per Zero-Trust policy, all username modification requests are held in pending state until approved by an Administrator. Upon approval, your username is updated in the database and old sessions are revoked.
                     </p>
                   </div>
 
                   <div className="space-y-3 text-xs">
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
-                        Current Registered Username <span className="text-rose-400">*</span>
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        Current Registered Username <span className="text-rose-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -1349,13 +1521,17 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={changeCurrentUsername}
                         onChange={(e) => setChangeCurrentUsername(e.target.value)}
                         placeholder="Enter current username"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-purple-500 font-mono ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
-                        Requested New Username (Min 3 chars) <span className="text-rose-400">*</span>
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        Requested New Username (Min 3 chars) <span className="text-rose-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -1363,12 +1539,16 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={changeNewUsername}
                         onChange={(e) => setChangeNewUsername(e.target.value)}
                         placeholder="Enter requested new username"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-purple-500 font-mono ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-slate-300 font-medium mb-1">
+                      <label className={`block font-medium mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                         Reason / Access Justification (Optional)
                       </label>
                       <input
@@ -1376,13 +1556,19 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                         value={changeUsernameJustification}
                         onChange={(e) => setChangeUsernameJustification(e.target.value)}
                         placeholder="e.g. Identity reorganization, legal name change, or role realignment"
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-purple-500 ${
+                          isLight
+                            ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                            : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                        }`}
                       />
                     </div>
                   </div>
 
-                  <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                    <div className="flex items-center gap-1.5 text-purple-400 font-medium">
+                  <div className={`p-3 rounded-lg border text-[11px] space-y-1 ${
+                    isLight ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400 font-medium">
                       <ShieldCheck className="w-3.5 h-3.5" />
                       <span>Zero-Trust Identity Governance Notice</span>
                     </div>
@@ -1395,14 +1581,18 @@ export const ZeroTrustLoginGateway: React.FC<ZeroTrustLoginGatewayProps> = ({
                     <button
                       type="button"
                       onClick={() => setActiveTab('signin')}
-                      className="w-1/3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                      className={`w-1/3 py-2.5 rounded-xl font-semibold text-xs transition-colors cursor-pointer ${
+                        isLight
+                          ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                      }`}
                     >
                       Back to Sign In
                     </button>
                     <button
                       type="submit"
                       disabled={loading || !changeCurrentUsername.trim() || !changeNewUsername.trim()}
-                      className="w-2/3 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-lg shadow-purple-900/30 flex items-center justify-center gap-2 cursor-pointer"
+                      className="w-2/3 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-lg shadow-purple-900/20 flex items-center justify-center gap-2 cursor-pointer"
                     >
                       {loading ? 'Submitting Request...' : 'Submit Username Change to Admin'}
                     </button>

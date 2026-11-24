@@ -57,26 +57,26 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
     // Threat condition classification
     let condition: { label: string; color: string; bg: string; border: string; icon: typeof ShieldCheck } = {
       label: 'NOMINAL DEFENSE',
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-500/10',
-      border: 'border-emerald-500/30',
+      color: isLight ? 'text-emerald-700' : 'text-emerald-400',
+      bg: isLight ? 'bg-emerald-50' : 'bg-emerald-500/10',
+      border: isLight ? 'border-emerald-300' : 'border-emerald-500/30',
       icon: ShieldCheck
     };
 
     if (critical.length >= 3 || avgOverall >= 60) {
       condition = {
         label: 'CRITICAL THREAT DEFCON 1',
-        color: 'text-rose-400',
-        bg: 'bg-rose-500/15',
-        border: 'border-rose-500/30',
+        color: isLight ? 'text-rose-700' : 'text-rose-400',
+        bg: isLight ? 'bg-rose-50' : 'bg-rose-500/15',
+        border: isLight ? 'border-rose-300' : 'border-rose-500/30',
         icon: ShieldAlert
       };
     } else if (critical.length > 0 || avgOverall >= 30) {
       condition = {
         label: 'ELEVATED MITIGATION',
-        color: 'text-amber-400',
-        bg: 'bg-amber-400/15',
-        border: 'border-amber-400/30',
+        color: isLight ? 'text-amber-800' : 'text-amber-400',
+        bg: isLight ? 'bg-amber-50' : 'bg-amber-400/15',
+        border: isLight ? 'border-amber-300' : 'border-amber-400/30',
         icon: AlertTriangle
       };
     }
@@ -97,7 +97,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
       affectedPrincipals: principals,
       totalBlocks: allBlocks.length
     };
-  }, [logs]);
+  }, [logs, isLight]);
 
   // Filtered threat events for the embedded inspector
   const filteredThreatEvents = useMemo(() => {
@@ -158,7 +158,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
                 Real-Time Threat Intelligence &amp; Risk Visualizer
               </h2>
               <span className={`flex items-center gap-1 text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                <Radio className="w-3 h-3 text-blue-500 animate-pulse" />
+                <Radio className="w-3 h-3 text-blue-500" />
                 Live Heuristics
               </span>
             </div>
@@ -173,7 +173,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
           id="threat-condition-badge"
           className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold uppercase tracking-wider border self-start sm:self-auto shadow-xs ${threatCondition.bg} ${threatCondition.border} ${threatCondition.color}`}
         >
-          <span className="w-2 h-2 rounded-full bg-current animate-ping" />
+          <span className="w-2 h-2 rounded-full bg-current" />
           <span>{threatCondition.label}</span>
         </div>
       </div>
@@ -260,7 +260,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
             <span>Critical Blocks (&ge;75%)</span>
             <ShieldAlert className="w-4 h-4 text-rose-500" />
           </div>
-          <div className="flex items-baseline gap-2 mt-2">
+          <div className="flex items-baseline gap-2 mt-2 tabular-nums">
             <span className={`text-2xl font-extrabold ${criticalCount > 0 ? 'text-rose-500' : isLight ? 'text-slate-900' : 'text-white'}`}>
               {criticalCount}
             </span>
@@ -285,7 +285,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
             <span>Average Threat</span>
             <Flame className={`w-4 h-4 ${avgThreatLevel >= 75 ? 'text-rose-500' : avgThreatLevel >= 30 ? 'text-amber-500' : 'text-emerald-500'}`} />
           </div>
-          <div className="flex items-baseline gap-2 mt-2">
+          <div className="flex items-baseline gap-2 mt-2 tabular-nums">
             <span
               className={`text-2xl font-extrabold ${
                 avgThreatLevel >= 75
@@ -324,7 +324,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
             <span>Mean Crit Severity</span>
             <Activity className="w-4 h-4 text-blue-500" />
           </div>
-          <div className="flex items-baseline gap-2 mt-2">
+          <div className="flex items-baseline gap-2 mt-2 tabular-nums">
             <span className={`text-2xl font-extrabold ${isLight ? 'text-slate-900' : 'text-white'}`}>
               {avgCriticalRisk > 0 ? `${avgCriticalRisk}%` : '0%'}
             </span>
@@ -347,7 +347,7 @@ export const ThreatSummaryCard: React.FC<ThreatSummaryCardProps> = ({ logs }) =>
             <span>Flagged Principals</span>
             <Lock className="w-4 h-4 text-purple-500" />
           </div>
-          <div className="flex items-baseline gap-2 mt-2">
+          <div className="flex items-baseline gap-2 mt-2 tabular-nums">
             <span className={`text-2xl font-extrabold ${isLight ? 'text-slate-900' : 'text-white'}`}>
               {affectedPrincipals.length}
             </span>

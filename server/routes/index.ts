@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import v1Router from './v1/index.ts';
+import auditRoutes from './v1/audit.routes.ts';
 import { authController } from '../controllers/auth.controller.ts';
 import { userController } from '../controllers/user.controller.ts';
 import { policyController } from '../controllers/policy.controller.ts';
@@ -44,8 +45,9 @@ const OPS_VIEW_ROLES = new Set(['Admin', 'Super Administrator', 'Security Admini
 
 const rootRouter = Router();
 
-// 1. Mount API Version 1
+// 1. Mount API Version 1 & Direct Audit Alias
 rootRouter.use('/v1', v1Router);
+rootRouter.use('/audit', auditRoutes);
 
 // 2. Health & Telemetry & NTP Time Synchronization
 rootRouter.get('/health', healthController.getHealth);

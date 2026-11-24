@@ -323,10 +323,10 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
         }`}>
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse inline-block"></span>
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
               <h2 className="text-base font-bold tracking-tight">Navigation &amp; Workspaces</h2>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               Disciplined 4-Section Enterprise Matrix
             </p>
           </div>
@@ -388,22 +388,22 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
             isLight ? 'border-slate-200/80' : 'border-slate-800/60'
           }`}>
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              <span className={`flex items-center gap-1.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 <Clock className={`w-3.5 h-3.5 ${
                   isSessionExpired
-                    ? 'text-rose-500 animate-pulse'
+                    ? 'text-rose-500'
                     : isExpiringSoon
-                    ? 'text-amber-500 animate-pulse'
-                    : 'text-blue-400'
+                    ? 'text-amber-500'
+                    : 'text-blue-500'
                 }`} />
                 <span>JWT Session:</span>
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 tabular-nums">
                 <span className={`font-bold px-2 py-0.5 rounded text-[11px] ${
                   isSessionExpired
-                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse'
+                    ? (isLight ? 'bg-rose-100 text-rose-800 border border-rose-300' : 'bg-rose-500/20 text-rose-400 border border-rose-500/40')
                     : isExpiringSoon
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse'
+                    ? (isLight ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40')
                     : isLight
                     ? 'bg-slate-200 text-slate-800'
                     : 'bg-slate-800 text-slate-200'
@@ -412,10 +412,10 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                 </span>
                 <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                   isSessionExpired
-                    ? 'bg-rose-950 text-rose-300'
+                    ? (isLight ? 'bg-rose-100 text-rose-800' : 'bg-rose-950 text-rose-300')
                     : isExpiringSoon
-                    ? 'bg-amber-950 text-amber-300'
-                    : 'bg-emerald-500/10 text-emerald-400'
+                    ? (isLight ? 'bg-amber-100 text-amber-800' : 'bg-amber-950 text-amber-300')
+                    : (isLight ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-500/10 text-emerald-400')
                 }`}>
                   {isSessionExpired ? '0%' : `${Math.round((remainingSeconds / totalSessionSeconds) * 100)}%`}
                 </span>
@@ -424,11 +424,15 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
 
             {/* Visual Alert Banner for Session Expiring Within 5 Minutes */}
             {isExpiringSoon && (
-              <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/50 text-amber-300 dark:text-amber-200 flex items-start gap-2 text-[11px] animate-pulse">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className={`p-2 rounded-xl border flex items-start gap-2 text-[11px] ${
+                isLight
+                  ? 'bg-amber-50 border-amber-300 text-amber-900'
+                  : 'bg-amber-500/15 border-amber-500/50 text-amber-200'
+              }`}>
+                <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${isLight ? 'text-amber-700' : 'text-amber-400'}`} />
                 <div className="leading-tight">
-                  <div className="font-bold text-amber-400">⚠️ Session Expiring Soon</div>
-                  <div className="text-[10px] text-amber-200/90 mt-0.5">
+                  <div className={`font-bold ${isLight ? 'text-amber-900' : 'text-amber-400'}`}>Session Expiring Soon</div>
+                  <div className={`text-[10px] mt-0.5 tabular-nums ${isLight ? 'text-amber-800' : 'text-amber-200/90'}`}>
                     Less than 5 minutes remaining ({formatCountdown(remainingSeconds)}). Re-authenticate to avoid automatic termination.
                   </div>
                 </div>
@@ -437,11 +441,15 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
 
             {/* Visual Alert Banner for Expired Session */}
             {isSessionExpired && (
-              <div className="p-2 rounded-xl bg-rose-500/20 border border-rose-500/60 text-rose-300 flex items-start gap-2 text-[11px] animate-pulse">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className={`p-2 rounded-xl border flex items-start gap-2 text-[11px] ${
+                isLight
+                  ? 'bg-rose-50 border-rose-300 text-rose-900'
+                  : 'bg-rose-500/20 border-rose-500/60 text-rose-300'
+              }`}>
+                <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${isLight ? 'text-rose-700' : 'text-rose-400'}`} />
                 <div className="leading-tight">
-                  <div className="font-bold text-rose-400">🚨 Session Terminated</div>
-                  <div className="text-[10px] text-rose-200/90 mt-0.5">
+                  <div className={`font-bold ${isLight ? 'text-rose-900' : 'text-rose-400'}`}>Session Terminated</div>
+                  <div className={`text-[10px] mt-0.5 ${isLight ? 'text-rose-800' : 'text-rose-200/90'}`}>
                     Cryptographic JWT token expired. Please sign in again.
                   </div>
                 </div>
@@ -469,7 +477,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
               <button
                 type="button"
                 onClick={() => setFilterQuery('')}
-                className="text-slate-400 hover:text-white text-xs px-1"
+                className={`text-xs px-1 ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
               >
                 ✕
               </button>
@@ -493,18 +501,18 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
             return (
               <div key={meta.id} className="space-y-3">
                 {/* Clean Category Header with Dedicated Section Color Badge */}
-                <div className="flex items-center justify-between border-b border-slate-800/40 pb-2">
+                <div className={`flex items-center justify-between border-b pb-2 ${isLight ? 'border-slate-200' : 'border-slate-800/40'}`}>
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border ${
                       isLight ? meta.tagBadgeLight : meta.tagBadgeDark
                     }`}>
                       {meta.sectionNumber}
                     </span>
-                    <span className="text-xs font-mono uppercase tracking-wider text-slate-300 dark:text-slate-300 font-bold">
+                    <span className={`text-xs font-mono uppercase tracking-wider font-bold ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                       {meta.title}
                     </span>
                   </div>
-                  <span className="text-[11px] font-mono text-slate-500">
+                  <span className="text-[11px] font-mono text-slate-500 tabular-nums">
                     {matchingItems.length} {matchingItems.length === 1 ? 'view' : 'views'}
                   </span>
                 </div>
@@ -552,7 +560,7 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                                 {item.label}
                               </span>
                               {isActive && (
-                                <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+                                <span className="w-2 h-2 rounded-full bg-white shrink-0"></span>
                               )}
                             </div>
                             <p className={`text-xs mt-0.5 line-clamp-1 ${
@@ -598,9 +606,9 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
 
           {/* Incident Simulation Drills (Admin Only) */}
           {currentRole === 'Admin' && (
-            <div className="space-y-3 pt-3 border-t border-slate-800/80">
-              <div className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center gap-2">
-                <Zap className="w-4 h-4 text-blue-400" />
+            <div className={`space-y-3 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-slate-800/80'}`}>
+              <div className={`text-xs font-mono uppercase tracking-wider font-bold flex items-center gap-2 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                <Zap className="w-4 h-4 text-blue-500" />
                 <span>Incident Simulation Drills</span>
               </div>
 
@@ -622,7 +630,11 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                       <AlertTriangle className="w-4 h-4 text-amber-500" />
                       <span className="font-semibold">Credential Spray Attack Wave</span>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      isLight
+                        ? 'bg-white text-slate-700 border-slate-300'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}>
                       Trigger
                     </span>
                   </button>
@@ -642,10 +654,14 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <Cpu className="w-4 h-4 text-indigo-400" />
+                      <Cpu className="w-4 h-4 text-indigo-500" />
                       <span className="font-semibold">Lateral Markov Drift Drill</span>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      isLight
+                        ? 'bg-white text-slate-700 border-slate-300'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}>
                       Trigger
                     </span>
                   </button>
@@ -670,7 +686,13 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                       <ShieldAlert className="w-4 h-4 text-rose-500" />
                       <span>{isEmergencyLockdownActive ? 'Emergency Lockdown ACTIVE' : 'Engage Perimeter Lockdown'}</span>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      isEmergencyLockdownActive
+                        ? 'bg-white/20 text-white border-white/30'
+                        : isLight
+                        ? 'bg-rose-100 text-rose-700 border-rose-300'
+                        : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                    }`}>
                       {isEmergencyLockdownActive ? 'ENGAGED' : '25% Limit'}
                     </span>
                   </button>
@@ -680,8 +702,8 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
           )}
 
           {/* Architecture Specifications & Compliance Downloads */}
-          <div className="space-y-3 pt-3 border-t border-slate-800/80">
-            <div className="text-xs font-mono uppercase tracking-wider text-slate-400 dark:text-slate-500 font-bold">
+          <div className={`space-y-3 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-slate-800/80'}`}>
+            <div className={`text-xs font-mono uppercase tracking-wider font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               Engineering Blueprints &amp; Export
             </div>
 
@@ -737,7 +759,11 @@ export const SidebarNavigation: React.FC<SidebarNavigationProps> = ({
                       <ShieldCheck className="w-4 h-4 text-purple-400" />
                       <span className="font-semibold">RBAC Governance &amp; Permissions Matrix</span>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      isLight
+                        ? 'bg-purple-100 text-purple-800 border-purple-300'
+                        : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                    }`}>
                       6×21 Matrix
                     </span>
                   </button>

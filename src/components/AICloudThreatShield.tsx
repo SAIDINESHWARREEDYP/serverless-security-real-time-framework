@@ -22,6 +22,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTheme } from '../context/ThemeContext.tsx';
 
 export interface AIThreatReport {
   threatDetected: boolean;
@@ -95,6 +96,7 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
   currentUsername = 'cloud_dev',
   userRole = 'Developer'
 }) => {
+  const { isLight } = useTheme();
   const [inputPayload, setInputPayload] = useState(PRESET_ATTACK_VECTORS[0].payload);
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<AIThreatReport | null>(null);
@@ -181,34 +183,46 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
       className="space-y-6"
     >
       {/* Top Banner: Enterprise AI & Cloud Shield */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm relative overflow-hidden">
+      <div className={`border rounded-xl p-5 shadow-sm relative overflow-hidden ${
+        isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+      }`}>
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 shrink-0">
+            <div className={`p-2.5 rounded-lg border shrink-0 ${
+              isLight ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400'
+            }`}>
               <Bot className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className={`text-base sm:text-lg font-bold tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   Next-Gen AI Threat Defense &amp; Cloud Sentinel
                 </h2>
-                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
+                  isLight
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                    : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                }`}>
                   Real-Time Edge Heuristics
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+              <p className={`text-xs mt-1 max-w-2xl ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 Multi-layer inspection protecting serverless cloud nodes from LLM prompt injections, SSRF cloud metadata probes, credential leakage, and model inversion.
               </p>
             </div>
           </div>
 
           {/* Navigation Sub-Tabs */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-mono">
+          <div className={`flex items-center gap-1.5 p-1 rounded-lg border text-xs font-mono tabular-nums ${
+            isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-950 border-slate-800'
+          }`}>
             <button
               onClick={() => setActiveTab('scanner')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
+              className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
                 activeTab === 'scanner'
                   ? 'bg-indigo-600 text-white font-medium'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -216,9 +230,11 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('threatLedger')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
+              className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
                 activeTab === 'threatLedger'
                   ? 'bg-indigo-600 text-white font-medium'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -226,9 +242,11 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('cloudMitigations')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
+              className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
                 activeTab === 'cloudMitigations'
                   ? 'bg-indigo-600 text-white font-medium'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -244,10 +262,14 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
           {/* Left Column: Preset Attack Scenarios & Input */}
           <div className="lg:col-span-6 space-y-4">
             {/* Attack Vector Presets */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 font-mono text-xs">
-              <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
-                <span className="text-slate-300 font-semibold flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <div className={`border rounded-xl p-4 font-mono text-xs ${
+              isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+            }`}>
+              <div className={`flex items-center justify-between pb-3 mb-3 border-b ${
+                isLight ? 'border-slate-200' : 'border-slate-800'
+              }`}>
+                <span className={`font-semibold flex items-center gap-1.5 ${isLight ? 'text-slate-800' : 'text-slate-300'}`}>
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
                   Real-World Attack Vectors (1-Click Test)
                 </span>
                 <span className="text-[10px] text-slate-500">Select to load &amp; scan</span>
@@ -258,30 +280,42 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                   <button
                     key={preset.title}
                     onClick={() => handleSelectPreset(idx)}
-                    className={`p-2.5 rounded-lg border text-left transition-all ${
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
                       selectedPreset === idx
-                        ? 'bg-indigo-950/40 border-indigo-500/50 text-white shadow-sm'
+                        ? isLight
+                          ? 'bg-indigo-50 border-indigo-400 text-slate-900 shadow-sm'
+                          : 'bg-indigo-950/40 border-indigo-500/50 text-white shadow-sm'
+                        : isLight
+                        ? 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-100'
                         : 'bg-slate-950/70 border-slate-800/80 text-slate-300 hover:border-slate-700 hover:text-white'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
                         preset.severity === 'CRITICAL'
-                          ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                          ? isLight
+                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                            : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                           : preset.severity === 'HIGH'
-                          ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                          ? isLight
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                           : preset.severity === 'MEDIUM'
-                          ? 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
-                          : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                          ? isLight
+                            ? 'bg-blue-100 text-blue-800 border-blue-300'
+                            : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                          : isLight
+                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                          : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                       }`}>
                         {preset.severity}
                       </span>
                       <span className="text-[10px] text-slate-500">{preset.category}</span>
                     </div>
-                    <div className="font-semibold text-xs mt-1.5 text-slate-200 truncate">
+                    <div className={`font-semibold text-xs mt-1.5 truncate ${isLight ? 'text-slate-900' : 'text-slate-200'}`}>
                       {preset.title}
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-2">
+                    <p className={`text-[10px] mt-0.5 line-clamp-2 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       {preset.desc}
                     </p>
                   </button>
@@ -290,8 +324,10 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
             </div>
 
             {/* Custom Payload Input */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 font-mono text-xs">
-              <label className="block text-slate-300 font-semibold mb-2 flex items-center justify-between">
+            <div className={`border rounded-xl p-4 font-mono text-xs ${
+              isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+            }`}>
+              <label className={`block font-semibold mb-2 flex items-center justify-between ${isLight ? 'text-slate-800' : 'text-slate-300'}`}>
                 <span>Payload / Ingress Request Content</span>
                 <span className="text-[10px] text-slate-500">Live AI &amp; Cloud Interceptor</span>
               </label>
@@ -300,18 +336,22 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                 onChange={(e) => setInputPayload(e.target.value)}
                 rows={4}
                 placeholder="Enter raw HTTP request, SQL query, or prompt payload to test..."
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 font-mono resize-none"
+                className={`w-full border rounded-lg p-3 text-xs focus:outline-none focus:border-indigo-500 font-mono resize-none ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                    : 'bg-slate-950 border-slate-800 text-slate-200 placeholder-slate-500'
+                }`}
               />
 
               <div className="flex items-center justify-between mt-3">
                 <span className="text-[11px] text-slate-500">
-                  Testing as: <strong className="text-indigo-300">{currentUsername}</strong> ({userRole})
+                  Testing as: <strong className={isLight ? 'text-indigo-700' : 'text-indigo-300'}>{currentUsername}</strong> ({userRole})
                 </span>
 
                 <button
                   onClick={() => handleScan()}
                   disabled={isScanning || !inputPayload.trim()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-colors disabled:opacity-50 shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-colors disabled:opacity-50 shadow-sm cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
                   <span>{isScanning ? 'Analyzing Payload...' : 'Scan Payload'}</span>
@@ -322,16 +362,24 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
 
           {/* Right Column: Scan Heuristic Results */}
           <div className="lg:col-span-6 space-y-4">
-            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 font-mono text-xs shadow-sm">
-              <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
-                <span className="text-white font-bold flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-indigo-400" />
+            <div className={`border rounded-xl p-5 font-mono text-xs shadow-sm ${
+              isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+            }`}>
+              <div className={`flex items-center justify-between pb-3 mb-4 border-b ${
+                isLight ? 'border-slate-200' : 'border-slate-800'
+              }`}>
+                <span className={`font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  <Zap className="w-4 h-4 text-indigo-500" />
                   Inspection Analysis &amp; Cloud Mitigation
                 </span>
                 {scanResult && (
                   <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${
                     scanResult.threatDetected
-                      ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                      ? isLight
+                        ? 'bg-rose-100 text-rose-800 border-rose-300'
+                        : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                      : isLight
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                       : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                   }`}>
                     {scanResult.threatDetected ? 'THREAT INTERCEPTED' : 'CLEAR // BENIGN'}
@@ -344,27 +392,33 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                   {/* Status Box & Radial Threat Gauge */}
                   <div className={`p-3.5 rounded-lg border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                     scanResult.threatDetected
-                      ? 'bg-rose-950/30 border-rose-500/30 text-rose-200'
+                      ? isLight
+                        ? 'bg-rose-50 border-rose-200 text-rose-900'
+                        : 'bg-rose-950/30 border-rose-500/30 text-rose-200'
+                      : isLight
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                       : 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200'
                   }`}>
                     <div className="flex items-start gap-3">
                       {scanResult.threatDetected ? (
-                        <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                        <ShieldAlert className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                       ) : (
-                        <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                        <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
                       )}
                       <div>
-                        <div className="font-bold text-sm text-white">
+                        <div className={`font-bold text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>
                           {scanResult.threatCategory.replace(/_/g, ' ')}
                         </div>
-                        <p className="text-xs text-slate-300 mt-0.5">
+                        <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                           {scanResult.explanation}
                         </p>
                       </div>
                     </div>
 
                     {/* Radial Threat Gauge */}
-                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0 bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+                    <div className={`flex items-center gap-2 self-end sm:self-center shrink-0 p-2 rounded-lg border ${
+                      isLight ? 'bg-white border-slate-200' : 'bg-slate-950/60 border-slate-800'
+                    }`}>
                       <div className="relative w-12 h-12 flex items-center justify-center">
                         <svg className="w-12 h-12 -rotate-90" viewBox="0 0 44 44">
                           <circle
@@ -372,7 +426,7 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                             cy="22"
                             r="18"
                             fill="none"
-                            stroke="#1e293b"
+                            stroke={isLight ? '#e2e8f0' : '#1e293b'}
                             strokeWidth="4"
                           />
                           <circle
@@ -394,18 +448,18 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                             className="transition-all duration-700 ease-out"
                           />
                         </svg>
-                        <span className="absolute font-mono font-bold text-[10px] text-white">
+                        <span className={`absolute font-mono font-bold text-[10px] tabular-nums ${isLight ? 'text-slate-900' : 'text-white'}`}>
                           {scanResult.riskScore}%
                         </span>
                       </div>
                       <div className="text-left text-[9px] font-mono">
-                        <div className="text-slate-400 uppercase">Threat Level</div>
+                        <div className="text-slate-500 uppercase">Threat Level</div>
                         <div className={`font-bold ${
                           scanResult.riskScore >= 75
-                            ? 'text-rose-400'
+                            ? 'text-rose-500'
                             : scanResult.riskScore >= 35
-                            ? 'text-amber-400'
-                            : 'text-emerald-400'
+                            ? 'text-amber-500'
+                            : 'text-emerald-500'
                         }`}>
                           {scanResult.riskScore >= 75
                             ? 'CRITICAL'
@@ -418,35 +472,35 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                   </div>
 
                   {/* Metrics Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                    <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center tabular-nums">
+                    <div className={`p-2.5 border rounded-lg ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                       <div className="text-[10px] text-slate-500 uppercase">Risk Level</div>
                       <div className={`text-base font-extrabold mt-0.5 ${
-                        scanResult.riskScore >= 75 ? 'text-rose-400' : scanResult.riskScore >= 30 ? 'text-amber-400' : 'text-emerald-400'
+                        scanResult.riskScore >= 75 ? 'text-rose-500' : scanResult.riskScore >= 30 ? 'text-amber-500' : 'text-emerald-500'
                       }`}>
                         {scanResult.riskScore}%
                       </div>
                     </div>
 
-                    <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <div className={`p-2.5 border rounded-lg ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                       <div className="text-[10px] text-slate-500 uppercase">Severity</div>
                       <div className={`text-base font-extrabold mt-0.5 ${
-                        scanResult.severity === 'CRITICAL' ? 'text-rose-400' : scanResult.severity === 'HIGH' ? 'text-amber-400' : 'text-emerald-400'
+                        scanResult.severity === 'CRITICAL' ? 'text-rose-500' : scanResult.severity === 'HIGH' ? 'text-amber-500' : 'text-emerald-500'
                       }`}>
                         {scanResult.severity}
                       </div>
                     </div>
 
-                    <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <div className={`p-2.5 border rounded-lg ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                       <div className="text-[10px] text-slate-500 uppercase">Action</div>
-                      <div className="text-xs font-bold text-white mt-1 truncate">
+                      <div className={`text-xs font-bold mt-1 truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         {scanResult.mitigationAction}
                       </div>
                     </div>
 
-                    <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <div className={`p-2.5 border rounded-lg ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                       <div className="text-[10px] text-slate-500 uppercase">Cloud Rule</div>
-                      <div className="text-[10px] font-mono text-indigo-300 mt-1 truncate">
+                      <div className={`text-[10px] font-mono mt-1 truncate ${isLight ? 'text-indigo-700' : 'text-indigo-300'}`}>
                         {scanResult.cloudRule}
                       </div>
                     </div>
@@ -454,7 +508,7 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
 
                   {/* Matched Indicators */}
                   <div>
-                    <div className="text-slate-400 text-[11px] font-semibold mb-1.5">
+                    <div className={`text-[11px] font-semibold mb-1.5 tabular-nums ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>
                       Identified Attack Signatures ({scanResult.matchedIndicators.length})
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -462,14 +516,18 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                         scanResult.matchedIndicators.map((ind) => (
                           <span
                             key={ind}
-                            className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-rose-300 text-[10px] font-mono flex items-center gap-1"
+                            className={`px-2 py-0.5 rounded border text-[10px] font-mono flex items-center gap-1 ${
+                              isLight
+                                ? 'bg-rose-50 border-rose-200 text-rose-800'
+                                : 'bg-slate-950 border-slate-800 text-rose-300'
+                            }`}
                           >
-                            <AlertTriangle className="w-3 h-3 text-rose-400" />
+                            <AlertTriangle className="w-3 h-3 text-rose-500" />
                             {ind}
                           </span>
                         ))
                       ) : (
-                        <span className="text-emerald-400 text-xs flex items-center gap-1">
+                        <span className="text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           Zero threat signatures detected. All sanitizers cleared.
                         </span>
@@ -478,9 +536,11 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                   </div>
 
                   {/* Cloud Security Architecture Response */}
-                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-1 text-slate-400 text-[11px]">
-                    <div className="text-white font-semibold flex items-center gap-1.5">
-                      <Cloud className="w-3.5 h-3.5 text-indigo-400" />
+                  <div className={`p-3 border rounded-lg space-y-1 text-[11px] ${
+                    isLight ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}>
+                    <div className={`font-semibold flex items-center gap-1.5 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      <Cloud className="w-3.5 h-3.5 text-indigo-500" />
                       Enforced Enterprise Cloud Safeguard:
                     </div>
                     <div>
@@ -514,7 +574,7 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                 </div>
               ) : (
                 <div className="text-center py-12 text-slate-500">
-                  <Radio className="w-8 h-8 mx-auto mb-2 text-slate-600 animate-pulse" />
+                  <Radio className={`w-8 h-8 mx-auto mb-2 ${isLight ? 'text-slate-400' : 'text-slate-600'}`} />
                   <p className="text-xs">Select an attack vector or enter custom payload to run live scan.</p>
                 </div>
               )}
@@ -525,20 +585,32 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
 
       {/* VIEW 2: HISTORICAL INCIDENT LEDGER */}
       {activeTab === 'threatLedger' && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 font-mono text-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 mb-3 border-b border-slate-800 gap-3">
+        <div className={`border rounded-xl p-5 font-mono text-xs ${
+          isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+        }`}>
+          <div className={`flex flex-col sm:flex-row sm:items-center justify-between pb-3 mb-3 border-b gap-3 ${
+            isLight ? 'border-slate-200' : 'border-slate-800'
+          }`}>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-white font-bold">AI Threat Incident History</h3>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                <h3 className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>AI Threat Incident History</h3>
+                <span className={`text-[10px] px-2 py-0.5 rounded border tabular-nums ${
+                  isLight
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                    : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
+                }`}>
                   {filteredThreatHistory.length} of {threatHistory.length} Recorded
                 </span>
               </div>
-              <p className="text-slate-400 text-[11px] mt-0.5">Real-time audit log of intercepted adversarial probes</p>
+              <p className={`text-[11px] mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Real-time audit log of intercepted adversarial probes</p>
             </div>
             <button
               onClick={fetchThreatHistory}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs self-start sm:self-auto transition-colors"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs self-start sm:self-auto transition-colors cursor-pointer border ${
+                isLight
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Refresh
@@ -548,18 +620,22 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
           {/* Search and Filters Toolbar */}
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <div className="relative flex-1 min-w-[180px]">
-              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               <input
                 type="text"
                 placeholder="Search category, payload, action, principal..."
                 value={ledgerSearchQuery}
                 onChange={(e) => setLedgerSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-7 py-1.5 bg-slate-950 border border-slate-800 text-white rounded text-xs focus:outline-none focus:border-indigo-500"
+                className={`w-full pl-8 pr-7 py-1.5 border rounded text-xs focus:outline-none focus:border-indigo-500 ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400'
+                    : 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                }`}
               />
               {ledgerSearchQuery && (
                 <button
                   onClick={() => setLedgerSearchQuery('')}
-                  className="absolute right-2 top-2 text-slate-500 hover:text-white"
+                  className={`absolute right-2 top-2 cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-500 hover:text-white'}`}
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -567,18 +643,22 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
             </div>
 
             {/* Severity Filter Chips */}
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded border border-slate-800">
+            <div className={`flex items-center gap-1 p-1 rounded border ${
+              isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-950 border-slate-800'
+            }`}>
               {(['ALL', 'CRITICAL', 'HIGH', 'MEDIUM'] as const).map((sev) => (
                 <button
                   key={sev}
                   onClick={() => setLedgerSeverityFilter(sev)}
-                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all cursor-pointer ${
                     ledgerSeverityFilter === sev
                       ? sev === 'CRITICAL'
                         ? 'bg-rose-500 text-white'
                         : sev === 'HIGH'
                         ? 'bg-amber-500 text-slate-950'
                         : 'bg-indigo-600 text-white'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -591,7 +671,11 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
             <select
               value={ledgerCategoryFilter}
               onChange={(e) => setLedgerCategoryFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded focus:outline-none focus:border-indigo-500"
+              className={`px-2.5 py-1.5 border text-xs rounded focus:outline-none focus:border-indigo-500 ${
+                isLight
+                  ? 'bg-slate-50 border-slate-300 text-slate-800'
+                  : 'bg-slate-950 border-slate-800 text-slate-300'
+              }`}
             >
               <option value="ALL">All Categories</option>
               <option value="PROMPT_INJECTION">Prompt Injection</option>
@@ -607,7 +691,11 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                   setLedgerSeverityFilter('ALL');
                   setLedgerCategoryFilter('ALL');
                 }}
-                className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] rounded border border-slate-700 flex items-center gap-1"
+                className={`px-2 py-1.5 text-[11px] rounded border flex items-center gap-1 cursor-pointer ${
+                  isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                }`}
               >
                 <X className="w-3 h-3" />
                 Reset
@@ -617,8 +705,10 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
 
           <div className="overflow-x-auto">
             {filteredThreatHistory.length === 0 ? (
-              <div className="text-center py-10 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                <AlertTriangle className="w-6 h-6 mx-auto mb-2 text-slate-600" />
+              <div className={`text-center py-10 text-slate-500 border border-dashed rounded-lg ${
+                isLight ? 'border-slate-300' : 'border-slate-800'
+              }`}>
+                <AlertTriangle className="w-6 h-6 mx-auto mb-2 text-slate-400" />
                 <p>No threat events found matching current criteria.</p>
                 <button
                   onClick={() => {
@@ -626,7 +716,7 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                     setLedgerSeverityFilter('ALL');
                     setLedgerCategoryFilter('ALL');
                   }}
-                  className="mt-2 text-indigo-400 hover:underline text-xs"
+                  className="mt-2 text-indigo-500 hover:underline text-xs cursor-pointer"
                 >
                   Clear search filters
                 </button>
@@ -634,7 +724,9 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
             ) : (
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 text-[10px] uppercase">
+                  <tr className={`border-b text-[10px] uppercase ${
+                    isLight ? 'border-slate-200 text-slate-500' : 'border-slate-800 text-slate-400'
+                  }`}>
                     <th className="py-2 px-3">Time</th>
                     <th className="py-2 px-3">Threat Category</th>
                     <th className="py-2 px-3">Severity</th>
@@ -643,32 +735,38 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                     <th className="py-2 px-3">Mitigation Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
+                <tbody className={`divide-y ${isLight ? 'divide-slate-200' : 'divide-slate-800/60'}`}>
                   {filteredThreatHistory.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-800/30">
-                      <td className="py-2.5 px-3 text-slate-400 text-[11px] whitespace-nowrap">
+                    <tr key={item.id} className={isLight ? 'hover:bg-slate-50' : 'hover:bg-slate-800/30'}>
+                      <td className="py-2.5 px-3 text-slate-500 text-[11px] whitespace-nowrap tabular-nums">
                         {new Date(item.timestamp).toLocaleTimeString()}
                       </td>
-                      <td className="py-2.5 px-3 font-semibold text-white">
+                      <td className={`py-2.5 px-3 font-semibold ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         {item.threatCategory.replace(/_/g, ' ')}
                       </td>
                       <td className="py-2.5 px-3">
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
                           item.severity === 'CRITICAL'
-                            ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                            : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                            ? isLight
+                              ? 'bg-rose-100 text-rose-800 border-rose-300'
+                              : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                            : isLight
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                         }`}>
                           {item.severity}
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 tabular-nums">
                           <span className={`font-bold font-mono ${
-                            item.riskScore >= 75 ? 'text-rose-400' : item.riskScore >= 40 ? 'text-amber-400' : 'text-emerald-400'
+                            item.riskScore >= 75 ? 'text-rose-500' : item.riskScore >= 40 ? 'text-amber-500' : 'text-emerald-500'
                           }`}>
                             {item.riskScore}%
                           </span>
-                          <div className="w-12 h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 hidden sm:block">
+                          <div className={`w-12 h-1.5 rounded-full overflow-hidden border hidden sm:block ${
+                            isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-950 border-slate-800'
+                          }`}>
                             <div
                               className={`h-full ${
                                 item.riskScore >= 75 ? 'bg-rose-500' : item.riskScore >= 40 ? 'bg-amber-400' : 'bg-emerald-400'
@@ -678,10 +776,10 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
                           </div>
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 text-slate-300 max-w-xs truncate text-[11px]">
+                      <td className={`py-2.5 px-3 max-w-xs truncate text-[11px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                         <code>{item.payloadSnippet}</code>
                       </td>
-                      <td className="py-2.5 px-3 text-indigo-300 text-[11px]">
+                      <td className={`py-2.5 px-3 text-[11px] ${isLight ? 'text-indigo-700' : 'text-indigo-300'}`}>
                         {item.mitigationAction}
                       </td>
                     </tr>
@@ -696,28 +794,36 @@ export const AICloudThreatShield: React.FC<AICloudThreatShieldProps> = ({
       {/* VIEW 3: CLOUD MITIGATIONS & ENTERPRISE BLUEPRINTS */}
       {activeTab === 'cloudMitigations' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs space-y-2">
-            <div className="flex items-center gap-2 text-white font-bold">
-              <Cloud className="w-4 h-4 text-blue-400" />
+          <div className={`p-4 rounded-xl border font-mono text-xs space-y-2 ${
+            isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+          }`}>
+            <div className={`flex items-center gap-2 font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              <Cloud className="w-4 h-4 text-blue-500" />
               1. Cloud Metadata Hardening (IMDSv2)
             </div>
-            <p className="text-slate-400 text-[11px]">
+            <p className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               Blocks SSRF exploits against link-local IP <code>169.254.169.254</code> by enforcing session-oriented token handshakes with a TTL of 1 hop.
             </p>
-            <code className="text-[10px] bg-slate-950 p-2 rounded text-slate-300 block font-mono border border-slate-800">
+            <code className={`text-[10px] p-2 rounded block font-mono border ${
+              isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-slate-950 border-slate-800 text-slate-300'
+            }`}>
               aws ec2 modify-instance-metadata-options --http-tokens required --http-put-response-hop-limit 1
             </code>
           </div>
 
-          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs space-y-2">
-            <div className="flex items-center gap-2 text-white font-bold">
-              <Bot className="w-4 h-4 text-indigo-400" />
+          <div className={`p-4 rounded-xl border font-mono text-xs space-y-2 ${
+            isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+          }`}>
+            <div className={`flex items-center gap-2 font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              <Bot className="w-4 h-4 text-indigo-500" />
               2. Cloudflare AI Gateway Prompt Guard
             </div>
-            <p className="text-slate-400 text-[11px]">
+            <p className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               Inspects incoming user queries for prompt override semantics, persona jailbreaks, and system prompt exfiltration before routing to backend models.
             </p>
-            <code className="text-[10px] bg-slate-950 p-2 rounded text-slate-300 block font-mono border border-slate-800">
+            <code className={`text-[10px] p-2 rounded block font-mono border ${
+              isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-slate-950 border-slate-800 text-slate-300'
+            }`}>
               cloudflare.aiGateway.createRule(&#123; filter: "prompt_injection", action: "drop" &#125;)
             </code>
           </div>

@@ -237,15 +237,17 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
       isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-[#0f172a] border-[#1e293b] text-slate-100'
     } p-4 sm:p-5 shadow-xs`}>
       {/* 1. Header Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-3 mb-4 border-slate-200 dark:border-slate-800">
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-3 mb-4 ${
+        isLight ? 'border-slate-200' : 'border-slate-800'
+      }`}>
         <div>
           <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+            <Activity className="w-4 h-4 text-cyan-500" />
+            <h3 className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
               Chronological Security Event Timeline &amp; Attack Pattern Detector
             </h3>
           </div>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+          <p className={`text-[11px] mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
             Real-time forensic sequence reconstruction • Detects Markov deviations, rapid probe bursts &amp; revoked token replays
           </p>
         </div>
@@ -255,10 +257,14 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
           <button
             type="button"
             onClick={() => setIsPlaying(!isPlaying)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer border ${
               isPlaying
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                : 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                ? isLight
+                  ? 'bg-rose-50 text-rose-700 border-rose-300'
+                  : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                : isLight
+                ? 'bg-cyan-50 hover:bg-cyan-100 text-cyan-700 border-cyan-300'
+                : 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
             }`}
             title={isPlaying ? 'Pause chronological playback' : 'Play chronological simulation step-by-step'}
           >
@@ -284,13 +290,21 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
                 handleSelectEvent(filteredTimelineLogs[0], 0);
               }
             }}
-            className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+              isLight
+                ? 'border-slate-300 text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                : 'border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
             title="Rewind to earliest event"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
 
-          <div className="text-[11px] font-mono tabular-nums text-slate-400 px-2 py-1 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <div className={`text-[11px] font-mono tabular-nums px-2 py-1 rounded border ${
+            isLight
+              ? 'text-slate-700 bg-slate-100 border-slate-200'
+              : 'text-slate-400 bg-slate-900 border-slate-800'
+          }`}>
             {filteredTimelineLogs.length > 0 ? `${playbackIndex + 1}/${filteredTimelineLogs.length}` : '0/0'}
           </div>
         </div>
@@ -304,23 +318,35 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
               key={pat.id}
               className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all ${
                 pat.severity === 'CRITICAL'
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  ? isLight
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  : isLight
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
                   : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
               }`}
             >
               <div className="flex items-start gap-2.5">
                 <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${
-                  pat.severity === 'CRITICAL' ? 'text-rose-400' : 'text-amber-400'
+                  pat.severity === 'CRITICAL' ? 'text-rose-500' : 'text-amber-500'
                 }`} />
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-xs text-white">
+                    <span className={`font-bold text-xs ${isLight ? 'text-slate-900' : 'text-white'}`}>
                       {pat.title}
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/40 border border-white/10 uppercase">
+                    <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded border uppercase ${
+                      isLight
+                        ? 'bg-white border-slate-200 text-slate-700'
+                        : 'bg-black/40 border-white/10 text-slate-200'
+                    }`}>
                       Target: {pat.principal}
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/40 border border-white/10">
+                    <span className={`text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded border ${
+                      isLight
+                        ? 'bg-white border-slate-200 text-slate-700'
+                        : 'bg-black/40 border-white/10 text-slate-200'
+                    }`}>
                       {pat.timeSpan}
                     </span>
                   </div>
@@ -339,7 +365,13 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
                     if (onSelectLog) onSelectLog(targetLog);
                   }
                 }}
-                className="shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white transition-colors flex items-center gap-1 self-start sm:self-center"
+                className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded transition-colors flex items-center gap-1 self-start sm:self-center cursor-pointer ${
+                  isLight
+                    ? pat.severity === 'CRITICAL'
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                      : 'bg-amber-600 hover:bg-amber-500 text-white'
+                    : 'bg-white/10 hover:bg-white/20 text-white'
+                }`}
               >
                 <span>Inspect Trace</span>
                 <ChevronRight className="w-3 h-3" />
@@ -350,17 +382,21 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
       )}
 
       {/* 3. Interactive Filter Tabs (Buttons with click handlers) */}
-      <div className="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1 text-xs no-scrollbar">
-        <span className="text-[10px] text-slate-400 uppercase font-semibold mr-1 flex items-center gap-1">
+      <div className="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1 text-xs no-scrollbar tabular-nums">
+        <span className={`text-[10px] uppercase font-semibold mr-1 flex items-center gap-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
           <Filter className="w-3 h-3" />
           Filter:
         </span>
         <button
           type="button"
           onClick={() => setTimelineFilter('ALL')}
-          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             timelineFilter === 'ALL'
-              ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
+              ? isLight
+                ? 'bg-cyan-50 text-cyan-800 border border-cyan-300'
+                : 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
@@ -369,21 +405,29 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
         <button
           type="button"
           onClick={() => setTimelineFilter('ATTACK_PATTERNS')}
-          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 ${
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer ${
             timelineFilter === 'ATTACK_PATTERNS'
-              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              ? isLight
+                ? 'bg-rose-50 text-rose-800 border border-rose-300'
+                : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <Target className="w-3 h-3 text-rose-400" />
+          <Target className="w-3 h-3 text-rose-500" />
           Attack Patterns ({patternEventIdSet.size})
         </button>
         <button
           type="button"
           onClick={() => setTimelineFilter('BLOCKED_ONLY')}
-          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             timelineFilter === 'BLOCKED_ONLY'
-              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              ? isLight
+                ? 'bg-rose-50 text-rose-800 border border-rose-300'
+                : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
@@ -392,9 +436,13 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
         <button
           type="button"
           onClick={() => setTimelineFilter('SEQUENCE_VIOLATIONS')}
-          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             timelineFilter === 'SEQUENCE_VIOLATIONS'
-              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+              ? isLight
+                ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
@@ -403,9 +451,13 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
         <button
           type="button"
           onClick={() => setTimelineFilter('REVOCATION_EVENTS')}
-          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             timelineFilter === 'REVOCATION_EVENTS'
-              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40'
+              ? isLight
+                ? 'bg-purple-50 text-purple-800 border border-purple-300'
+                : 'bg-purple-500/20 text-purple-400 border border-purple-500/40'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
@@ -414,9 +466,13 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
         <button
           type="button"
           onClick={() => setTimelineFilter('CRITICAL_RISK')}
-          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 ${
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             timelineFilter === 'CRITICAL_RISK'
-              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              ? isLight
+                ? 'bg-rose-50 text-rose-800 border border-rose-300'
+                : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
@@ -425,7 +481,9 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
       </div>
 
       {/* 4. Horizontal Chronological Ribbon */}
-      <div className="relative mb-5 p-3 rounded-xl bg-slate-900/60 dark:bg-black/40 border border-slate-200 dark:border-slate-800 overflow-x-auto">
+      <div className={`relative mb-5 p-3 rounded-xl border overflow-x-auto ${
+        isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-slate-800'
+      }`}>
         <div className="flex items-center gap-3 min-w-max py-2">
           {filteredTimelineLogs.map((log, index) => {
             const isSelected = log.id === selectedLogId;
@@ -439,13 +497,13 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
                   type="button"
                   onClick={() => handleSelectEvent(log, index)}
                   className={`group relative flex flex-col items-center cursor-pointer transition-all ${
-                    isSelected ? 'scale-110 z-10' : 'hover:scale-105 opacity-80 hover:opacity-100'
+                    isSelected ? 'scale-110 z-10' : 'hover:scale-105 opacity-85 hover:opacity-100'
                   }`}
                   title={`[#${log.id}] ${log.username} -> ${log.requested_function} (${log.calculated_risk}%)`}
                 >
                   {/* Timestamp label */}
                   <span className={`text-[9px] font-mono tabular-nums mb-1 ${
-                    isSelected ? 'text-cyan-400 font-bold' : 'text-slate-500'
+                    isSelected ? 'text-cyan-600 dark:text-cyan-400 font-bold' : 'text-slate-500'
                   }`}>
                     {formatTime(log.timestamp)}
                   </span>
@@ -454,32 +512,46 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
                   <div
                     className={`w-7 h-7 rounded-full flex items-center justify-center border-2 transition-all shadow-xs ${
                       isBlocked
-                        ? 'bg-rose-950 text-rose-300 border-rose-500'
+                        ? isLight
+                          ? 'bg-rose-50 text-rose-700 border-rose-500'
+                          : 'bg-rose-950 text-rose-300 border-rose-500'
                         : isCritical
-                        ? 'bg-amber-950 text-amber-300 border-amber-500'
+                        ? isLight
+                          ? 'bg-amber-50 text-amber-700 border-amber-500'
+                          : 'bg-amber-950 text-amber-300 border-amber-500'
                         : log.calculated_risk >= 25
-                        ? 'bg-cyan-950 text-cyan-300 border-cyan-500'
+                        ? isLight
+                          ? 'bg-cyan-50 text-cyan-700 border-cyan-500'
+                          : 'bg-cyan-950 text-cyan-300 border-cyan-500'
+                        : isLight
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-500'
                         : 'bg-emerald-950 text-emerald-300 border-emerald-500'
                     } ${
                       isSelected
-                        ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900 shadow-cyan-500/50'
+                        ? isLight
+                          ? 'ring-2 ring-cyan-500 ring-offset-2 ring-offset-slate-50 shadow-cyan-500/30'
+                          : 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900 shadow-cyan-500/50'
                         : ''
-                    } ${isPartOfPattern ? 'animate-pulse' : ''}`}
+                    } ${isPartOfPattern && !isSelected ? 'ring-2 ring-amber-400/70' : ''}`}
                   >
                     {isBlocked ? (
-                      <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                      <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
                     ) : (
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
                     )}
                   </div>
 
                   {/* Risk Badge */}
                   <span className={`text-[8px] font-mono tabular-nums mt-1 px-1 rounded ${
                     isBlocked
-                      ? 'bg-rose-500/20 text-rose-400'
+                      ? isLight
+                        ? 'bg-rose-100 text-rose-700 font-semibold'
+                        : 'bg-rose-500/20 text-rose-400'
                       : isCritical
-                      ? 'bg-amber-500/20 text-amber-400'
-                      : 'text-slate-400'
+                      ? isLight
+                        ? 'bg-amber-100 text-amber-800 font-semibold'
+                        : 'bg-amber-500/20 text-amber-400'
+                      : 'text-slate-500'
                   }`}>
                     {log.calculated_risk}%
                   </span>
@@ -494,7 +566,11 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
                 {index < filteredTimelineLogs.length - 1 && (
                   <div className={`w-6 h-0.5 mx-1 transition-colors ${
                     isBlocked || filteredTimelineLogs[index + 1]?.status === 'BLOCKED'
-                      ? 'bg-rose-500/40'
+                      ? isLight
+                        ? 'bg-rose-300'
+                        : 'bg-rose-500/40'
+                      : isLight
+                      ? 'bg-slate-300'
                       : 'bg-slate-700/60'
                   }`} />
                 )}
@@ -508,39 +584,49 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
       {selectedLog ? (
         <div className={`p-4 rounded-xl border transition-all ${
           selectedLog.status === 'BLOCKED'
-            ? 'bg-rose-950/20 border-rose-500/30'
+            ? isLight
+              ? 'bg-rose-50/70 border-rose-200'
+              : 'bg-rose-950/20 border-rose-500/30'
+            : isLight
+            ? 'bg-slate-50 border-slate-200'
             : 'bg-slate-900/50 border-slate-700/50'
         }`}>
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b pb-2 mb-3 border-slate-800">
+          <div className={`flex flex-col md:flex-row md:items-center justify-between gap-2 border-b pb-2 mb-3 ${
+            isLight ? 'border-slate-200' : 'border-slate-800'
+          }`}>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+              <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${
                 selectedLog.status === 'BLOCKED'
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  ? isLight
+                    ? 'bg-rose-100 text-rose-800 border-rose-300'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  : isLight
+                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
               }`}>
                 {selectedLog.status}
               </span>
-              <span className="font-mono text-xs text-white font-bold">
+              <span className={`font-mono text-xs font-bold tabular-nums ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 Event #{selectedLog.id}
               </span>
               <span className="text-slate-400 text-xs">·</span>
-              <span className="font-mono text-xs text-slate-300">
+              <span className={`font-mono text-xs ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                 {selectedLog.username}
               </span>
               <span className="text-slate-400 text-xs">·</span>
-              <span className="font-mono text-xs text-cyan-400">
+              <span className="font-mono text-xs text-cyan-600 dark:text-cyan-400 font-semibold">
                 {selectedLog.requested_function}
               </span>
             </div>
 
-            <div className="flex items-center gap-3 text-xs font-mono tabular-nums text-slate-400">
+            <div className={`flex items-center gap-3 text-xs font-mono tabular-nums ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3 text-slate-500" />
                 {new Date(selectedLog.timestamp).toISOString()}
               </span>
               {typeof selectedLog.verification_latency_ms === 'number' && (
-                <span className="flex items-center gap-1 text-cyan-300">
-                  <Cpu className="w-3 h-3 text-cyan-400" />
+                <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-300 font-semibold">
+                  <Cpu className="w-3 h-3 text-cyan-500" />
                   {selectedLog.verification_latency_ms.toFixed(3)} ms
                 </span>
               )}
@@ -548,42 +634,42 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
           </div>
 
           {/* Forensic Key Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-3">
-            <div className="p-2.5 rounded-lg bg-black/30 border border-white/5">
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Calculated Risk</span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-3 tabular-nums">
+            <div className={`p-2.5 rounded-lg border ${isLight ? 'bg-white border-slate-200' : 'bg-black/30 border-white/5'}`}>
+              <span className="text-[10px] text-slate-500 block uppercase font-mono">Calculated Risk</span>
               <span className={`text-base font-bold font-mono ${
                 selectedLog.calculated_risk >= 75
-                  ? 'text-rose-400'
+                  ? 'text-rose-500'
                   : selectedLog.calculated_risk >= 50
-                  ? 'text-amber-400'
+                  ? 'text-amber-500'
                   : selectedLog.calculated_risk >= 25
-                  ? 'text-cyan-400'
-                  : 'text-emerald-400'
+                  ? 'text-cyan-600 dark:text-cyan-400'
+                  : 'text-emerald-600 dark:text-emerald-400'
               }`}>
                 {selectedLog.calculated_risk}%
               </span>
             </div>
 
-            <div className="p-2.5 rounded-lg bg-black/30 border border-white/5">
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Event Classifier</span>
-              <span className="text-xs font-semibold font-mono text-white truncate block">
+            <div className={`p-2.5 rounded-lg border ${isLight ? 'bg-white border-slate-200' : 'bg-black/30 border-white/5'}`}>
+              <span className="text-[10px] text-slate-500 block uppercase font-mono">Event Classifier</span>
+              <span className={`text-xs font-semibold font-mono truncate block ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 {selectedLog.event_type || 'STANDARD_VERIFICATION'}
               </span>
             </div>
 
-            <div className="p-2.5 rounded-lg bg-black/30 border border-white/5">
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Attack Association</span>
+            <div className={`p-2.5 rounded-lg border ${isLight ? 'bg-white border-slate-200' : 'bg-black/30 border-white/5'}`}>
+              <span className="text-[10px] text-slate-500 block uppercase font-mono">Attack Association</span>
               <span className={`text-xs font-semibold font-mono truncate block ${
-                patternEventIdSet.has(selectedLog.id) ? 'text-rose-400' : 'text-slate-400'
+                patternEventIdSet.has(selectedLog.id) ? 'text-rose-500' : isLight ? 'text-slate-600' : 'text-slate-400'
               }`}>
                 {patternEventIdSet.has(selectedLog.id) ? 'ATTACK PATTERN' : 'NOMINAL TRACE'}
               </span>
             </div>
 
-            <div className="p-2.5 rounded-lg bg-black/30 border border-white/5">
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Edge Verdict</span>
+            <div className={`p-2.5 rounded-lg border ${isLight ? 'bg-white border-slate-200' : 'bg-black/30 border-white/5'}`}>
+              <span className="text-[10px] text-slate-500 block uppercase font-mono">Edge Verdict</span>
               <span className={`text-xs font-semibold font-mono ${
-                selectedLog.status === 'BLOCKED' ? 'text-rose-400' : 'text-emerald-400'
+                selectedLog.status === 'BLOCKED' ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'
               }`}>
                 {selectedLog.status === 'BLOCKED' ? 'FIREWALL DROP' : 'PERSISTED D1'}
               </span>
@@ -591,17 +677,17 @@ export const InteractiveSecurityTimeline: React.FC<InteractiveSecurityTimelinePr
           </div>
 
           {/* Reason / Mitigation Analysis */}
-          <div className="p-3 rounded-lg bg-black/40 border border-white/5">
-            <span className="text-[10px] text-slate-400 block uppercase font-mono mb-1">
+          <div className={`p-3 rounded-lg border ${isLight ? 'bg-white border-slate-200' : 'bg-black/40 border-white/5'}`}>
+            <span className="text-[10px] text-slate-500 block uppercase font-mono mb-1">
               Mitigation Heuristics &amp; Ledger Reasoning:
             </span>
-            <p className="text-xs text-slate-200 font-mono leading-relaxed">
+            <p className={`text-xs font-mono leading-relaxed ${isLight ? 'text-slate-800' : 'text-slate-200'}`}>
               {selectedLog.reason}
             </p>
           </div>
         </div>
       ) : (
-        <div className="p-6 text-center text-xs text-slate-400">
+        <div className="p-6 text-center text-xs text-slate-500">
           Select an event node from the timeline ribbon to inspect forensic parameters.
         </div>
       )}

@@ -12,38 +12,45 @@ router.get('/stream', (req: Request, res: Response) => {
     'X-Accel-Buffering': 'no'
   });
 
+  const latestRows = auditRepository.getEvents(1, 0);
   // Send initial handshake
   const initialPayload = JSON.stringify({
     type: 'CONNECTED',
     serverTime: new Date().toISOString(),
     connectionMode: 'SERVER_SENT_EVENTS',
     activeIncidents: auditRepository.getIncidents().length,
-    totalAuditRecords: auditRepository.getTotalCount()
+    totalAuditRecords: auditRepository.getTotalCount(),
+    latestAuditId: latestRows[0]?.id || 0
   });
   res.write(`data: ${initialPayload}\n\n`);
 
+  let heartbeat: ReturnType<typeof setInterval>;
+  let unsubscribe = () => {};
+
+  const cleanup = () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  };
+
   // Subscribe to live audit repository events
-  const unsubscribe = auditRepository.subscribe((event) => {
+  unsubscribe = auditRepository.subscribe((event) => {
     try {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     } catch {
-      // client connection closed
+      cleanup();
     }
   });
 
   // Heartbeat every 15 seconds to keep connection alive
-  const heartbeat = setInterval(() => {
+  heartbeat = setInterval(() => {
     try {
       res.write(`: heartbeat ${new Date().toISOString()}\n\n`);
     } catch {
-      clearInterval(heartbeat);
+      cleanup();
     }
   }, 15000);
 
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    unsubscribe();
-  });
+  req.on('close', cleanup);
 });
 
 export default router;

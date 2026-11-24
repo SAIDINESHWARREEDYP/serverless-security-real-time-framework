@@ -45,6 +45,58 @@ function parseSafeOrigin(val?: string): string[] {
 const rawAppUrlOrigins = parseSafeOrigin(process.env.APP_URL);
 const rawZeroTrustOrigins = parseSafeOrigin(process.env.ZERO_TRUST_ORIGIN);
 
+export function deriveAnchorHmacKey(rawSecret: string): string {
+  return crypto
+    .createHmac('sha256', rawSecret)
+    .update('serverless-security:audit-chain-anchor:v1')
+    .digest('hex');
+}
+
+export function computeAnchorKeyFingerprint(derivedKey: string): string {
+  return crypto.createHash('sha256').update(derivedKey).digest('hex').slice(0, 16);
+}
+
+export function parseAnchorKeyRing(rawPreviousKeys?: string): Record<string, string> {
+  const ring: Record<string, string> = {};
+  if (!rawPreviousKeys || !rawPreviousKeys.trim()) return ring;
+  const trimmed = rawPreviousKeys.trim();
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        for (const [keyId, secret] of Object.entries(parsed)) {
+          if (typeof secret === 'string' && secret.trim()) {
+            ring[keyId.trim()] = deriveAnchorHmacKey(secret.trim());
+          }
+        }
+        return ring;
+      }
+    } catch {
+      // fall through to delimited parser
+    }
+  }
+
+  for (const entry of trimmed.split(',')) {
+    const clean = entry.trim();
+    if (!clean) continue;
+    const sepIdx = clean.indexOf(':');
+    if (sepIdx <= 0) continue;
+    const keyId = clean.slice(0, sepIdx).trim();
+    const secret = clean.slice(sepIdx + 1).trim();
+    if (keyId && secret) {
+      ring[keyId] = deriveAnchorHmacKey(secret);
+    }
+  }
+  return ring;
+}
+
+const rawAnchorSecret = process.env.AUDIT_ANCHOR_KEY?.trim() || resolvedJwtSecret;
+const resolvedAnchorKey = deriveAnchorHmacKey(rawAnchorSecret);
+const resolvedAnchorKeyId = process.env.AUDIT_ANCHOR_KEY_ID?.trim() || 'anchor-v1';
+const resolvedAnchorPreviousKeys = parseAnchorKeyRing(process.env.AUDIT_ANCHOR_PREVIOUS_KEYS);
+const resolvedAnchorKeyFingerprint = computeAnchorKeyFingerprint(resolvedAnchorKey);
+
 export const CONFIG = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   IS_PROD: isProd,
@@ -68,6 +120,13 @@ export const CONFIG = {
   JWT_AUDIENCE: 'serverless-security-framework',
   JWT_EXPIRY_SECONDS: 3600, // 1 hour token lifespan
 
+  // Server-Side Audit Chain Anchor HMAC Key Ring (Never exposed to clients)
+  AUDIT_ANCHOR_KEY: resolvedAnchorKey,
+  AUDIT_ANCHOR_KEY_ID: resolvedAnchorKeyId,
+  AUDIT_ANCHOR_KEY_SOURCE: process.env.AUDIT_ANCHOR_KEY?.trim() ? 'AUDIT_ANCHOR_KEY_ENV' : 'JWT_SECRET_DOMAIN_DERIVED',
+  AUDIT_ANCHOR_KEY_FINGERPRINT: resolvedAnchorKeyFingerprint,
+  AUDIT_ANCHOR_PREVIOUS_KEYS: resolvedAnchorPreviousKeys,
+
   // Password Hashing (PBKDF2 SHA-512)
   PASSWORD_SALT_BYTES: 16,
   PASSWORD_HASH_ITERATIONS: 100000,
@@ -90,3 +149,4 @@ export const CONFIG = {
   // Payload Constraints
   MAX_PAYLOAD_BYTES: 512 * 1024 // 512 KB
 };
+

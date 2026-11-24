@@ -38,15 +38,20 @@ import {
   Timer,
   HardDrive,
   Gauge,
-  Cpu
+  Cpu,
+  Grid
 } from 'lucide-react';
-import { User, SecurityAuditLog, SecurityPolicyConfig } from '../types.ts';
+import { User, SecurityAuditLog, SecurityPolicyConfig, RealtimeTelemetrySnapshot } from '../types.ts';
 import { useTheme } from '../context/ThemeContext.tsx';
+import { ThreatHeatmap } from './ThreatHeatmap.tsx';
 
 interface SystemHealthDashboardProps {
   users: User[];
   logs: SecurityAuditLog[];
   policyConfig?: SecurityPolicyConfig;
+  realtimeTelemetry?: RealtimeTelemetrySnapshot;
+  userRole?: string;
+  onLogsMutated?: () => void;
   onOpenSecurityReport?: () => void;
 }
 
@@ -89,6 +94,9 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
   users,
   logs,
   policyConfig,
+  realtimeTelemetry,
+  userRole,
+  onLogsMutated,
   onOpenSecurityReport
 }) => {
   const { theme } = useTheme();
@@ -97,7 +105,7 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
   const chartAxisStroke = isLight ? '#cbd5e1' : '#223452';
   const chartTextFill = isLight ? '#475569' : '#64748b';
 
-  const [activeView, setActiveView] = useState<'both' | 'trend' | 'latency' | 'frequency' | 'risk'>('both');
+  const [activeView, setActiveView] = useState<'both' | 'heatmap' | 'trend' | 'latency' | 'frequency' | 'risk'>('both');
   const [latencyMetricFilter, setLatencyMetricFilter] = useState<'ALL' | 'PIPELINE' | 'D1_PERSISTENCE'>('ALL');
   const [timeResolution, setTimeResolution] = useState<'chronological' | 'hourly'>('chronological');
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -114,13 +122,13 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
     lastPing: string;
     recordsVerified: number;
   }>({
-    status: 'UP',
-    databaseConnection: 'ACTIVE',
-    d1LatencyMs: 0.28,
+    status: 'CHECKING',
+    databaseConnection: 'SYNCING',
+    d1LatencyMs: 0,
     cluster: 'Cloudflare Global Edge PoP (ap-south-1)',
     databaseEngine: 'Cloudflare D1 Relational Engine (ACID)',
-    lastPing: new Date().toLocaleTimeString(),
-    recordsVerified: logs.length
+    lastPing: '—',
+    recordsVerified: 0
   });
 
   useEffect(() => {
@@ -134,11 +142,11 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
           setD1Health({
             status: data.status || 'UP',
             databaseConnection: data.databaseConnection || 'ACTIVE',
-            d1LatencyMs: typeof data.d1LatencyMs === 'number' ? data.d1LatencyMs : 0.28,
+            d1LatencyMs: typeof data.d1LatencyMs === 'number' ? data.d1LatencyMs : 0,
             cluster: data.cluster || 'Cloudflare Global Edge PoP (ap-south-1)',
             databaseEngine: data.databaseEngine || 'Cloudflare D1 Relational Engine (ACID)',
             lastPing: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            recordsVerified: data.recordsVerified ?? logs.length
+            recordsVerified: typeof data.recordsVerified === 'number' ? data.recordsVerified : 0
           });
         }
       } catch {
@@ -618,15 +626,24 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
       }`}>
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-500 shadow-sm">
-            <Activity className="w-5 h-5 animate-pulse" />
+            <Activity className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className={`text-base font-bold uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 System Health &amp; Threat Telemetry
               </h2>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-[#00ff87] border border-emerald-500/30 font-semibold shadow-xs">
-                Live Recharts Engine
+              <span className="text-slate-400 text-xs" aria-hidden="true">·</span>
+              <span className={`text-xs font-mono tabular-nums ${
+                realtimeTelemetry?.connectionStatus === 'LIVE_STREAMING'
+                  ? 'text-emerald-600 dark:text-[#00ff87]'
+                  : 'text-amber-500'
+              }`}>
+                {realtimeTelemetry?.connectionStatus === 'LIVE_STREAMING'
+                  ? `SSE Live (${realtimeTelemetry.streamEventsCount} events)`
+                  : realtimeTelemetry?.connectionStatus === 'POLLING_FALLBACK'
+                  ? 'Adaptive Poll Mode'
+                  : 'Recharts + Heatmap Engine'}
               </span>
             </div>
             <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-500' : 'text-[#94a3b8]'}`}>
@@ -683,7 +700,7 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
           }`}>
             <button
               onClick={() => setActiveView('both')}
-              className={`px-3 py-1 rounded-lg transition-all ${
+              className={`px-3 py-1 rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                 activeView === 'both'
                   ? isLight
                     ? 'bg-white text-blue-700 font-bold shadow-xs'
@@ -694,6 +711,22 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
               }`}
             >
               Unified Dashboard
+            </button>
+            <button
+              id="tab-view-threat-heatmap"
+              onClick={() => setActiveView('heatmap')}
+              className={`px-3 py-1 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeView === 'heatmap'
+                  ? isLight
+                    ? 'bg-white text-rose-700 font-bold shadow-xs'
+                    : 'bg-rose-500 text-white font-bold'
+                  : isLight
+                  ? 'text-slate-600 hover:text-slate-900'
+                  : 'text-[#94a3b8] hover:text-white'
+              }`}
+            >
+              <Grid className="w-3 h-3 text-rose-400" />
+              <span>Threat Heatmap</span>
             </button>
             <button
               id="tab-view-risk-trend-50"
@@ -771,25 +804,26 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
         <div className="flex items-center gap-3 min-w-0">
           <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
             d1Health.status === 'UP'
-              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-500 dark:text-[#00ff87]'
-              : 'bg-amber-500/15 border-amber-500/30 text-amber-500'
+              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-[#00ff87]'
+              : 'bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400'
           }`}>
-            <Database className="w-4 h-4 animate-pulse" />
+            <Database className="w-4 h-4" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`text-xs font-bold tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 Cloudflare D1 Database Connection
               </span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${
+              <span className={`text-[11px] font-semibold font-mono flex items-center gap-1.5 ${
                 d1Health.status === 'UP'
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-[#00ff87] border-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                  ? 'text-emerald-700 dark:text-[#00ff87]'
+                  : 'text-amber-700 dark:text-amber-400'
               }`}>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block"></span>
+                <span className={`w-1.5 h-1.5 rounded-full inline-block ${d1Health.status === 'UP' ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                 <span>{d1Health.databaseConnection}</span>
               </span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
+              <span className="text-slate-400 text-xs" aria-hidden="true">·</span>
+              <span className="text-[11px] text-slate-600 dark:text-slate-400 font-mono">
                 {d1Health.cluster}
               </span>
             </div>
@@ -889,6 +923,19 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
 
       {/* Main Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* THREAT COORDINATE HEATMAP (REAL-TIME AUDIT LOG INTENSITY MAPPING) */}
+        {(activeView === 'both' || activeView === 'heatmap') && (
+          <div className="lg:col-span-12">
+            <ThreatHeatmap
+              logs={logs}
+              maxThreshold={maxThreshold}
+              realtimeTelemetry={realtimeTelemetry}
+              userRole={userRole}
+              onLogsMutated={onLogsMutated}
+            />
+          </div>
+        )}
+
         {/* CHART 1: AUDIT LOG FREQUENCY OVER TIME */}
         {(activeView === 'both' || activeView === 'frequency') && (
           <div className={`${activeView === 'both' ? 'lg:col-span-7' : 'lg:col-span-12'} glossy-panel rounded-2xl p-4 sm:p-5 flex flex-col shadow-xs transition-colors`}>
@@ -1251,35 +1298,35 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
               </div>
             </div>
 
-            {/* Quick Telemetry KPI Badges */}
+            {/* Quick Telemetry KPI Metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
-              <div className="p-2 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block">Avg Pipeline Latency</span>
-                <span className="text-sm font-bold font-mono text-cyan-400 tabular-nums">
-                  {latencyStats.avg} <span className="text-[10px] font-normal text-slate-400">ms</span>
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block">Avg Pipeline Latency</span>
+                <span className="text-sm font-bold font-mono text-sky-700 dark:text-cyan-400 tabular-nums">
+                  {latencyStats.avg} <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">ms</span>
                 </span>
               </div>
-              <div className="p-2 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block">D1 Write Duration</span>
-                <span className="text-sm font-bold font-mono text-emerald-400 tabular-nums">
-                  {latencyStats.avgD1Write} <span className="text-[10px] font-normal text-slate-400">ms (~45%)</span>
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block">D1 Write Duration</span>
+                <span className="text-sm font-bold font-mono text-emerald-700 dark:text-emerald-400 tabular-nums">
+                  {latencyStats.avgD1Write} <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">ms (~45%)</span>
                 </span>
               </div>
-              <div className="p-2 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block">Fastest Edge Hit</span>
-                <span className="text-sm font-bold font-mono text-emerald-400 tabular-nums">
-                  {latencyStats.min} <span className="text-[10px] font-normal text-slate-400">ms</span>
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block">Fastest Edge Hit</span>
+                <span className="text-sm font-bold font-mono text-emerald-700 dark:text-emerald-400 tabular-nums">
+                  {latencyStats.min} <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">ms</span>
                 </span>
               </div>
-              <div className="p-2 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block">P95 Tail Latency</span>
-                <span className="text-sm font-bold font-mono text-amber-400 tabular-nums">
-                  {latencyStats.p95} <span className="text-[10px] font-normal text-slate-400">ms</span>
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block">P95 Tail Latency</span>
+                <span className="text-sm font-bold font-mono text-amber-700 dark:text-amber-400 tabular-nums">
+                  {latencyStats.p95} <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">ms</span>
                 </span>
               </div>
-              <div className="p-2 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80 col-span-2 sm:col-span-1">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block">SLA Compliance (&lt;5ms)</span>
-                <span className="text-sm font-bold font-mono text-emerald-400 tabular-nums">
+              <div className={`p-2.5 rounded-xl border col-span-2 sm:col-span-1 ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block">SLA Compliance (&lt;5ms)</span>
+                <span className="text-sm font-bold font-mono text-emerald-700 dark:text-emerald-400 tabular-nums">
                   {latencyStats.slaCompliance}%
                 </span>
               </div>
@@ -1429,41 +1476,41 @@ export const SystemHealthDashboard: React.FC<SystemHealthDashboardProps> = ({
               </div>
             </div>
 
-            {/* Quick KPI Badges for Risk Trend */}
+            {/* Quick KPI Metrics for Risk Trend */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mb-3.5">
-              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">50-Log Moving Avg</span>
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block font-semibold">50-Log Moving Avg</span>
                 <span className={`text-sm font-bold font-mono tabular-nums ${
                   riskTrendStats.currentAvg >= maxThreshold
-                    ? 'text-rose-400'
+                    ? 'text-rose-600 dark:text-rose-400'
                     : riskTrendStats.currentAvg >= 35
-                    ? 'text-amber-400'
-                    : 'text-emerald-400'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400'
                 }`}>
                   {riskTrendStats.currentAvg}%
                 </span>
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Peak Risk Detected</span>
-                <span className="text-sm font-bold font-mono text-rose-400 tabular-nums">
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block font-semibold">Peak Risk Detected</span>
+                <span className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
                   {riskTrendStats.peak}%
                 </span>
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Lowest Risk Hit</span>
-                <span className="text-sm font-bold font-mono text-emerald-400 tabular-nums">
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block font-semibold">Lowest Risk Hit</span>
+                <span className="text-sm font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
                   {riskTrendStats.min}%
                 </span>
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Critical Events</span>
-                <span className="text-sm font-bold font-mono text-rose-400 tabular-nums">
-                  {riskTrendStats.criticalCount} <span className="text-[10px] font-normal text-slate-400">(≥{maxThreshold}%)</span>
+              <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block font-semibold">Critical Events</span>
+                <span className="text-sm font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
+                  {riskTrendStats.criticalCount} <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">(≥{maxThreshold}%)</span>
                 </span>
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-900/40 dark:bg-black/30 border border-slate-200 dark:border-slate-800/80 col-span-2 sm:col-span-1">
-                <span className="text-[9px] uppercase font-mono text-slate-400 block font-semibold">Policy Cutoff</span>
-                <span className="text-sm font-bold font-mono text-amber-400 tabular-nums">
+              <div className={`p-2.5 rounded-xl border col-span-2 sm:col-span-1 ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/60 border-slate-800/80'}`}>
+                <span className="text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 block font-semibold">Policy Cutoff</span>
+                <span className="text-sm font-bold font-mono text-amber-600 dark:text-amber-400 tabular-nums">
                   {maxThreshold}% Boundary
                 </span>
               </div>

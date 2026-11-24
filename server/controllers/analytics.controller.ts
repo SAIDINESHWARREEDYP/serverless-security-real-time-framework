@@ -9,15 +9,15 @@ export const analyticsController = {
     const users = userRepository.findAllSanitized();
     const rules = policyRepository.getRules();
     const policy = policyRepository.getPolicy();
-    const auditEvents = auditRepository.getEvents(100);
+    const auditEvents = auditRepository.getEvents(200);
 
     const blockedCount = auditEvents.filter(e => e.status === 'BLOCKED').length;
     const allowedCount = auditEvents.filter(e => e.status === 'ALLOWED').length;
 
-    const latencies = auditEvents.map(e => e.verification_latency_ms).filter(n => typeof n === 'number');
+    const latencies = auditEvents.map(e => e.verification_latency_ms).filter(n => typeof n === 'number' && n > 0);
     const avgLatencyMs = latencies.length > 0
       ? Number((latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(3))
-      : 0.38;
+      : 0;
 
     return res.json({
       users,

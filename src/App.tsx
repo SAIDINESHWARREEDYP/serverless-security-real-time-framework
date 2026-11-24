@@ -1066,6 +1066,9 @@ export default function App() {
                     users={users}
                     logs={logs}
                     policyConfig={policyConfig}
+                    realtimeTelemetry={realtime}
+                    userRole={currentSession.user.role}
+                    onLogsMutated={fetchOverview}
                     onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
                   />
                 </div>
@@ -1111,44 +1114,64 @@ export default function App() {
 
                     <div className="lg:col-span-7 xl:col-span-7 space-y-5">
                       {/* Interceptor Policy Guide Card */}
-                      <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-xl font-mono text-xs shadow-sm">
-                        <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-                          <div className="flex items-center gap-2 text-white font-bold text-sm">
-                            <Shield className="w-4 h-4 text-blue-400" />
+                      <div className={`border p-5 rounded-xl font-mono text-xs shadow-sm ${
+                        theme === 'light' ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+                      }`}>
+                        <div className={`flex items-center justify-between border-b pb-3 mb-4 ${
+                          theme === 'light' ? 'border-slate-200' : 'border-slate-800'
+                        }`}>
+                          <div className={`flex items-center gap-2 font-bold text-sm ${
+                            theme === 'light' ? 'text-slate-900' : 'text-white'
+                          }`}>
+                            <Shield className="w-4 h-4 text-blue-500" />
                             Runtime Interception Architecture
                           </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold">
+                          <span className={`text-[11px] font-semibold ${
+                            theme === 'light' ? 'text-emerald-700' : 'text-emerald-400'
+                          }`}>
                             Live Enforcement
                           </span>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                            <div className="text-slate-400 text-[10px] uppercase font-bold">1. RBAC Guard</div>
-                            <div className="text-white font-semibold mt-1">Role Validation</div>
-                            <div className="text-[11px] text-slate-400 mt-1">Admin, Developer, Guest clearances checked before function invocation.</div>
+                          <div className={`p-3 border rounded-lg ${
+                            theme === 'light' ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+                          }`}>
+                            <div className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold">1. RBAC Guard</div>
+                            <div className={`font-semibold mt-1 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>Role Validation</div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Admin, Developer, Guest clearances checked before function invocation.</div>
                           </div>
 
-                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                            <div className="text-slate-400 text-[10px] uppercase font-bold">2. Markov Sequence</div>
-                            <div className="text-white font-semibold mt-1">Order Validation</div>
-                            <div className="text-[11px] text-slate-400 mt-1">Out-of-order jumps incur a +{policyConfig.sequenceViolationPenalty}% threat penalty.</div>
+                          <div className={`p-3 border rounded-lg ${
+                            theme === 'light' ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+                          }`}>
+                            <div className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold">2. Markov Sequence</div>
+                            <div className={`font-semibold mt-1 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>Order Validation</div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Out-of-order jumps incur a +{policyConfig.sequenceViolationPenalty}% threat penalty.</div>
                           </div>
 
-                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                            <div className="text-slate-400 text-[10px] uppercase font-bold">3. Cutoff Firewall</div>
-                            <div className="text-white font-semibold mt-1">Risk Threshold</div>
-                            <div className="text-[11px] text-slate-400 mt-1">Requests exceeding {policyConfig.maxRiskThreshold}% risk are immediately blocked.</div>
+                          <div className={`p-3 border rounded-lg ${
+                            theme === 'light' ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+                          }`}>
+                            <div className="text-slate-500 dark:text-slate-400 text-[10px] uppercase font-bold">3. Cutoff Firewall</div>
+                            <div className={`font-semibold mt-1 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>Risk Threshold</div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Requests exceeding {policyConfig.maxRiskThreshold}% risk are immediately blocked.</div>
                           </div>
                         </div>
 
                         {/* Quick Fire Presets */}
-                        <div className="p-3 bg-blue-950/20 border border-blue-500/30 rounded-lg text-blue-300">
-                          <div className="font-semibold text-white mb-1 flex items-center gap-2">
-                            <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                            Simulation Tip:
+                        <div className={`p-3 border rounded-lg ${
+                          theme === 'light'
+                            ? 'bg-blue-50/70 border-blue-200 text-blue-900'
+                            : 'bg-blue-950/20 border-blue-500/30 text-blue-300'
+                        }`}>
+                          <div className={`font-semibold mb-1 flex items-center gap-2 ${
+                            theme === 'light' ? 'text-slate-900' : 'text-white'
+                          }`}>
+                            <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+                            Simulation Tip
                           </div>
-                          Use the 1-Click Test Scenarios in the left panel to instantly demonstrate legitimate admin flows, privilege escalation attempts, sequence anomalies, and high-risk exploits!
+                          Use the 1-Click Test Scenarios in the left panel to instantly demonstrate legitimate admin flows, privilege escalation attempts, sequence anomalies, and high-risk exploits.
                         </div>
                       </div>
 
@@ -1187,27 +1210,37 @@ export default function App() {
               ) : (
                 <div className="space-y-6 font-mono">
                   {/* Real-Time Any User Provisioning Card */}
-                  <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl shadow-lg">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-5">
+                  <div className={`border p-6 rounded-xl shadow-lg ${
+                    theme === 'light' ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}>
+                    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4 mb-5 ${
+                      theme === 'light' ? 'border-slate-200' : 'border-slate-800'
+                    }`}>
                       <div>
-                        <h3 className="text-base font-bold text-white flex items-center gap-2">
-                          <UserPlus className="w-5 h-5 text-emerald-400" />
+                        <h3 className={`text-base font-bold flex items-center gap-2 ${
+                          theme === 'light' ? 'text-slate-900' : 'text-white'
+                        }`}>
+                          <UserPlus className="w-5 h-5 text-emerald-500" />
                           Real-Time Any User Onboarding &amp; Sign In
                         </h3>
-                        <p className="text-xs text-slate-400 mt-1">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                           Anyone can enter their username in real-time. The server dynamically creates the user with your chosen role and base risk!
                         </p>
                       </div>
-                      <span className="text-[10px] px-2.5 py-1 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 uppercase font-semibold">
+                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
                         Zero-Trust Dynamic IAM
                       </span>
                     </div>
 
                     {inlineMsg && (
-                      <div className={`p-3 rounded-lg text-xs mb-4 flex items-center gap-2 ${
+                      <div className={`p-3 rounded-lg text-xs mb-4 flex items-center gap-2 border ${
                         inlineMsg.type === 'success'
-                          ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-200'
-                          : 'bg-rose-950/60 border border-rose-500/40 text-rose-200'
+                          ? theme === 'light'
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                            : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200'
+                          : theme === 'light'
+                          ? 'bg-rose-50 border-rose-200 text-rose-800'
+                          : 'bg-rose-950/60 border-rose-500/40 text-rose-200'
                       }`}>
                         <Sparkles className="w-4 h-4 shrink-0" />
                         <span>{inlineMsg.text}</span>
@@ -1217,7 +1250,9 @@ export default function App() {
                     <form onSubmit={handleInlineRegister} className="space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+                          <label className={`block text-xs font-semibold mb-1 uppercase tracking-wider ${
+                            theme === 'light' ? 'text-slate-700' : 'text-slate-300'
+                          }`}>
                             Identity Handle / Username
                           </label>
                           <input
@@ -1225,13 +1260,17 @@ export default function App() {
                             value={inlineUsername}
                             onChange={(e) => setInlineUsername(e.target.value)}
                             placeholder="e.g. your_name, sec_auditor"
-                            className="w-full p-2.5 bg-slate-950 border border-slate-800 text-white text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                            className={`w-full p-2.5 border text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono ${
+                              theme === 'light' ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                            }`}
                             required
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+                          <label className={`block text-xs font-semibold mb-1 uppercase tracking-wider ${
+                            theme === 'light' ? 'text-slate-700' : 'text-slate-300'
+                          }`}>
                             Password (Min 8 chars) *
                           </label>
                           <input
@@ -1239,30 +1278,38 @@ export default function App() {
                             value={inlinePassword}
                             onChange={(e) => setInlinePassword(e.target.value)}
                             placeholder="Create account password"
-                            className="w-full p-2.5 bg-slate-950 border border-slate-800 text-white text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                            className={`w-full p-2.5 border text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono ${
+                              theme === 'light' ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                            }`}
                             required
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+                          <label className={`block text-xs font-semibold mb-1 uppercase tracking-wider ${
+                            theme === 'light' ? 'text-slate-700' : 'text-slate-300'
+                          }`}>
                             Assigned RBAC Role
                           </label>
                           <select
                             value={inlineRole}
                             onChange={(e) => setInlineRole(e.target.value as any)}
-                            className="w-full p-2.5 bg-slate-950 border border-slate-800 text-white text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                            className={`w-full p-2.5 border text-xs rounded-lg focus:outline-none focus:border-blue-500 font-mono ${
+                              theme === 'light' ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                            }`}
                           >
                             <option value="Admin">Admin (Unrestricted Tier 3)</option>
-                            <option value="Developer">Developer (Deploy & Logs Tier 2)</option>
+                            <option value="Developer">Developer (Deploy &amp; Logs Tier 2)</option>
                             <option value="Guest">Guest (Read-Only Tier 1)</option>
                           </select>
                         </div>
 
                         <div>
                           <div className="flex items-center justify-between mb-1">
-                            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                              Base Risk Score: <span className="text-white font-bold">{inlineRisk}%</span>
+                            <label className={`block text-xs font-semibold uppercase tracking-wider ${
+                              theme === 'light' ? 'text-slate-700' : 'text-slate-300'
+                            }`}>
+                              Base Risk Score: <span className={`font-bold tabular-nums ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>{inlineRisk}%</span>
                             </label>
                           </div>
                           <input
@@ -1276,14 +1323,14 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="pt-2 flex items-center justify-between">
-                        <div className="text-[11px] text-slate-500">
+                      <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
                           Custom password hashed with cryptographic PBKDF2 &amp; unique salt.
                         </div>
                         <button
                           type="submit"
                           disabled={inlineLoading}
-                          className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 transition-all shadow-md shadow-emerald-600/20 disabled:opacity-50"
+                          className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 transition-all shadow-md shadow-emerald-600/20 disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
                         >
                           <UserPlus className="w-4 h-4" />
                           {inlineLoading ? 'Provisioning...' : 'Provision & Sign In In Real Time'}
@@ -1490,14 +1537,22 @@ export default function App() {
                     )}
 
                     {/* Rules List with Scrollbar */}
-                    <div className="max-h-[360px] overflow-y-auto scrollbar-thin pr-1 divide-y divide-slate-800">
+                    <div className="max-h-[360px] overflow-y-auto scrollbar-thin pr-1 divide-y divide-slate-200 dark:divide-slate-800">
                       {rules.map((rule) => (
                         <div key={rule.id} className="py-2.5 flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <span className="text-slate-500 font-mono text-[11px]">#{rule.id}</span>
-                            <code className="text-blue-400 bg-blue-950/40 px-2 py-0.5 rounded border border-blue-500/20">{rule.current_function}</code>
-                            <ArrowRight className="w-3.5 h-3.5 text-slate-600" />
-                            <code className="text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/20">{rule.allowed_next_function}</code>
+                            <span className="text-slate-500 font-mono text-[11px] tabular-nums">#{rule.id}</span>
+                            <code className={`px-2 py-0.5 rounded border ${
+                              theme === 'light'
+                                ? 'text-blue-700 bg-blue-50 border-blue-200'
+                                : 'text-blue-400 bg-blue-950/40 border-blue-500/20'
+                            }`}>{rule.current_function}</code>
+                            <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                            <code className={`px-2 py-0.5 rounded border ${
+                              theme === 'light'
+                                ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                : 'text-emerald-400 bg-emerald-950/40 border-emerald-500/20'
+                            }`}>{rule.allowed_next_function}</code>
                           </div>
                           {currentSession.user.role === 'Admin' && (
                             <button
@@ -1544,6 +1599,9 @@ export default function App() {
                     users={users}
                     logs={logs}
                     policyConfig={policyConfig}
+                    realtimeTelemetry={realtime}
+                    userRole={currentSession.user.role}
+                    onLogsMutated={fetchOverview}
                     onOpenSecurityReport={() => setIsSecurityReportOpen(true)}
                   />
 
@@ -1552,21 +1610,21 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setActiveTab('interceptor')}
-                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group"
+                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group cursor-pointer"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-3">
-                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 font-bold">
+                          <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 font-semibold">
                             Live Simulation
                           </span>
-                          <Shield className="w-5 h-5 text-blue-400 group-hover:scale-110 transition-transform" />
+                          <Shield className="w-5 h-5 text-blue-500 group-hover:scale-110 transition-transform" />
                         </div>
-                        <h4 className="text-sm font-bold text-white mb-1">Runtime Interceptor</h4>
-                        <p className="text-xs text-slate-400">
+                        <h4 className={`text-sm font-bold mb-1 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>Runtime Interceptor</h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
                           Simulate client HTTP packets, test Markov transition sequences, and inspect firewall thresholds.
                         </p>
                       </div>
-                      <div className="mt-4 text-xs font-mono font-semibold text-blue-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                      <div className="mt-4 text-xs font-mono font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
                         <span>Open Interceptor</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </div>
@@ -1575,21 +1633,21 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setActiveTab('ai-threats')}
-                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group"
+                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group cursor-pointer"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-3">
-                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 font-bold">
+                          <span className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-semibold">
                             Autonomous Defense
                           </span>
-                          <Bot className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+                          <Bot className="w-5 h-5 text-indigo-500 group-hover:scale-110 transition-transform" />
                         </div>
-                        <h4 className="text-sm font-bold text-white mb-1">AI Threat Sentinel</h4>
-                        <p className="text-xs text-slate-400">
+                        <h4 className={`text-sm font-bold mb-1 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>AI Threat Sentinel</h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
                           Autonomous behavioral anomaly detection, real-time threat neutralization, and heuristic analysis.
                         </p>
                       </div>
-                      <div className="mt-4 text-xs font-mono font-semibold text-indigo-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                      <div className="mt-4 text-xs font-mono font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
                         <span>Open Sentinel</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </div>
@@ -1598,21 +1656,21 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setActiveTab('audit')}
-                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group"
+                      className="glossy-panel glossy-card-hover p-5 rounded-2xl text-left border flex flex-col justify-between group cursor-pointer"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-3">
-                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
+                          <span className="text-[11px] font-mono text-emerald-700 dark:text-emerald-400 font-semibold tabular-nums">
                             {logs.length} Recorded Events
                           </span>
-                          <FileText className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                          <FileText className="w-5 h-5 text-emerald-500 group-hover:scale-110 transition-transform" />
                         </div>
-                        <h4 className="text-sm font-bold text-white mb-1">Compliance Audit Ledger</h4>
-                        <p className="text-xs text-slate-400">
+                        <h4 className={`text-sm font-bold mb-1 ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>Compliance Audit Ledger</h4>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
                           Stream live cryptographic logs, filter by principal or verdict, and export verification records.
                         </p>
                       </div>
-                      <div className="mt-4 text-xs font-mono font-semibold text-emerald-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                      <div className="mt-4 text-xs font-mono font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
                         <span>Open Audit Stream</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </div>
@@ -1678,17 +1736,21 @@ export default function App() {
           </>
         )}
 
-        {/* Professional Footer */}
-        <footer className="mt-8 pt-4 border-t border-slate-800/80 text-center text-xs text-slate-500 font-mono flex flex-col sm:flex-row items-center justify-between gap-2">
+        {/* Footer */}
+        <footer className={`mt-8 pt-4 border-t text-center text-xs font-mono flex flex-col sm:flex-row items-center justify-between gap-2 ${
+          theme === 'light' ? 'border-slate-200 text-slate-600' : 'border-slate-800/80 text-slate-500'
+        }`}>
           <div>
-            Serverless Security Verification Framework • Enterprise Zero-Trust Edition
+            Serverless Security Verification Framework · Enterprise Zero-Trust Edition
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-emerald-400 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <div className="flex items-center gap-3 tabular-nums">
+            <span className={theme === 'light' ? 'text-emerald-700' : 'text-emerald-400'}>
               {users.length} Active Principals
             </span>
-            <span className="text-blue-400">Edge Interceptor Active</span>
+            <span aria-hidden="true">·</span>
+            <span className={theme === 'light' ? 'text-blue-700' : 'text-blue-400'}>
+              Edge Interceptor Active
+            </span>
           </div>
         </footer>
       </div>

@@ -478,6 +478,45 @@ export class PersistentSecurityDatabase {
   }
 
   /**
+   * Execute a synchronous callback atomically inside BEGIN IMMEDIATE (or SAVEPOINT if nested)
+   */
+  public transaction<T>(fn: () => T): T {
+    const spName = `sp_${Date.now()}_${crypto.randomInt(10000, 99999)}`;
+    let beganImmediate = false;
+    try {
+      this.sqlite.exec('BEGIN IMMEDIATE;');
+      beganImmediate = true;
+    } catch (err: any) {
+      if (!/within a transaction/i.test(err?.message || '')) {
+        throw err;
+      }
+      this.sqlite.exec(`SAVEPOINT ${spName};`);
+    }
+
+    try {
+      const result = fn();
+      if (beganImmediate) {
+        this.sqlite.exec('COMMIT;');
+      } else {
+        this.sqlite.exec(`RELEASE SAVEPOINT ${spName};`);
+      }
+      return result;
+    } catch (err) {
+      try {
+        if (beganImmediate) {
+          this.sqlite.exec('ROLLBACK;');
+        } else {
+          this.sqlite.exec(`ROLLBACK TO SAVEPOINT ${spName};`);
+          this.sqlite.exec(`RELEASE SAVEPOINT ${spName};`);
+        }
+      } catch {
+        // ignore rollback error
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Reset database back to factory seeded baseline
    */
   public reset(): void {

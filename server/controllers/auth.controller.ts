@@ -189,7 +189,8 @@ export const authController = {
         ? 'authenticator'
         : undefined;
 
-    const out = authService.getChallengeEnrollment(challengeId, mode);
+    const forceRefresh = Boolean(req.body?.forceRefresh);
+    const out = authService.getChallengeEnrollment(challengeId, mode, forceRefresh);
     if (!out.success) {
       return res.status(out.status || 400).json({ success: false, error: out.error });
     }

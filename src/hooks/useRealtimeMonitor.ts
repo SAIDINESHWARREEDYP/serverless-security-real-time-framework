@@ -29,6 +29,8 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
 
   // Set of seen event IDs to prevent duplicate processing (bounded to prevent memory growth)
   const processedEventIdsRef = useRef<Set<string>>(new Set());
+  const highestSeenLogIdRef = useRef<number>(0);
+  const connectedBaselineReceivedRef = useRef<boolean>(false);
 
   // SSE event source ref
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -36,28 +38,55 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef<number>(0);
 
-  const processIncomingEvent = useCallback((event: { type: string; data: any; timestamp: string }) => {
-    setLastServerTime(event.timestamp || new Date().toISOString());
-    setStreamEventsCount((prev) => prev + 1);
+  const trackAndCheckProcessed = (eventKey: string): boolean => {
+    if (processedEventIdsRef.current.has(eventKey)) {
+      return false;
+    }
+    if (processedEventIdsRef.current.size >= 2000) {
+      // Evict only the oldest 500 keys so recent deduplication remains intact
+      let evicted = 0;
+      for (const k of processedEventIdsRef.current) {
+        processedEventIdsRef.current.delete(k);
+        evicted += 1;
+        if (evicted >= 500) break;
+      }
+    }
+    processedEventIdsRef.current.add(eventKey);
+    return true;
+  };
 
-    if (processedEventIdsRef.current.size > 2000) {
-      processedEventIdsRef.current.clear();
+  const processIncomingEvent = useCallback((event: { type: string; data?: any; timestamp?: string; latestAuditId?: number }) => {
+    setLastServerTime(event.timestamp || new Date().toISOString());
+
+    if (event.type === 'CONNECTED') {
+      connectedBaselineReceivedRef.current = true;
+      if (typeof event.latestAuditId === 'number' && event.latestAuditId > highestSeenLogIdRef.current) {
+        highestSeenLogIdRef.current = event.latestAuditId;
+      }
+      return;
     }
 
     if (event.type === 'NEW_INVOCATION' && event.data) {
-      const eventKey = `log_${event.data.id}_${event.data.timestamp}`;
-      if (!processedEventIdsRef.current.has(eventKey)) {
-        processedEventIdsRef.current.add(eventKey);
+      const eventKey = `log_${event.data.id}`;
+      if (trackAndCheckProcessed(eventKey)) {
+        if (typeof event.data.id === 'number' && event.data.id > highestSeenLogIdRef.current) {
+          highestSeenLogIdRef.current = event.data.id;
+        }
+        setStreamEventsCount((prev) => prev + 1);
         onNewLogRef.current?.(event.data);
       }
     } else if (event.type === 'THREAT_ALERT' && event.data) {
       const eventKey = `alt_${event.data.id}`;
-      if (!processedEventIdsRef.current.has(eventKey)) {
-        processedEventIdsRef.current.add(eventKey);
+      if (trackAndCheckProcessed(eventKey)) {
+        setStreamEventsCount((prev) => prev + 1);
         onNewAlertRef.current?.(event.data);
       }
     } else if ((event.type === 'INCIDENT_CREATED' || event.type === 'INCIDENT_UPDATED') && event.data) {
-      onIncidentUpdateRef.current?.(event.data);
+      const eventKey = `inc_${event.type}_${event.data.id}_${event.timestamp || ''}`;
+      if (trackAndCheckProcessed(eventKey)) {
+        setStreamEventsCount((prev) => prev + 1);
+        onIncidentUpdateRef.current?.(event.data);
+      }
     }
   }, []);
 
@@ -85,11 +114,38 @@ export function useRealtimeMonitor(options: RealtimeMonitorOptions = {}) {
 
       const poll = async () => {
         try {
-          const res = await fetch('/api/system/health');
-          if (res.ok) {
-            const data = await res.json();
+          const [healthRes, overviewRes] = await Promise.all([
+            fetch('/api/system/health').catch(() => null),
+            fetch('/api/system/overview').catch(() => null)
+          ]);
+
+          if (healthRes && healthRes.ok) {
+            const data = await healthRes.json();
             if (!isCancelled) {
               setLastServerTime(data.timestamp || new Date().toISOString());
+            }
+          }
+
+          if (overviewRes && overviewRes.ok && !isCancelled) {
+            const ovData = await overviewRes.json();
+            const logs: SecurityAuditLog[] = Array.isArray(ovData?.logs) ? ovData.logs : [];
+            if (logs.length > 0) {
+              const sortedAsc = [...logs].sort((a, b) => a.id - b.id);
+              if (highestSeenLogIdRef.current === 0 && !connectedBaselineReceivedRef.current) {
+                // Establish baseline cursor without replaying historical logs
+                highestSeenLogIdRef.current = sortedAsc[sortedAsc.length - 1].id;
+                connectedBaselineReceivedRef.current = true;
+              } else {
+                for (const item of sortedAsc) {
+                  if (item.id > highestSeenLogIdRef.current) {
+                    processIncomingEvent({
+                      type: 'NEW_INVOCATION',
+                      data: item,
+                      timestamp: item.timestamp
+                    });
+                  }
+                }
+              }
             }
           }
         } catch {

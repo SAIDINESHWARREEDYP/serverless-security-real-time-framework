@@ -171,16 +171,18 @@ export const EdgeTopologyGraphic: React.FC<EdgeTopologyGraphicProps> = ({
               ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-blue-500/10'
               : 'bg-blue-500/15 border-blue-500/30 text-blue-400 shadow-blue-500/20'
           }`}>
-            <Activity className="w-5 h-5 animate-pulse" />
+            <Activity className="w-5 h-5" />
           </div>
           <div>
             <div className="text-xs sm:text-sm font-bold tracking-wider flex items-center gap-2.5 flex-wrap">
               <span className={`uppercase ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 Enterprise Edge Verification Topology
               </span>
-              <span className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                ACTIVE MESH • 140+ POPS
+              <span className={`inline-flex items-center gap-1.5 text-[10px] px-2.5 py-0.5 rounded-full font-semibold border shadow-xs ${
+                isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+              }`}>
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                ACTIVE MESH · 140+ POPS
               </span>
             </div>
             <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -217,7 +219,7 @@ export const EdgeTopologyGraphic: React.FC<EdgeTopologyGraphicProps> = ({
             <span className="text-slate-400 dark:text-slate-700">|</span>
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] text-slate-500">Verification Latency:</span>
-              <span className="font-bold text-cyan-400 tabular-nums font-mono text-[11px]">
+              <span className={`font-bold tabular-nums font-mono text-[11px] ${isLight ? 'text-sky-700' : 'text-cyan-400'}`}>
                 ~0.4 ms
               </span>
             </div>
@@ -228,7 +230,7 @@ export const EdgeTopologyGraphic: React.FC<EdgeTopologyGraphicProps> = ({
             disabled={manualPulse || isSimulating}
             className={`glossy-btn flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border shadow-xs ${
               manualPulse
-                ? 'bg-blue-600 text-white border-blue-400 animate-pulse'
+                ? 'bg-blue-600 text-white border-blue-400'
                 : isLight
                 ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
                 : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border-blue-500/40'
@@ -293,7 +295,9 @@ export const EdgeTopologyGraphic: React.FC<EdgeTopologyGraphicProps> = ({
 
               {/* Connecting Desktop Flow Arrow */}
               {index < 3 && (
-                <div className="hidden md:flex absolute -right-3 top-1/2 -translate-y-1/2 z-20 w-6 h-6 rounded-full bg-slate-900 border border-slate-700 text-blue-400 items-center justify-center shadow-md">
+                <div className={`hidden md:flex absolute -right-3 top-1/2 -translate-y-1/2 z-20 w-6 h-6 rounded-full border items-center justify-center shadow-md ${
+                  isLight ? 'bg-white border-slate-300 text-blue-600' : 'bg-slate-900 border-slate-700 text-blue-400'
+                }`}>
                   <ArrowRight className="w-3 h-3" />
                 </div>
               )}
@@ -304,19 +308,19 @@ export const EdgeTopologyGraphic: React.FC<EdgeTopologyGraphicProps> = ({
 
       {/* Subtle Pipeline Telemetry Banner */}
       <div className={`mt-5 pt-3 border-t flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] ${
-        isLight ? 'border-slate-200 text-slate-500' : 'border-slate-800/80 text-slate-400'
+        isLight ? 'border-slate-200 text-slate-600' : 'border-slate-800/80 text-slate-400'
       }`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="flex items-center gap-1.5 font-semibold text-blue-500">
-            <Radio className="w-3.5 h-3.5 animate-pulse" />
+          <span className={`flex items-center gap-1.5 font-semibold ${isLight ? 'text-blue-700' : 'text-blue-400'}`}>
+            <Radio className="w-3.5 h-3.5" />
             Autonomous Edge Defense:
           </span>
           <span>Zero packet bypasses the Markov sequence evaluation pipeline.</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 tabular-nums">
           <span>Target Cutoff: <strong>75%</strong></span>
-          <span>•</span>
-          <span>SLA Guarantee: <strong className="text-emerald-500">99.99%</strong></span>
+          <span>·</span>
+          <span>SLA Guarantee: <strong className={isLight ? 'text-emerald-700' : 'text-emerald-400'}>99.99%</strong></span>
         </div>
       </div>
 

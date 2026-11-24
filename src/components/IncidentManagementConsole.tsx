@@ -164,14 +164,18 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+              <h2 className={`text-sm sm:text-base font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 Incident Response &amp; Threat Containment Center
               </h2>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 font-semibold">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold tabular-nums ${
+                isLight
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+              }`}>
                 {incidents.filter(i => i.status === 'OPEN' || i.status === 'INVESTIGATING').length} Active Incidents
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
               Triage critical security alerts, assign containment actions, and document mitigation steps
             </p>
           </div>
@@ -182,17 +186,17 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
             type="button"
             onClick={fetchIncidents}
             disabled={isLoading}
-            className={`p-2 rounded-xl border transition-all ${
+            className={`p-2 rounded-xl border transition-all cursor-pointer ${
               isLight ? 'bg-white hover:bg-slate-100 border-slate-200' : 'bg-slate-900 hover:bg-slate-800 border-slate-800'
             }`}
           >
-            <RefreshCw className={`w-4 h-4 text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isLight ? 'text-slate-600' : 'text-slate-400'} ${isLoading ? 'animate-spin' : ''}`} />
           </button>
 
           <button
             type="button"
             onClick={() => setShowCreateModal(true)}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white flex items-center gap-1.5 shadow-sm transition-all"
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Open Incident</span>
@@ -203,11 +207,15 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
       {actionMsg && (
         <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
           actionMsg.type === 'success'
-            ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+            ? isLight
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+            : isLight
+            ? 'bg-rose-50 border-rose-200 text-rose-800'
             : 'bg-rose-950/20 border-rose-500/40 text-rose-300'
         }`}>
           <span>{actionMsg.text}</span>
-          <button type="button" onClick={() => setActionMsg(null)} className="text-slate-400 hover:text-white">✕</button>
+          <button type="button" onClick={() => setActionMsg(null)} className={`cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}>✕</button>
         </div>
       )}
 
@@ -227,13 +235,13 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
               setCurrentPage(1);
             }}
             placeholder="Search incident ID, title, analyst..."
-            className="w-full bg-transparent border-none outline-none text-xs"
+            className={`w-full bg-transparent border-none outline-none text-xs ${isLight ? 'text-slate-900 placeholder-slate-400' : 'text-slate-100 placeholder-slate-500'}`}
           />
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Severity:</span>
+            <span className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Severity:</span>
             <select
               value={severityFilter}
               onChange={(e) => {
@@ -253,7 +261,7 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Status:</span>
+            <span className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Status:</span>
             <select
               value={statusFilter}
               onChange={(e) => {
@@ -277,7 +285,11 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
       {/* Incidents List */}
       <div className="space-y-3">
         {paginatedIncidents.length === 0 ? (
-          <div className="p-8 text-center text-slate-500 text-xs border border-slate-800 rounded-2xl bg-slate-900/20">
+          <div className={`p-8 text-center text-xs border rounded-2xl ${
+            isLight
+              ? 'bg-slate-50 border-slate-200 text-slate-500'
+              : 'bg-slate-900/20 border-slate-800 text-slate-500'
+          }`}>
             No active incidents matching selected search and filter criteria.
           </div>
         ) : (
@@ -286,9 +298,13 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
               key={inc.id}
               className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center md:justify-between gap-4 ${
                 inc.severity === 'CRITICAL'
-                  ? 'bg-rose-950/15 border-rose-500/30'
+                  ? isLight
+                    ? 'bg-rose-50 border-rose-200'
+                    : 'bg-rose-950/15 border-rose-500/30'
                   : inc.severity === 'HIGH'
-                  ? 'bg-amber-950/15 border-amber-500/30'
+                  ? isLight
+                    ? 'bg-amber-50 border-amber-200'
+                    : 'bg-amber-950/15 border-amber-500/30'
                   : isLight
                   ? 'bg-white border-slate-200'
                   : 'bg-slate-900/50 border-slate-800'
@@ -296,53 +312,65 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
             >
               <div className="space-y-1.5 min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-xs text-slate-400 font-mono">[{inc.id}]</span>
+                  <span className="font-bold text-xs text-slate-500 font-mono tabular-nums">[{inc.id}]</span>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                     inc.severity === 'CRITICAL'
-                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                      ? isLight
+                        ? 'bg-rose-100 text-rose-800 border-rose-300'
+                        : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
                       : inc.severity === 'HIGH'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                      ? isLight
+                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                        : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                      : isLight
+                      ? 'bg-blue-100 text-blue-800 border-blue-300'
                       : 'bg-blue-500/20 text-blue-400 border-blue-500/40'
                   }`}>
                     {inc.severity}
                   </span>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                     inc.status === 'CONTAINED'
-                      ? 'bg-purple-500/20 text-purple-400 border-purple-500/40'
+                      ? isLight
+                        ? 'bg-purple-100 text-purple-800 border-purple-300'
+                        : 'bg-purple-500/20 text-purple-400 border-purple-500/40'
                       : inc.status === 'RESOLVED'
-                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      ? isLight
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : isLight
+                      ? 'bg-slate-100 text-slate-700 border-slate-300'
                       : 'bg-slate-800 text-slate-300 border-slate-700'
                   }`}>
                     {inc.status}
                   </span>
-                  <span className="text-[10px] text-slate-500">
+                  <span className="text-[10px] text-slate-500 tabular-nums">
                     Opened: {new Date(inc.created_at).toLocaleDateString()}
                   </span>
                 </div>
 
-                <h3 className="text-sm font-bold text-slate-100">{inc.title}</h3>
+                <h3 className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-slate-100'}`}>{inc.title}</h3>
                 {inc.root_cause && (
-                  <p className="text-xs text-slate-400 line-clamp-1">
-                    <strong className="text-slate-300">Root Cause:</strong> {inc.root_cause}
+                  <p className={`text-xs line-clamp-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                    <strong className={isLight ? 'text-slate-800' : 'text-slate-300'}>Root Cause:</strong> {inc.root_cause}
                   </p>
                 )}
                 {inc.mitigation_steps && (
-                  <p className="text-xs text-slate-400 line-clamp-1">
-                    <strong className="text-slate-300">Mitigation:</strong> {inc.mitigation_steps}
+                  <p className={`text-xs line-clamp-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                    <strong className={isLight ? 'text-slate-800' : 'text-slate-300'}>Mitigation:</strong> {inc.mitigation_steps}
                   </p>
                 )}
               </div>
 
               {/* Status Actions */}
               <div className="flex items-center gap-2 shrink-0 self-start md:self-center">
-                <span className="text-[11px] text-slate-400 hidden sm:inline">
-                  Assigned: <strong className="text-slate-200">{inc.assigned_to}</strong>
+                <span className={`text-[11px] hidden sm:inline ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                  Assigned: <strong className={isLight ? 'text-slate-900' : 'text-slate-200'}>{inc.assigned_to}</strong>
                 </span>
 
                 <select
                   value={inc.status}
                   onChange={(e) => handleUpdateStatus(inc.id, e.target.value)}
-                  className={`text-xs px-2.5 py-1.5 rounded-xl border outline-none font-semibold ${
+                  className={`text-xs px-2.5 py-1.5 rounded-xl border outline-none font-semibold cursor-pointer ${
                     isLight ? 'bg-slate-100 border-slate-300 text-slate-800' : 'bg-slate-800 border-slate-700 text-slate-200'
                   }`}
                 >
@@ -359,16 +387,20 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
       </div>
 
       {/* Pagination Controls */}
-      <div className="flex items-center justify-between text-xs text-slate-400 px-1 pt-2">
+      <div className={`flex items-center justify-between text-xs px-1 pt-2 tabular-nums ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
         <span>
-          Showing Page <strong className="text-white">{currentPage}</strong> of <strong className="text-white">{totalPages}</strong> ({filteredIncidents.length} incidents)
+          Showing Page <strong className={isLight ? 'text-slate-900' : 'text-white'}>{currentPage}</strong> of <strong className={isLight ? 'text-slate-900' : 'text-white'}>{totalPages}</strong> ({filteredIncidents.length} incidents)
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
             disabled={currentPage === 1}
-            className="px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 transition-all flex items-center gap-1"
+            className={`px-3 py-1.5 rounded-xl border disabled:opacity-40 transition-all flex items-center gap-1 cursor-pointer ${
+              isLight
+                ? 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                : 'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-200'
+            }`}
           >
             <ChevronLeft className="w-3.5 h-3.5" /> Prev
           </button>
@@ -376,7 +408,11 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
             type="button"
             onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
             disabled={currentPage === totalPages}
-            className="px-3 py-1.5 rounded-xl border border-slate-800 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 transition-all flex items-center gap-1"
+            className={`px-3 py-1.5 rounded-xl border disabled:opacity-40 transition-all flex items-center gap-1 cursor-pointer ${
+              isLight
+                ? 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'
+                : 'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-200'
+            }`}
           >
             Next <ChevronRight className="w-3.5 h-3.5" />
           </button>
@@ -386,37 +422,43 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
       {/* Create Incident Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-          <div className="bg-[#0c1222] border border-slate-800 p-6 rounded-3xl w-full max-w-lg space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+          <div className={`border p-6 rounded-3xl w-full max-w-lg space-y-4 shadow-2xl ${
+            isLight ? 'bg-white border-slate-200' : 'bg-[#0c1222] border-slate-800'
+          }`}>
+            <div className={`flex items-center justify-between border-b pb-3 ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
+              <h3 className={`text-base font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 <ShieldAlert className="w-5 h-5 text-rose-500" />
                 Register New Security Incident
               </h3>
-              <button type="button" onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white">
+              <button type="button" onClick={() => setShowCreateModal(false)} className={`cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}>
                 ✕
               </button>
             </div>
 
             <form onSubmit={handleCreateIncident} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Incident Title</label>
+                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>Incident Title</label>
                 <input
                   type="text"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="e.g. Malicious IMDS Link-Local SSRF Probe"
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white outline-none"
+                  className={`w-full p-2.5 rounded-xl border outline-none ${
+                    isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                  }`}
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Severity Tier</label>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>Severity Tier</label>
                   <select
                     value={newSeverity}
                     onChange={(e) => setNewSeverity(e.target.value as any)}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white outline-none"
+                    className={`w-full p-2.5 rounded-xl border outline-none ${
+                      isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                    }`}
                   >
                     <option value="CRITICAL">Critical Tier 4</option>
                     <option value="HIGH">High Tier 3</option>
@@ -426,35 +468,41 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Assigned Investigator</label>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>Assigned Investigator</label>
                   <input
                     type="text"
                     value={newAssignee}
                     onChange={(e) => setNewAssignee(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white outline-none"
+                    className={`w-full p-2.5 rounded-xl border outline-none ${
+                      isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                    }`}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Root Cause Analysis</label>
+                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>Root Cause Analysis</label>
                 <textarea
                   rows={2}
                   value={newRootCause}
                   onChange={(e) => setNewRootCause(e.target.value)}
                   placeholder="Observed threat indicators, IP origin, payload details..."
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white outline-none resize-none"
+                  className={`w-full p-2.5 rounded-xl border outline-none resize-none ${
+                    isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                  }`}
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Mitigation &amp; Containment Action</label>
+                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>Mitigation &amp; Containment Action</label>
                 <textarea
                   rows={2}
                   value={newMitigation}
                   onChange={(e) => setNewMitigation(e.target.value)}
                   placeholder="Actions taken to isolate or neutralize the threat vector..."
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white outline-none resize-none"
+                  className={`w-full p-2.5 rounded-xl border outline-none resize-none ${
+                    isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                  }`}
                 />
               </div>
 
@@ -462,14 +510,16 @@ export const IncidentManagementConsole: React.FC<IncidentManagementConsoleProps>
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-800 text-slate-300"
+                  className={`px-4 py-2 rounded-xl border cursor-pointer ${
+                    isLight ? 'border-slate-300 text-slate-700 hover:bg-slate-100' : 'border-slate-800 text-slate-300 hover:bg-slate-800'
+                  }`}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !newTitle.trim()}
-                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold disabled:opacity-50"
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting ? 'Registering...' : 'Register Incident'}
                 </button>

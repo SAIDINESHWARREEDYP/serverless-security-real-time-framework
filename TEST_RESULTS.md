@@ -3,14 +3,15 @@
 ## Test Suite Execution Summary
 
 **Runtime:** Node.js v22.23.2 (`node:sqlite` + TypeScript via `tsx`) & Local Worker D1 Adapter (`src/worker.ts`)  
-**Test Runners:** `npm test` (7 TypeScript suites) & `npm run test:core` (6 core baseline suites)  
-**Total Test Suites:** 7  
+**Test Runners:** `npm test` (8 TypeScript suites) & `npm run test:core` (6 core baseline suites)  
+**Total Test Suites:** 8  
 **Core Baseline Automated Tests:** 44 / 44 PASSED (`100.0%`)  
-**Recovery Concurrency, Local D1 Disk Persistence & UI/Real-Time Integration Tests:** 5 / 5 PASSED (`100.0%`)  
-**Combined Executed Test Count:** **49 / 49 PASSED (100.0%)**  
+**Recovery Concurrency, Local D1 Disk Persistence, ThreatHeatmap & UI/Real-Time Integration Tests:** 6 / 6 PASSED (`100.0%`)  
+**Pre-Finalization 5-Point Verification Suite (`test/final-verification-audit.test.ts`):** 5 / 5 PASSED (`100.0%`)  
+**Combined Executed Test Count:** **55 / 55 PASSED (100.0%)**  
 **Failed:** 0 (0.0%)
 
-> **Scope Note (Cloudflare D1):** Neither `wrangler` CLI (`~/.wrangler`) nor `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` exists in this sandbox environment. Therefore, remote Cloudflare account deployment (`wrangler deploy` / `wrangler d1 execute --remote`) was **not executed** and is **not claimed**. `src/worker.ts` database persistence was verified locally against a file-backed `node:sqlite` D1 adapter (`createAsyncD1Adapter`) across full DB close/reopen restarts.
+> **Scope Note (Cloudflare D1):** Neither `wrangler` CLI (`~/.wrangler`) nor `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` exists in this sandbox environment. Therefore, remote Cloudflare account deployment (`wrangler deploy` / `wrangler d1 execute --remote`) was **not executed** and is **not claimed**. `src/worker.ts` database persistence and full-ledger chain verification were verified locally against a file-backed `node:sqlite` D1 adapter (`createAsyncD1Adapter`) across full DB close/reopen restarts plus browser-target ESM edge bundling (`esbuild`).
 
 ---
 
@@ -72,9 +73,10 @@
 - `[PASS]` 5. Express Laptop-Only Recovery Code MFA Suite (10 scenarios: first-time enrollment, confirmation, replay, invalid decrement, expiry, 5-attempt lockout, `Promise.all` concurrent race, exhaustion & Admin MFA reset).
 - `[PASS]` 6. Cloudflare Worker (`src/worker.ts`) End-to-End Hardening (local SQLite D1 adapter: `503` fail-closed guards, strict JWT, role escalation rejection, recovery CAS concurrency, PII stripping, `/api/incidents`, `/api/v1/verify/invoke`).
 
-### 7. `test/recovery-realtime-ui.test.ts` (5 / 5 PASSED)
+### 7. `test/recovery-realtime-ui.test.ts` (6 / 6 PASSED)
 - `[PASS]` 1. Persistent Local Worker D1 Disk Storage: Two-phase close/reopen test proves user enrollment, single-use spent recovery-code exclusion, remaining code counts (`6 -> 5`), and incident persistence survive DB restarts; production SQLite schema `0001`–`0004` intact.
 - `[PASS]` 2. Recovery Codes Concurrent Generation, Retry Safety & Single-Use CAS: Concurrent `Promise.all` `/api/auth/mfa/enroll-challenge` coalesces cleanly in Worker without DB corruption or mismatch, pre-verification retries succeed safely, post-activation retries are blocked (`403` preserving 7 codes), and parallel HTTP `/api/auth/mfa/verify` calls allow strictly 1 winner.
 - `[PASS]` 3. `MfaVerificationCard` UI Spinner, `AbortController` StrictMode & Tab Switching: React 19 StrictMode double-mount clears initial spinner and displays all 8 recovery tiles cleanly, tab switching (`Use a Recovery Code` <-> `Authenticator App (Optional)`) preserves code tiles without re-spinning, and click-to-fill completes MFA login.
 - `[PASS]` 4. `AuthModal` Real-Time Approval Polling: Submitting pending credentials opens `PENDING_APPROVAL`; approving via live `POST /api/system/users/approve` triggers the 2.5s `/api/auth/status` poll to transition automatically straight into Factor 2 MFA enrollment.
 - `[PASS]` 5. Live Express SSE Streaming & `useRealtimeMonitor` Reconnection: Real HTTP SSE `/api/v1/realtime/stream` delivers `CONNECTED` + live `NEW_INVOCATION` across client disconnect/reconnect; `useRealtimeMonitor` deduplicates events, transitions `LIVE_STREAMING -> POLLING_FALLBACK -> RECONNECTING -> LIVE_STREAMING` over backoff recovery, and resets `reconnectAttempts`.
+- `[PASS]` 6. `ThreatHeatmap` Intensity Coordinate Mapping, React 19 UI & Live SHA-256 Chain Check: Verified `buildHeatmapModel()` coordinate scoring and targeted-function ranking, React 19 `<ThreatHeatmap />` axis switching (`Time × Function` <-> `Vector × Function`), SSE telemetry display, and live `GET /api/v1/audit/verify-chain` integrity check.

@@ -27,6 +27,7 @@ import {
 import { User, AuthSession, MfaPendingChallenge } from '../types.ts';
 import { MfaVerificationCard } from './MfaVerificationCard.tsx';
 import { MfaEnrollmentPanel, MfaEnrollmentPayload } from './MfaEnrollmentPanel.tsx';
+import { useTheme } from '../context/ThemeContext.tsx';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -64,6 +65,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onLoginSuccess,
   onLogout
 }) => {
+  const { isLight } = useTheme();
   // Input states - no preset hardcoded bypasses
   const [usernameInput, setUsernameInput] = useState(
     currentSession?.user.username || ''
@@ -479,31 +481,49 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const isAdmin = currentSession?.user.role === 'Admin';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 font-mono animate-fade-in">
-      <div className="bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh] transition-all">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 font-mono animate-fade-in">
+      <div className={`border rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh] transition-all ${
+        isLight
+          ? 'bg-white border-slate-200 text-slate-800'
+          : 'bg-slate-950 border-slate-800 text-slate-100'
+      }`}>
         {/* Header - Zero Trust Gateway Theme */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between">
+        <div className={`p-4 sm:p-5 border-b flex items-center justify-between ${
+          isLight ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-900/90'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0 shadow-xs">
+            <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-xs ${
+              isLight
+                ? 'bg-blue-50 border-blue-200 text-blue-600'
+                : 'bg-blue-600/15 border-blue-500/30 text-blue-400'
+            }`}>
               <Fingerprint className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-sm sm:text-base font-bold text-white tracking-wide">
+                <h2 className={`text-sm sm:text-base font-bold tracking-wide ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   Zero-Trust Identity &amp; Access Gate
                 </h2>
-                <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <span className={`text-[10px] uppercase font-semibold px-2 py-0.5 rounded-md border ${
+                  isLight
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                }`}>
                   NIST SP 800-207
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 Cryptographic authentication &amp; RBAC verification for serverless cloud assets
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition-colors shrink-0"
+            className={`p-1.5 rounded-xl transition-colors shrink-0 cursor-pointer ${
+              isLight
+                ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-200'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
             aria-label="Close authentication portal"
           >
             <X className="w-5 h-5" />
@@ -511,7 +531,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-800 bg-slate-950 px-4 gap-2 pt-2 overflow-x-auto">
+        <div className={`flex border-b px-4 gap-2 pt-2 overflow-x-auto ${
+          isLight ? 'border-slate-200 bg-slate-50/70' : 'border-slate-800 bg-slate-950'
+        }`}>
           {currentSession && (
             <button
               type="button"
@@ -521,11 +543,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               }}
               className={`px-3.5 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 border-b-2 whitespace-nowrap cursor-pointer ${
                 activeTab === 'account'
-                  ? 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                  ? isLight
+                    ? 'border-blue-600 text-blue-700 bg-white font-bold'
+                    : 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                  : isLight
+                  ? 'border-transparent text-slate-600 hover:text-slate-900'
                   : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
-              <UserIcon className="w-3.5 h-3.5 text-blue-400" />
+              <UserIcon className={`w-3.5 h-3.5 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
               Account Profile
             </button>
           )}
@@ -538,7 +564,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
             className={`px-3.5 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 border-b-2 whitespace-nowrap cursor-pointer ${
               activeTab === 'login'
-                ? 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                ? isLight
+                  ? 'border-blue-600 text-blue-700 bg-white font-bold'
+                  : 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                : isLight
+                ? 'border-transparent text-slate-600 hover:text-slate-900'
                 : 'border-transparent text-slate-400 hover:text-white'
             }`}
           >
@@ -554,11 +584,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
             className={`px-3.5 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 border-b-2 whitespace-nowrap cursor-pointer ${
               activeTab === 'register'
-                ? 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                ? isLight
+                  ? 'border-blue-600 text-blue-700 bg-white font-bold'
+                  : 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                : isLight
+                ? 'border-transparent text-slate-600 hover:text-slate-900'
                 : 'border-transparent text-slate-400 hover:text-white'
             }`}
           >
-            <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
+            <UserPlus className={`w-3.5 h-3.5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
             Register / Any User Access
           </button>
 
@@ -572,13 +606,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               }}
               className={`px-3.5 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 border-b-2 whitespace-nowrap cursor-pointer ${
                 activeTab === 'principals'
-                  ? 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                  ? isLight
+                    ? 'border-blue-600 text-blue-700 bg-white font-bold'
+                    : 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                  : isLight
+                  ? 'border-transparent text-slate-600 hover:text-slate-900'
                   : 'border-transparent text-slate-400 hover:text-white'
               }`}
             >
-              <UserIcon className="w-3.5 h-3.5 text-purple-400" />
+              <UserIcon className={`w-3.5 h-3.5 ${isLight ? 'text-purple-600' : 'text-purple-400'}`} />
               <span>Saved Logins (Admin Only)</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full border tabular-nums ${
+                isLight
+                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                  : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+              }`}>
                 {users.length}
               </span>
             </button>
@@ -592,7 +634,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }}
             className={`px-3.5 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 border-b-2 whitespace-nowrap cursor-pointer ${
               activeTab === 'token'
-                ? 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                ? isLight
+                  ? 'border-blue-600 text-blue-700 bg-white font-bold'
+                  : 'border-blue-500 text-blue-400 bg-slate-900/90 font-bold'
+                : isLight
+                ? 'border-transparent text-slate-600 hover:text-slate-900'
                 : 'border-transparent text-slate-400 hover:text-white'
             }`}
           >
@@ -605,15 +651,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="p-5 overflow-y-auto flex-1 space-y-4">
           {/* Feedback alerts */}
           {errorMsg && (
-            <div className="p-3 bg-rose-950/60 border border-rose-500/50 text-rose-200 text-xs rounded-xl flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className={`p-3 border text-xs rounded-xl flex items-start gap-2.5 ${
+              isLight
+                ? 'bg-rose-50 border-rose-200 text-rose-800'
+                : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
+            }`}>
+              <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
               <div className="flex-1">{errorMsg}</div>
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3 bg-emerald-950/60 border border-emerald-500/50 text-emerald-200 text-xs rounded-xl flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <div className={`p-3 border text-xs rounded-xl flex items-start gap-2.5 ${
+              isLight
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+            }`}>
+              <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
               <div className="flex-1">{successMsg}</div>
             </div>
           )}
@@ -632,43 +686,57 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             />
           ) : pendingApprovalUser ? (
             /* PENDING ADMIN APPROVAL STATE SCREEN */
-            <div className="p-5 bg-amber-950/20 border border-amber-500/40 rounded-2xl space-y-4">
+            <div className={`p-5 border rounded-2xl space-y-4 ${
+              isLight
+                ? 'bg-amber-50/70 border-amber-300'
+                : 'bg-amber-950/20 border-amber-500/40'
+            }`}>
               <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${
+                  isLight
+                    ? 'bg-amber-100 border-amber-300 text-amber-700'
+                    : 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                }`}>
                   <Clock className="w-5 h-5 animate-spin" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-white">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
                       Administrator Validation &amp; Approval Required
                     </h3>
-                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
+                      isLight
+                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    }`}>
                       PENDING_APPROVAL
                     </span>
                   </div>
-                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  <p className={`text-xs mt-1 leading-relaxed ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                     Under Zero-Trust Access Rule (NIST SP 800-207), new user identities are recorded in the database but cannot issue access tokens until approved by a SecOps Administrator.
                   </p>
                 </div>
               </div>
 
               {/* Pending Identity Snapshot */}
-              <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2 text-xs">
+              <div className={`p-3.5 border rounded-xl space-y-2 text-xs ${
+                isLight ? 'bg-white border-slate-200' : 'bg-slate-900/90 border-slate-800'
+              }`}>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Registered Username:</span>
-                  <span className="font-bold text-white font-mono">{pendingApprovalUser.username}</span>
+                  <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Registered Username:</span>
+                  <span className={`font-bold font-mono ${isLight ? 'text-slate-900' : 'text-white'}`}>{pendingApprovalUser.username}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Target Role:</span>
-                  <span className="font-semibold text-blue-400">{pendingApprovalUser.role}</span>
+                  <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Target Role:</span>
+                  <span className={`font-semibold ${isLight ? 'text-blue-700' : 'text-blue-400'}`}>{pendingApprovalUser.role}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Department:</span>
-                  <span className="text-slate-300">{pendingApprovalUser.department || 'Cloud Operations'}</span>
+                  <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Department:</span>
+                  <span className={isLight ? 'text-slate-700' : 'text-slate-300'}>{pendingApprovalUser.department || 'Cloud Operations'}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Queue Status:</span>
-                  <span className="text-amber-400 font-bold">Awaiting SecOps Clearance</span>
+                  <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Queue Status:</span>
+                  <span className={`font-bold ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>Awaiting SecOps Clearance</span>
                 </div>
               </div>
 
@@ -681,7 +749,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               )}
 
               {approvalFeedback && (
-                <div className="p-3 rounded-lg text-xs font-mono bg-slate-900 border border-slate-700 text-slate-300">
+                <div className={`p-3 rounded-lg text-xs font-mono border ${
+                  isLight ? 'bg-white border-slate-300 text-slate-700' : 'bg-slate-900 border-slate-700 text-slate-300'
+                }`}>
                   {approvalFeedback}
                 </div>
               )}
@@ -716,7 +786,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     setPendingApprovalUser(null);
                     setRegisteredEnrollment(null);
                   }}
-                  className="w-full sm:w-auto px-3 py-2 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  className={`w-full sm:w-auto px-3 py-2 text-xs transition-colors cursor-pointer ${
+                    isLight ? 'text-slate-600 hover:text-slate-950' : 'text-slate-400 hover:text-white'
+                  }`}
                 >
                   Back to Sign In
                 </button>
@@ -726,28 +798,36 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <>
               {/* Active Session Card if logged in */}
               {currentSession && (
-                <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl flex items-center justify-between">
+                <div className={`p-3.5 border rounded-xl flex items-center justify-between ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900/90 border-slate-800'
+                }`}>
                   <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
                     <div>
-                      <div className="text-xs text-white font-bold flex items-center gap-2">
+                      <div className={`text-xs font-bold flex items-center gap-2 flex-wrap ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         <span>Active Session: {currentSession.user.username}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-bold ${
-                          currentSession.user.role === 'Admin' ? 'bg-purple-900/70 text-purple-200 border border-purple-600/40' :
-                          currentSession.user.role === 'Developer' ? 'bg-blue-900/70 text-blue-200 border border-blue-600/40' :
-                          'bg-slate-800 text-slate-300 border border-slate-700'
+                        <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-bold border ${
+                          currentSession.user.role === 'Admin'
+                            ? isLight ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-purple-900/70 text-purple-200 border-purple-600/40'
+                            : currentSession.user.role === 'Developer'
+                            ? isLight ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-blue-900/70 text-blue-200 border-blue-600/40'
+                            : isLight ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-800 text-slate-300 border-slate-700'
                         }`}>
                           {currentSession.user.role}
                         </span>
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        Base Risk: <span className="text-emerald-400 font-semibold">{currentSession.user.base_risk_score}%</span> | Active Since: {currentSession.loginTime}
+                      <div className={`text-[10px] mt-0.5 tabular-nums ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                        Base Risk: <span className={`font-semibold ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>{currentSession.user.base_risk_score}%</span> · Active Since: {currentSession.loginTime}
                       </div>
                     </div>
                   </div>
                   <button
                     onClick={onLogout}
-                    className="px-3 py-1.5 text-xs rounded-xl bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-800/80 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className={`px-3 py-1.5 text-xs rounded-xl border flex items-center gap-1.5 transition-colors cursor-pointer ${
+                      isLight
+                        ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                        : 'bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border-rose-800/80'
+                    }`}
                   >
                     <LogOut className="w-3 h-3" />
                     Sign Out
@@ -758,27 +838,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* TAB 0: ACCOUNT PROFILE & SECURE PASSWORD CHANGE FLOW */}
               {activeTab === 'account' && currentSession && (
                 <div className="space-y-5">
-                  <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <UserIcon className="w-4 h-4 text-blue-400" />
+                  <div className={`p-4 border rounded-xl space-y-3 ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}>
+                    <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${
+                      isLight ? 'text-slate-900' : 'text-white'
+                    }`}>
+                      <UserIcon className={`w-4 h-4 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                       Account Clearance Profile
                     </h3>
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
-                        <span className="text-slate-400">Username:</span>
-                        <div className="font-bold text-white">{currentSession.user.username}</div>
+                        <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Username:</span>
+                        <div className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{currentSession.user.username}</div>
                       </div>
                       <div>
-                        <span className="text-slate-400">Assigned Role:</span>
-                        <div className="font-bold text-blue-400">{currentSession.user.role}</div>
+                        <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Assigned Role:</span>
+                        <div className={`font-bold ${isLight ? 'text-blue-700' : 'text-blue-400'}`}>{currentSession.user.role}</div>
                       </div>
                       <div>
-                        <span className="text-slate-400">Base Risk Profile:</span>
-                        <div className="font-bold text-emerald-400">{currentSession.user.base_risk_score}%</div>
+                        <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Base Risk Profile:</span>
+                        <div className={`font-bold tabular-nums ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>{currentSession.user.base_risk_score}%</div>
                       </div>
                       <div>
-                        <span className="text-slate-400">Clearance Status:</span>
-                        <div className="font-bold text-emerald-400">APPROVED (Zero-Trust Active)</div>
+                        <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>Clearance Status:</span>
+                        <div className={`font-bold ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>APPROVED (Zero-Trust Active)</div>
                       </div>
                     </div>
                   </div>
@@ -824,30 +908,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     } finally {
                       setPwChangeLoading(false);
                     }
-                  }} className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-emerald-400" />
+                  }} className={`p-4 border rounded-xl space-y-3 ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}>
+                    <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${
+                      isLight ? 'text-slate-900' : 'text-white'
+                    }`}>
+                      <Lock className={`w-4 h-4 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
                       Update Password (PBKDF2 SHA-512)
                     </h3>
 
                     {pwChangeError && (
-                      <div className="p-2.5 rounded bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs">
+                      <div className={`p-2.5 rounded border text-xs ${
+                        isLight ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-rose-950/60 border-rose-500/50 text-rose-300'
+                      }`}>
                         {pwChangeError}
                       </div>
                     )}
                     {pwChangeSuccess && (
-                      <div className="p-2.5 rounded bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-xs">
+                      <div className={`p-2.5 rounded border text-xs ${
+                        isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300'
+                      }`}>
                         {pwChangeSuccess}
                       </div>
                     )}
 
                     <div>
-                      <label className="block text-slate-400 text-xs mb-1">Current Password</label>
+                      <label className={`block text-xs mb-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Current Password</label>
                       <input
                         type="password"
                         value={oldPassword}
                         onChange={(e) => setOldPassword(e.target.value)}
-                        className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs font-mono"
+                        className={`w-full p-2 border rounded-lg text-xs font-mono ${
+                          isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                        }`}
                         placeholder="Enter current password"
                         required
                       />
@@ -855,23 +949,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-slate-400 text-xs mb-1">New Password (Min 8 chars)</label>
+                        <label className={`block text-xs mb-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>New Password (Min 8 chars)</label>
                         <input
                           type="password"
                           value={newPassword}
                           onChange={(e) => setNewPassword(e.target.value)}
-                          className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs font-mono"
+                          className={`w-full p-2 border rounded-lg text-xs font-mono ${
+                            isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                          }`}
                           placeholder="Min 8 characters"
                           required
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-400 text-xs mb-1">Confirm New Password</label>
+                        <label className={`block text-xs mb-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Confirm New Password</label>
                         <input
                           type="password"
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
-                          className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs font-mono"
+                          className={`w-full p-2 border rounded-lg text-xs font-mono ${
+                            isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
+                          }`}
                           placeholder="Repeat new password"
                           required
                         />
@@ -888,14 +986,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </form>
 
                   {/* Authenticator App Pairing / Re-Key Panel */}
-                  <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                  <div className={`p-4 border rounded-xl space-y-3 ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
-                        <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                          <QrCode className="w-4 h-4 text-blue-400" />
+                        <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${
+                          isLight ? 'text-slate-900' : 'text-white'
+                        }`}>
+                          <QrCode className={`w-4 h-4 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                           Authenticator App Pairing (RFC 6238 TOTP)
                         </h3>
-                        <p className="text-[11px] text-slate-400 mt-1">
+                        <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                           Generate a fresh TOTP secret, scannable QR code, and 8 recovery codes to pair or switch Google Authenticator / Microsoft Authenticator.
                         </p>
                       </div>
@@ -939,7 +1041,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     </div>
 
                     {setupMfaError && (
-                      <div className="p-2.5 rounded bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs">
+                      <div className={`p-2.5 rounded border text-xs ${
+                        isLight ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-rose-950/60 border-rose-500/50 text-rose-300'
+                      }`}>
                         {setupMfaError}
                       </div>
                     )}
@@ -960,11 +1064,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <form onSubmit={handleFormLogin} className="space-y-4">
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                      <label className={`block text-xs font-semibold uppercase tracking-wider ${
+                        isLight ? 'text-slate-700' : 'text-slate-300'
+                      }`}>
                         Username / Identity Handle
                       </label>
-                      <span className="text-[10px] text-slate-400">
-                        Root Admin: <button type="button" onClick={() => setUsernameInput('secops_admin')} className="text-blue-400 hover:underline cursor-pointer">secops_admin</button>
+                      <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                        Root Admin: <button type="button" onClick={() => setUsernameInput('secops_admin')} className={`hover:underline cursor-pointer ${isLight ? 'text-blue-600' : 'text-blue-400'}`}>secops_admin</button>
                       </span>
                     </div>
 
@@ -974,31 +1080,37 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         value={usernameInput}
                         onChange={(e) => setUsernameInput(e.target.value)}
                         placeholder="Enter username (e.g. Secops_Admin, CloudDev1)"
-                        className="w-full p-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono"
+                        className={`w-full p-2.5 border text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono ${
+                          isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
+                        }`}
                         required
                       />
                     </div>
 
                     {/* LIVE USERNAME VALIDATION RULE CHECKLIST */}
-                    <div className="mt-2.5 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-[11px] space-y-1.5">
+                    <div className={`mt-2.5 p-3 rounded-xl border text-[11px] space-y-1.5 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900/70 border-slate-800'
+                    }`}>
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider">
+                        <span className={`font-semibold text-[10px] uppercase tracking-wider ${
+                          isLight ? 'text-slate-600' : 'text-slate-400'
+                        }`}>
                           Zero-Trust Username Requirements:
                         </span>
                         {loginUsernameRules.isValid ? (
-                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                          <span className={`text-[10px] font-bold flex items-center gap-1 ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
                             <Check className="w-3 h-3" /> Criteria Satisfied
                           </span>
                         ) : (
-                          <span className="text-[10px] text-amber-400">Rules Pending</span>
+                          <span className={`text-[10px] ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>Rules Pending</span>
                         )}
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           loginUsernameRules.hasMinLength
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{loginUsernameRules.hasMinLength ? '✓' : '○'}</span>
                           <span>&gt; 5 Chars</span>
@@ -1006,8 +1118,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           loginUsernameRules.hasUpper
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{loginUsernameRules.hasUpper ? '✓' : '○'}</span>
                           <span>1+ Upper (A-Z)</span>
@@ -1015,8 +1127,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           loginUsernameRules.hasLower
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{loginUsernameRules.hasLower ? '✓' : '○'}</span>
                           <span>1+ Lower (a-z)</span>
@@ -1024,8 +1136,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           loginUsernameRules.hasAlphanumeric
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{loginUsernameRules.hasAlphanumeric ? '✓' : '○'}</span>
                           <span>Alphanumeric</span>
@@ -1036,10 +1148,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                      <label className={`block text-xs font-semibold uppercase tracking-wider ${
+                        isLight ? 'text-slate-700' : 'text-slate-300'
+                      }`}>
                         Password / Authentication Secret
                       </label>
-                      <span className="text-[10px] text-slate-400">
+                      <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                         Required (Min 8 chars)
                       </span>
                     </div>
@@ -1048,14 +1162,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         type={showPassword ? 'text' : 'password'}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="w-full pl-3 pr-10 py-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono"
+                        className={`w-full pl-3 pr-10 py-2.5 border text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono ${
+                          isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
+                        }`}
                         placeholder="Enter password"
                         required
                       />
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-2.5 text-slate-400 hover:text-white"
+                        className={`absolute right-3 top-2.5 cursor-pointer ${isLight ? 'text-slate-500 hover:text-slate-900' : 'text-slate-400 hover:text-white'}`}
                         aria-label={showPassword ? 'Hide password' : 'Show password'}
                       >
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1082,15 +1198,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* TAB 2: REAL-TIME ANY USER REGISTRATION / ACCESS */}
               {activeTab === 'register' && (
                 <form onSubmit={handleRegisterUser} className="space-y-4">
-                  <div className="p-3 bg-blue-950/20 border border-blue-500/30 rounded-xl text-xs text-blue-300 flex items-start gap-2.5">
-                    <Sparkles className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                  <div className={`p-3 border rounded-xl text-xs flex items-start gap-2.5 ${
+                    isLight
+                      ? 'bg-blue-50 border-blue-200 text-blue-800'
+                      : 'bg-blue-950/20 border-blue-500/30 text-blue-300'
+                  }`}>
+                    <Sparkles className={`w-4 h-4 shrink-0 mt-0.5 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                     <div>
-                      <strong>Dynamic Self-Service Registration:</strong> Any user name meeting security requirements will be provisioned. Under Zero-Trust policy, new users are placed in <span className="font-mono text-amber-300 font-bold">PENDING_APPROVAL</span> status until approved by a SecOps Administrator.
+                      <strong>Dynamic Self-Service Registration:</strong> Any user name meeting security requirements will be provisioned. Under Zero-Trust policy, new users are placed in <span className={`font-mono font-bold ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>PENDING_APPROVAL</span> status until approved by a SecOps Administrator.
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                    <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wider ${
+                      isLight ? 'text-slate-700' : 'text-slate-300'
+                    }`}>
                       Username / Identity Handle
                     </label>
                     <input
@@ -1098,30 +1220,36 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       value={regUsername}
                       onChange={(e) => setRegUsername(e.target.value)}
                       placeholder="e.g. Architect_01, Security_Lead, Cloud_Dev"
-                      className="w-full p-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono"
+                      className={`w-full p-2.5 border text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono ${
+                        isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
+                      }`}
                       required
                     />
 
                     {/* LIVE USERNAME VALIDATION RULE CHECKLIST */}
-                    <div className="mt-2.5 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-[11px] space-y-1.5">
+                    <div className={`mt-2.5 p-3 rounded-xl border text-[11px] space-y-1.5 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900/70 border-slate-800'
+                    }`}>
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider">
+                        <span className={`font-semibold text-[10px] uppercase tracking-wider ${
+                          isLight ? 'text-slate-600' : 'text-slate-400'
+                        }`}>
                           Username Format Rules:
                         </span>
                         {regUsernameRules.isValid ? (
-                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                          <span className={`text-[10px] font-bold flex items-center gap-1 ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
                             <Check className="w-3 h-3" /> Meets Criteria
                           </span>
                         ) : (
-                          <span className="text-[10px] text-amber-400">Requires all 4 rules</span>
+                          <span className={`text-[10px] ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>Requires all 4 rules</span>
                         )}
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           regUsernameRules.hasMinLength
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{regUsernameRules.hasMinLength ? '✓' : '○'}</span>
                           <span>&gt; 5 Chars</span>
@@ -1129,8 +1257,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           regUsernameRules.hasUpper
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{regUsernameRules.hasUpper ? '✓' : '○'}</span>
                           <span>1+ Upper (A-Z)</span>
@@ -1138,8 +1266,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           regUsernameRules.hasLower
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{regUsernameRules.hasLower ? '✓' : '○'}</span>
                           <span>1+ Lower (a-z)</span>
@@ -1147,8 +1275,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                         <div className={`px-2 py-1 rounded-md text-[10px] font-mono flex items-center gap-1.5 border transition-all ${
                           regUsernameRules.hasAlphanumeric
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                            ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-semibold'
+                            : isLight ? 'bg-white text-slate-500 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}>
                           <span>{regUsernameRules.hasAlphanumeric ? '✓' : '○'}</span>
                           <span>Alphanumeric</span>
@@ -1159,13 +1287,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                      <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wider ${
+                        isLight ? 'text-slate-700' : 'text-slate-300'
+                      }`}>
                         Requested Role
                       </label>
                       <select
                         value={regRole}
                         onChange={(e) => setRegRole(e.target.value as any)}
-                        className="w-full p-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500"
+                        className={`w-full p-2.5 border text-xs rounded-xl focus:outline-none focus:border-blue-500 ${
+                          isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
+                        }`}
                       >
                         <option value="Developer">Developer (Deploy, Invocations, Logs)</option>
                         <option value="Guest">Guest (Read-Only Metrics &amp; Topology)</option>
@@ -1174,10 +1306,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                          Base Risk Score: <span className="text-white font-bold">{regRisk}%</span>
+                        <label className={`block text-xs font-semibold uppercase tracking-wider ${
+                          isLight ? 'text-slate-700' : 'text-slate-300'
+                        }`}>
+                          Base Risk Score: <span className={`font-bold tabular-nums ${isLight ? 'text-slate-900' : 'text-white'}`}>{regRisk}%</span>
                         </label>
-                        <span className="text-[10px] text-slate-400">
+                        <span className={`text-[10px] tabular-nums ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                           Threshold: 75%
                         </span>
                       </div>
@@ -1194,7 +1328,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                      <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wider ${
+                        isLight ? 'text-slate-700' : 'text-slate-300'
+                      }`}>
                         Department / Unit
                       </label>
                       <input
@@ -1202,12 +1338,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         value={regDept}
                         onChange={(e) => setRegDept(e.target.value)}
                         placeholder="e.g. Cloud Operations"
-                        className="w-full p-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono"
+                        className={`w-full p-2.5 border text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono ${
+                          isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
+                        }`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                      <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wider ${
+                        isLight ? 'text-slate-700' : 'text-slate-300'
+                      }`}>
                         Password (Min 8 Characters)
                       </label>
                       <input
@@ -1217,7 +1357,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         placeholder="Enter secure password"
                         required
                         minLength={8}
-                        className="w-full p-2.5 bg-slate-900 border border-slate-800 text-white text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono"
+                        className={`w-full p-2.5 border text-xs rounded-xl focus:outline-none focus:border-blue-500 font-mono ${
+                          isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
+                        }`}
                       />
                     </div>
                   </div>
@@ -1241,11 +1383,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* TAB 3: SAVED LOGINS (STRICTLY ADMIN ONLY) */}
               {activeTab === 'principals' && isAdmin && (
                 <div className="space-y-3">
-                  <div className="p-3 bg-purple-950/20 border border-purple-500/30 rounded-xl flex items-center justify-between text-xs">
-                    <div className="text-purple-300">
+                  <div className={`p-3 border rounded-xl flex items-center justify-between text-xs gap-2 ${
+                    isLight ? 'bg-purple-50 border-purple-200' : 'bg-purple-950/20 border-purple-500/30'
+                  }`}>
+                    <div className={isLight ? 'text-purple-900' : 'text-purple-300'}>
                       <strong>Administrator View Only:</strong> Saved database identities and their security clearance profiles.
                     </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 font-mono">
+                    <span className={`text-[10px] px-2 py-0.5 rounded border font-mono shrink-0 ${
+                      isLight
+                        ? 'bg-purple-100 text-purple-800 border-purple-300'
+                        : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                    }`}>
                       Restricted to Admin
                     </span>
                   </div>
@@ -1259,35 +1407,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           key={u.id}
                           className={`p-3.5 rounded-xl border transition-all ${
                             isCurrent
-                              ? 'bg-blue-950/30 border-blue-500 shadow-sm'
+                              ? isLight ? 'bg-blue-50 border-blue-400 shadow-sm' : 'bg-blue-950/30 border-blue-500 shadow-sm'
                               : isUntrusted
-                              ? 'bg-rose-950/20 border-rose-900/60'
-                              : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
+                              ? isLight ? 'bg-rose-50 border-rose-200' : 'bg-rose-950/20 border-rose-900/60'
+                              : isLight ? 'bg-slate-50 border-slate-200 hover:border-slate-300' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
                           }`}
                         >
                           <div className="flex items-start justify-between">
                             <div>
-                              <div className="text-xs font-bold text-white flex items-center gap-2">
+                              <div className={`text-xs font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                                 <span>{u.username}</span>
                                 {isCurrent && (
-                                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  <span className={`text-[9px] px-1.5 py-0.2 rounded border ${
+                                    isLight
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                  }`}>
                                     Current
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-2.5">
-                                <span>Role: <strong className="text-slate-200">{u.role}</strong></span>
-                                <span>Risk: <strong className={u.base_risk_score >= 70 ? 'text-rose-400' : 'text-emerald-400'}>{u.base_risk_score}%</strong></span>
+                              <div className={`text-[11px] mt-1 flex items-center gap-2.5 tabular-nums ${
+                                isLight ? 'text-slate-600' : 'text-slate-400'
+                              }`}>
+                                <span>Role: <strong className={isLight ? 'text-slate-900' : 'text-slate-200'}>{u.role}</strong></span>
+                                <span>Risk: <strong className={u.base_risk_score >= 70 ? (isLight ? 'text-rose-700' : 'text-rose-400') : (isLight ? 'text-emerald-700' : 'text-emerald-400')}>{u.base_risk_score}%</strong></span>
                               </div>
                             </div>
                             {isUntrusted ? (
-                              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                              <ShieldAlert className={`w-4 h-4 shrink-0 ${isLight ? 'text-rose-600' : 'text-rose-400'}`} />
                             ) : (
-                              <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0" />
+                              <ShieldCheck className={`w-4 h-4 shrink-0 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} />
                             )}
                           </div>
 
-                          <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between">
+                          <div className={`mt-3 pt-2 border-t flex items-center justify-between ${
+                            isLight ? 'border-slate-200' : 'border-slate-800'
+                          }`}>
                             <span className="text-[10px] text-slate-500">
                               {u.status || 'APPROVED'}
                             </span>
@@ -1295,7 +1451,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                               type="button"
                               onClick={() => handleQuickLoginFromRoster(u)}
                               disabled={loading}
-                              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-800 hover:bg-blue-600 hover:text-white text-blue-400 transition-all border border-slate-700 cursor-pointer"
+                              className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-all border cursor-pointer ${
+                                isLight
+                                  ? 'bg-white hover:bg-blue-600 hover:text-white text-blue-700 border-slate-300'
+                                  : 'bg-slate-800 hover:bg-blue-600 hover:text-white text-blue-400 border-slate-700'
+                              }`}
                             >
                               {isCurrent ? 'Re-Auth' : 'Switch To'}
                             </button>
@@ -1311,15 +1471,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {activeTab === 'token' && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-400">
+                    <span className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                       RFC-7519 Compliant JSON Web Signature (JWS / JWT Simulation)
                     </span>
                     {currentSession && (
                       <button
                         onClick={handleCopyToken}
-                        className="text-xs text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                        className={`text-xs hover:underline flex items-center gap-1 cursor-pointer ${
+                          isLight ? 'text-blue-600' : 'text-blue-400'
+                        }`}
                       >
-                        {copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                         {copiedToken ? 'Copied Bearer Header!' : 'Copy Bearer Header'}
                       </button>
                     )}
@@ -1327,9 +1489,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                   {currentSession ? (
                     <div className="space-y-2">
-                      <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl">
+                      <div className={`p-3 border rounded-xl ${
+                        isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                      }`}>
                         <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Decoded Header</div>
-                        <pre className="text-xs text-purple-300 overflow-x-auto">
+                        <pre className={`text-xs overflow-x-auto ${isLight ? 'text-purple-700' : 'text-purple-300'}`}>
 {JSON.stringify({
   alg: "HS256",
   typ: "JWT",
@@ -1338,9 +1502,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         </pre>
                       </div>
 
-                      <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl">
+                      <div className={`p-3 border rounded-xl ${
+                        isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                      }`}>
                         <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">Decoded Payload Claims</div>
-                        <pre className="text-xs text-blue-300 overflow-x-auto">
+                        <pre className={`text-xs overflow-x-auto ${isLight ? 'text-blue-700' : 'text-blue-300'}`}>
 {JSON.stringify({
   sub: currentSession.user.username,
   role: currentSession.user.role,
@@ -1353,22 +1519,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         </pre>
                       </div>
 
-                      <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between">
+                      <div className={`p-3 border rounded-xl flex items-center justify-between ${
+                        isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                      }`}>
                         <div>
                           <div className="text-[10px] uppercase font-bold text-slate-500">Cryptographic Signature</div>
-                          <div className="text-xs text-emerald-400 font-semibold mt-0.5 flex items-center gap-1.5">
+                          <div className={`text-xs font-semibold mt-0.5 flex items-center gap-1.5 ${
+                            isLight ? 'text-emerald-700' : 'text-emerald-400'
+                          }`}>
                             <CheckCircle2 className="w-4 h-4" />
                             Signature Validated via Edge KMS Key
                           </div>
                         </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        <span className={`text-[10px] px-2 py-0.5 rounded border ${
+                          isLight
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        }`}>
                           HS256 Verified
                         </span>
                       </div>
                     </div>
                   ) : (
-                    <div className="p-8 text-center bg-slate-900 border border-slate-800 rounded-xl text-slate-400 text-xs">
-                      No active session found. Please sign in first on the "Sign In" or "Register" tab.
+                    <div className={`p-8 text-center border rounded-xl text-xs ${
+                      isLight ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-400'
+                    }`}>
+                      No active session found. Please sign in first on the &ldquo;Sign In&rdquo; or &ldquo;Register&rdquo; tab.
                     </div>
                   )}
                 </div>
@@ -1378,11 +1554,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3.5 border-t border-slate-800 bg-slate-950 flex items-center justify-between text-xs text-slate-500">
-          <span className="text-[11px] hidden sm:inline">Enterprise Zero-Trust Framework • Edge Security Gateway</span>
+        <div className={`p-3.5 border-t flex items-center justify-between text-xs text-slate-500 ${
+          isLight ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-950'
+        }`}>
+          <span className="text-[11px] hidden sm:inline">Enterprise Zero-Trust Framework · Edge Security Gateway</span>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 transition-colors border border-slate-800 cursor-pointer"
+            className={`px-4 py-1.5 rounded-xl transition-colors border cursor-pointer ${
+              isLight
+                ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-800'
+            }`}
           >
             Close Portal
           </button>

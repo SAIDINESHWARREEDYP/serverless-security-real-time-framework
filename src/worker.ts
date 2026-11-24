@@ -19,6 +19,10 @@ export interface Env {
   ENVIRONMENT?: string;
   ZERO_TRUST_ORIGIN?: string;
   JWT_SECRET?: string;
+  INITIAL_ADMIN_PASSWORD?: string;
+  AUDIT_ANCHOR_KEY?: string;
+  AUDIT_ANCHOR_KEY_ID?: string;
+  AUDIT_ANCHOR_PREVIOUS_KEYS?: string;
 }
 
 // Allowed trusted origins
@@ -53,8 +57,24 @@ function resolveAllowedOrigin(origin: string, env?: Env): string | null {
   return null;
 }
 
+const TRUSTED_AUDIT_GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
+const AUDIT_READ_ROLES = new Set(['Admin', 'Super Administrator', 'Security Administrator', 'Security Analyst', 'Auditor']);
+
 let ephemeralWorkerDevSecret = '';
 const inFlightChallengeEnrollments = new Map<string, Promise<{ status: number; payload: Record<string, any> }>>();
+const pendingChallengeEnrollmentCache = new Map<
+  string,
+  { userId: string; expiresAtMs: number; status: number; payload: Record<string, any> }
+>();
+
+function clearWorkerEnrollmentCacheForUser(userId: string) {
+  const now = Date.now();
+  for (const [key, entry] of pendingChallengeEnrollmentCache.entries()) {
+    if (entry.userId === userId || entry.expiresAtMs <= now) {
+      pendingChallengeEnrollmentCache.delete(key);
+    }
+  }
+}
 
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
@@ -213,7 +233,7 @@ export default {
         const rRes = await env.DB.prepare('SELECT id, current_function, allowed_next_function FROM function_rules').all();
         const rules = rRes?.results || [];
 
-        const lRes = await env.DB.prepare('SELECT * FROM audit_events ORDER BY id DESC LIMIT 100').all();
+        const lRes = await env.DB.prepare('SELECT * FROM audit_events ORDER BY id DESC LIMIT 200').all();
         const logs: any[] = lRes?.results || [];
 
         const pRes = await env.DB.prepare('SELECT * FROM policies LIMIT 1').first();
@@ -235,8 +255,11 @@ export default {
 
         const blockedCount = logs.filter(l => l.status === 'BLOCKED').length;
         const allowedCount = logs.filter(l => l.status === 'ALLOWED').length;
-        const avgVerificationLatencyMs = logs.length > 0
-          ? Number((logs.reduce((acc, l) => acc + Number(l.verification_latency_ms || 0), 0) / logs.length).toFixed(3))
+        const measuredLatencies = logs
+          .map(l => l.verification_latency_ms)
+          .filter((n): n is number => typeof n === 'number' && n > 0);
+        const avgVerificationLatencyMs = measuredLatencies.length > 0
+          ? Number((measuredLatencies.reduce((acc, n) => acc + n, 0) / measuredLatencies.length).toFixed(3))
           : 0;
 
         return jsonResponse({
@@ -378,6 +401,8 @@ export default {
         if (!username || !password) {
           return jsonResponse({ error: 'Username and password required.' }, 400, origin, undefined, env);
         }
+
+        await maybeBootstrapAdminWorker(env);
 
         const user: any = await env.DB.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').bind(username.trim()).first();
         if (!user) {
@@ -644,7 +669,9 @@ export default {
               ? `[MFA REPLAY BLOCKED] TOTP time-step replay rejected for ${user.username}.`
               : `[MFA REJECTED] Invalid verification code for ${user.username} (${attemptsLeft} attempts left).`,
             1.1,
-            attemptsLeft === 0 ? 'MFA_LOCKOUT' : replayDetected ? 'MFA_REPLAY_BLOCKED' : 'MFA_VERIFICATION_FAILURE'
+            attemptsLeft === 0 ? 'MFA_LOCKOUT' : replayDetected ? 'MFA_REPLAY_BLOCKED' : 'MFA_VERIFICATION_FAILURE',
+            jwtSecret,
+            env
           );
 
           if (attemptsLeft === 0) {
@@ -695,7 +722,9 @@ export default {
             'ALLOWED',
             `[RECOVERY CODE CONSUMED] Single-use recovery code verified & invalidated for ${user.username} (${remainingHashedCodes.length} remaining).`,
             1.1,
-            'BACKUP_CODE_CONSUMED'
+            'BACKUP_CODE_CONSUMED',
+            jwtSecret,
+            env
           );
 
           if (wasFirstEnrollment) {
@@ -707,7 +736,9 @@ export default {
               'ALLOWED',
               `[RECOVERY ENROLLMENT COMPLETED] Laptop-only recovery-code MFA activated for ${user.username}.`,
               1.0,
-              'RECOVERY_CODE_ENROLLMENT_COMPLETED'
+              'RECOVERY_CODE_ENROLLMENT_COMPLETED',
+              jwtSecret,
+              env
             );
           }
         } else if (typeof matchedStep === 'number') {
@@ -717,6 +748,8 @@ export default {
           await env.DB.prepare("UPDATE users SET mfa_enrolled = 1, last_login_at = datetime('now') WHERE id = ?")
             .bind(user.id).run();
         }
+
+        clearWorkerEnrollmentCacheForUser(user.id);
 
         await logSecurityEvent(
           env.DB,
@@ -728,7 +761,9 @@ export default {
             ? `[MFA AUTHORIZED] Single-use recovery code verified (${remainingHashedCodes.length} remaining). JWT session issued.`
             : `[MFA AUTHORIZED] RFC 6238 TOTP verified. JWT session issued.`,
           1.1,
-          'MFA_SUCCESS'
+          'MFA_SUCCESS',
+          jwtSecret,
+          env
         );
 
         const token = await signJwtWeb({
@@ -787,6 +822,31 @@ export default {
         }
 
         const inflightKey = `${cid}:${mode}`;
+        if (!body.forceRefresh) {
+          const cached = pendingChallengeEnrollmentCache.get(inflightKey);
+          if (cached && cached.expiresAtMs > Date.now()) {
+            const verifyChallenge: any = await env.DB.prepare(
+              'SELECT consumed, attempts, max_attempts FROM mfa_challenges WHERE id = ? OR challenge_token = ? LIMIT 1'
+            ).bind(cid, cid).first();
+            const verifyUser: any = await env.DB.prepare(
+              'SELECT mfa_enrolled, last_totp_step FROM users WHERE id = ? LIMIT 1'
+            ).bind(cached.userId).first();
+            if (
+              verifyChallenge &&
+              Number(verifyChallenge.consumed) === 0 &&
+              Number(verifyChallenge.attempts || 0) < Number(verifyChallenge.max_attempts || 5) &&
+              verifyUser &&
+              !Boolean(verifyUser.mfa_enrolled) &&
+              Number(verifyUser.last_totp_step || 0) === 0
+            ) {
+              return jsonResponse(cached.payload, cached.status, origin, undefined, env);
+            }
+          }
+          pendingChallengeEnrollmentCache.delete(inflightKey);
+        } else {
+          pendingChallengeEnrollmentCache.delete(inflightKey);
+        }
+
         let pendingTask = !body.forceRefresh ? inFlightChallengeEnrollments.get(inflightKey) : undefined;
         if (!pendingTask) {
           pendingTask = (async () => {
@@ -810,6 +870,7 @@ export default {
               return { status: 404, payload: { success: false, error: 'User identity not found.' } };
             }
             if (Boolean(user.mfa_enrolled) || Number(user.last_totp_step || 0) > 0) {
+              clearWorkerEnrollmentCacheForUser(user.id);
               return {
                 status: 403,
                 payload: {
@@ -844,19 +905,26 @@ export default {
                 'ALLOWED',
                 `[RECOVERY ENROLLMENT ISSUED] Issued 8 single-use hashed recovery codes for laptop-only MFA setup (${user.username}).`,
                 0.9,
-                'RECOVERY_CODE_ENROLLMENT_STARTED'
+                'RECOVERY_CODE_ENROLLMENT_STARTED',
+                jwtSecret,
+                env
               );
 
-              return {
-                status: 200,
-                payload: {
-                  success: true,
-                  mode: 'recovery_codes',
-                  username: user.username,
-                  backupCodes: plaintextCodes,
-                  issuer: 'ServerlessSecOps'
-                }
+              const payload = {
+                success: true,
+                mode: 'recovery_codes',
+                username: user.username,
+                backupCodes: plaintextCodes,
+                issuer: 'ServerlessSecOps'
               };
+              clearWorkerEnrollmentCacheForUser(user.id);
+              pendingChallengeEnrollmentCache.set(inflightKey, {
+                userId: user.id,
+                expiresAtMs: Date.now() + 300_000,
+                status: 200,
+                payload
+              });
+              return { status: 200, payload };
             }
 
             let cleanSecret = String(user.mfa_secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
@@ -887,22 +955,29 @@ export default {
               'ALLOWED',
               `[FIRST-TIME MFA PAIRING] Issued one-time Authenticator QR & recovery codes for ${user.username}.`,
               0.9,
-              'MFA_PAIRING_ISSUED'
+              'MFA_PAIRING_ISSUED',
+              jwtSecret,
+              env
             );
 
             const provisioningUri = `otpauth://totp/ServerlessSecOps:${encodeURIComponent(user.username)}?secret=${cleanSecret}&issuer=ServerlessSecOps&algorithm=SHA1&digits=6&period=30`;
-            return {
-              status: 200,
-              payload: {
-                success: true,
-                mode: 'authenticator',
-                username: user.username,
-                secret: cleanSecret,
-                provisioningUri,
-                backupCodes: plaintextCodes,
-                issuer: 'ServerlessSecOps'
-              }
+            const payload = {
+              success: true,
+              mode: 'authenticator',
+              username: user.username,
+              secret: cleanSecret,
+              provisioningUri,
+              backupCodes: plaintextCodes,
+              issuer: 'ServerlessSecOps'
             };
+            clearWorkerEnrollmentCacheForUser(user.id);
+            pendingChallengeEnrollmentCache.set(inflightKey, {
+              userId: user.id,
+              expiresAtMs: Date.now() + 300_000,
+              status: 200,
+              payload
+            });
+            return { status: 200, payload };
           })();
 
           inFlightChallengeEnrollments.set(inflightKey, pendingTask);
@@ -1229,7 +1304,9 @@ export default {
         'ALLOWED',
         `[RECOVERY CODES GENERATED] Created 8 single-use recovery codes for ${targetUser.username} by ${auth.caller.username}.`,
         1.1,
-        'RECOVERY_CODES_GENERATED'
+        'RECOVERY_CODES_GENERATED',
+        jwtSecret,
+        env
       );
 
       return jsonResponse({
@@ -1273,13 +1350,107 @@ export default {
         'ALLOWED',
         `[ADMIN MFA RESET] MFA enrollment & recovery codes reset for ${targetUser.username} by ${auth.caller.username} at ${new Date().toISOString()}; existing sessions revoked. Outcome: RESET_COMPLETED.`,
         1.0,
-        'MFA_ENROLLMENT_RESET'
+        'MFA_ENROLLMENT_RESET',
+        jwtSecret,
+        env
       );
 
       return jsonResponse({
         success: true,
         message: `MFA enrollment reset for [${targetUser.username}]. Existing sessions were revoked and new setup is required on next sign-in.`
       }, 200, origin, undefined, env);
+    }
+
+    // 10c. Full-Ledger Audit Integrity Chain Verification & Governance
+    if ((path === '/api/v1/audit/verify-chain' || path === '/api/audit/verify-chain') && method === 'GET') {
+      const auth = await authenticateUserWorker(request, env, jwtSecret, origin);
+      if ('response' in auth) return auth.response;
+      if (!AUDIT_READ_ROLES.has(auth.caller.role)) {
+        return jsonResponse({ error: 'Forbidden: Audit chain verification requires SecOps or Auditor clearance.' }, 403, origin, undefined, env);
+      }
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
+      const rawLimit = url.searchParams.get('limit');
+      const parsedLimit = rawLimit && rawLimit !== 'all' ? parseInt(rawLimit, 10) : undefined;
+      const limit = typeof parsedLimit === 'number' && Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+      const verification = await verifyAuditIntegrityChainWorker(env.DB, jwtSecret, limit, env);
+      return jsonResponse({ success: true, ...verification }, 200, origin, undefined, env);
+    }
+
+    if ((path === '/api/v1/audit/anchor-status' || path === '/api/audit/anchor-status') && method === 'GET') {
+      const auth = await authenticateUserWorker(request, env, jwtSecret, origin);
+      if ('response' in auth) return auth.response;
+      if (!AUDIT_READ_ROLES.has(auth.caller.role)) {
+        return jsonResponse({ error: 'Forbidden: Audit anchor inspection requires SecOps or Auditor clearance.' }, 403, origin, undefined, env);
+      }
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
+      const anchor = await getWorkerAnchorStatus(env.DB, jwtSecret, env);
+      return jsonResponse({ success: true, anchor }, 200, origin, undefined, env);
+    }
+
+    if ((path === '/api/v1/audit/baseline-legacy' || path === '/api/audit/baseline-legacy') && method === 'POST') {
+      const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
+      if ('response' in auth) return auth.response;
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
+      try {
+        const body: any = await request.json().catch(() => ({}));
+        let cutoffMaxId: number | undefined;
+        if (body.cutoffMaxId !== undefined && body.cutoffMaxId !== null && body.cutoffMaxId !== '') {
+          const parsed = Number(body.cutoffMaxId);
+          if (!Number.isInteger(parsed) || parsed <= 0) {
+            return jsonResponse({ error: 'cutoffMaxId must be a positive integer.' }, 400, origin, undefined, env);
+          }
+          cutoffMaxId = parsed;
+        }
+        const baselineResult = await baselineLegacyRecordsWorker(env.DB, jwtSecret, env, {
+          adminUsername: auth.caller.username,
+          cutoffMaxId,
+          epochLabel: typeof body.epochLabel === 'string' ? body.epochLabel.trim().slice(0, 80) : undefined,
+          reason: typeof body.reason === 'string' ? body.reason.trim().slice(0, 280) : undefined
+        });
+        const verification = await verifyAuditIntegrityChainWorker(env.DB, jwtSecret, undefined, env);
+        return jsonResponse({ ...baselineResult, verification }, 200, origin, undefined, env);
+      } catch (err: any) {
+        return jsonResponse({ error: err?.message || 'Failed to seal legacy audit baseline.' }, 400, origin, undefined, env);
+      }
+    }
+
+    if ((path === '/api/v1/audit/rotate-anchor-key' || path === '/api/audit/rotate-anchor-key') && method === 'POST') {
+      const auth = await authenticateAdminWorker(request, env, jwtSecret, origin);
+      if ('response' in auth) return auth.response;
+      if (!env.DB) {
+        return jsonResponse({ error: 'Database binding unavailable (fail-closed).' }, 503, origin, undefined, env);
+      }
+      try {
+        const body: any = await request.json().catch(() => ({}));
+        const newKeyId = typeof body.newKeyId === 'string' ? body.newKeyId.trim().slice(0, 64) : undefined;
+        const newSecret = typeof body.newSecret === 'string' ? body.newSecret : undefined;
+        const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 280) : undefined;
+
+        if (newKeyId && !/^[a-zA-Z0-9._-]+$/.test(newKeyId)) {
+          return jsonResponse({ error: 'newKeyId may only contain alphanumeric characters, dots, dashes, or underscores.' }, 400, origin, undefined, env);
+        }
+        if (newSecret !== undefined && newSecret.trim().length > 0 && newSecret.trim().length < 16) {
+          return jsonResponse({ error: 'newSecret must be at least 16 characters when supplied.' }, 400, origin, undefined, env);
+        }
+
+        const rotation = await rotateWorkerAnchorKey(env.DB, jwtSecret, env, {
+          adminUsername: auth.caller.username,
+          newKeyId,
+          newSecret,
+          reason
+        });
+        const anchor = await getWorkerAnchorStatus(env.DB, jwtSecret, env);
+        const verification = await verifyAuditIntegrityChainWorker(env.DB, jwtSecret, undefined, env);
+        return jsonResponse({ ...rotation, anchor, verification }, 200, origin, undefined, env);
+      } catch (err: any) {
+        return jsonResponse({ error: err?.message || 'Failed to rotate audit chain anchor key.' }, 409, origin, undefined, env);
+      }
     }
 
     // 11. Function Catalog (/api/v1/verify/functions)
@@ -1338,7 +1509,9 @@ export default {
           'ALLOWED',
           `[ADMIN CLEARANCE] User [${targetUsername}] APPROVED by authenticated Administrator ${callerUsername}.`,
           0.5,
-          'USER_APPROVED'
+          'USER_APPROVED',
+          jwtSecret,
+          env
         );
 
         return jsonResponse({ success: true, message: `Principal [${targetUsername}] has been APPROVED.` }, 200, origin, undefined, env);
@@ -1391,7 +1564,9 @@ export default {
           'BLOCKED',
           `[ADMIN REJECTION] User [${targetUsername}] access REJECTED by authenticated Administrator ${callerUsername}. Reason: ${body.reason || 'SecOps decision'}`,
           0.5,
-          'USER_REJECTED'
+          'USER_REJECTED',
+          jwtSecret,
+          env
         );
 
         return jsonResponse({ success: true, message: `Principal [${targetUsername}] access request REJECTED.` }, 200, origin, undefined, env);
@@ -1560,7 +1735,7 @@ export default {
         const authHeader = request.headers.get('Authorization');
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
           const authLatency = Number((performance.now() - verificationStartTime).toFixed(3));
-          await logSecurityEvent(env.DB, 'anonymous_guest', effectiveTarget, 100, 'BLOCKED', 'Security Exception: Missing Framework Signature Bearer token.', authLatency, 'AUTHENTICATION_FAILURE');
+          await logSecurityEvent(env.DB, 'anonymous_guest', effectiveTarget, 100, 'BLOCKED', 'Security Exception: Missing Framework Signature Bearer token.', authLatency, 'AUTHENTICATION_FAILURE', jwtSecret, env);
           return jsonResponse({
             error: 'Security Exception: Missing Framework Signature Bearer token.',
             metrics: { riskScore: 100, status: 'BLOCKED', threatReason: 'Missing Framework Signature token.', verification_latency_ms: authLatency, eventType: 'AUTHENTICATION_FAILURE' }
@@ -1573,7 +1748,7 @@ export default {
         const jwtResult = await verifyJwtWeb(rawBearerToken, jwtSecret);
         if (!jwtResult.valid || !jwtResult.claims) {
           const lat = Number((performance.now() - verificationStartTime).toFixed(3));
-          await logSecurityEvent(env.DB, 'invalid_token', effectiveTarget, 100, 'BLOCKED', `Cryptographic token validation failed: ${jwtResult.error}`, lat, 'TOKEN_INVALID');
+          await logSecurityEvent(env.DB, 'invalid_token', effectiveTarget, 100, 'BLOCKED', `Cryptographic token validation failed: ${jwtResult.error}`, lat, 'TOKEN_INVALID', jwtSecret, env);
           return jsonResponse({
             error: `Cryptographic token verification rejected: ${jwtResult.error}`,
             metrics: { riskScore: 100, status: 'BLOCKED', threatReason: jwtResult.error, verification_latency_ms: lat, eventType: 'TOKEN_INVALID' }
@@ -1599,7 +1774,9 @@ export default {
               'BLOCKED',
               `[SESSION REVOKED] Active session for principal [${claims.username}] was terminated in D1.`,
               revLatency,
-              'SESSION_REVOKED'
+              'SESSION_REVOKED',
+              jwtSecret,
+              env
             );
             return jsonResponse({
               error: 'Security Gateway: Session has been terminated in D1 registry. Token no longer honored.',
@@ -1621,7 +1798,9 @@ export default {
               'BLOCKED',
               `[SESSION EXPIRED] Active session missing or expired in D1 for [${claims.username}].`,
               expLatency,
-              'SESSION_EXPIRED'
+              'SESSION_EXPIRED',
+              jwtSecret,
+              env
             );
             return jsonResponse({
               error: 'Security Gateway: Session missing or expired in D1 registry.',
@@ -1662,7 +1841,7 @@ export default {
         const isAdminRole = user.role === 'Admin' || user.role === 'Super Administrator' || user.role === 'Security Administrator';
         if (policy.globalLockdown && !isAdminRole) {
           const lockLatency = Number((performance.now() - verificationStartTime).toFixed(3));
-          await logSecurityEvent(env.DB, user.username, effectiveTarget, 100, 'BLOCKED', 'Emergency Global Perimeter Lockdown is active.', lockLatency, 'GLOBAL_LOCKDOWN');
+          await logSecurityEvent(env.DB, user.username, effectiveTarget, 100, 'BLOCKED', 'Emergency Global Perimeter Lockdown is active.', lockLatency, 'GLOBAL_LOCKDOWN', jwtSecret, env);
           return jsonResponse({
             error: 'Emergency Perimeter Lockdown active: Non-administrator invocations are blocked.',
             metrics: { riskScore: 100, status: 'BLOCKED', threatReason: 'Global Lockdown active.', verification_latency_ms: lockLatency, eventType: 'GLOBAL_LOCKDOWN' }
@@ -1681,7 +1860,7 @@ export default {
 
         if (!isAuthorized) {
           const rbacLatency = Number((performance.now() - verificationStartTime).toFixed(3));
-          await logSecurityEvent(env.DB, user.username, effectiveTarget, 90, 'BLOCKED', `RBAC Breach: Role ${user.role} unauthorized for ${effectiveTarget}.`, rbacLatency, 'RBAC_VIOLATION');
+          await logSecurityEvent(env.DB, user.username, effectiveTarget, 90, 'BLOCKED', `RBAC Breach: Role ${user.role} unauthorized for ${effectiveTarget}.`, rbacLatency, 'RBAC_VIOLATION', jwtSecret, env);
           return jsonResponse({
             error: `RBAC Violation: Role [${user.role}] cannot invoke ${effectiveTarget}`,
             metrics: { riskScore: 90, status: 'BLOCKED', threatReason: `RBAC Breach: Role ${user.role} unauthorized for ${effectiveTarget}.`, verification_latency_ms: rbacLatency, eventType: 'RBAC_VIOLATION' }
@@ -1763,7 +1942,7 @@ export default {
 
         // Evaluate Cutoff Boundary against live policy.maxRiskThreshold
         if (totalRisk >= policy.maxRiskThreshold || threatPenalty >= policy.maxRiskThreshold) {
-          await logSecurityEvent(env.DB, user.username, effectiveTarget, totalRisk, 'BLOCKED', `Mitigation: ${threatReason}`, verificationLatencyMs, eventType);
+          await logSecurityEvent(env.DB, user.username, effectiveTarget, totalRisk, 'BLOCKED', `Mitigation: ${threatReason}`, verificationLatencyMs, eventType, jwtSecret, env);
           return jsonResponse({
             error: `Access Suspended: Risk Metric (${totalRisk}%) Exceeds Safe Boundary (${policy.maxRiskThreshold}%).`,
             metrics: {
@@ -1781,7 +1960,7 @@ export default {
         }
 
         // Allowed Execution Logging
-        await logSecurityEvent(env.DB, user.username, effectiveTarget, totalRisk, 'ALLOWED', threatReason, verificationLatencyMs, eventType);
+        await logSecurityEvent(env.DB, user.username, effectiveTarget, totalRisk, 'ALLOWED', threatReason, verificationLatencyMs, eventType, jwtSecret, env);
 
         return jsonResponse({
           message: 'Serverless invocation executed safely with verified Zero-Trust clearance.',
@@ -1798,7 +1977,7 @@ export default {
         // FAIL-CLOSED ARCHITECTURE GUARANTEE
         const failClosedLatency = Number((performance.now() - verificationStartTime).toFixed(3));
         const failClosedReason = `[FAIL-CLOSED EXCEPTION] Security pipeline fault: ${err?.message || String(err)}. Request immediately blocked with 100% Critical Risk under Zero-Trust fail-closed architecture.`;
-        await logSecurityEvent(env.DB, auditUsername, path, 100, 'BLOCKED', failClosedReason, failClosedLatency, 'SECURITY_EXCEPTION_FAIL_CLOSED');
+        await logSecurityEvent(env.DB, auditUsername, path, 100, 'BLOCKED', failClosedReason, failClosedLatency, 'SECURITY_EXCEPTION_FAIL_CLOSED', jwtSecret, env);
         return jsonResponse({
           success: false,
           error: 'Security Verification Pipeline Exception [FAIL_CLOSED]: Request blocked by Zero-Trust fail-closed security architecture.',
@@ -2142,6 +2321,1160 @@ function maskEmail(email?: string, username?: string): string {
   return `${local.slice(0, 2)}••••@${domain}`;
 }
 
+async function hmacSha256HexWeb(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function maybeBootstrapAdminWorker(env: Env): Promise<void> {
+  const adminEnvPwd = env.INITIAL_ADMIN_PASSWORD?.trim();
+  if (!adminEnvPwd || adminEnvPwd.length < 8 || !env.DB) return;
+  try {
+    const adminRow: any = await env.DB.prepare(
+      "SELECT id, password_hash FROM users WHERE LOWER(username) = 'secops_admin' LIMIT 1"
+    ).first();
+    if (
+      adminRow &&
+      (adminRow.password_hash === '!BOOTSTRAP_REQUIRED!' || !adminRow.password_hash || String(adminRow.password_hash).trim() === '')
+    ) {
+      const salt = generateRandomHex(16);
+      const hash = await derivePbkdf2Hex(adminEnvPwd, salt);
+      await env.DB.prepare(
+        "UPDATE users SET password_salt = ?, password_hash = ? WHERE id = ? AND (password_hash = '!BOOTSTRAP_REQUIRED!' OR password_hash IS NULL OR trim(password_hash) = '')"
+      ).bind(salt, hash, adminRow.id).run();
+    }
+  } catch {
+    // ignore bootstrap failures
+  }
+}
+
+const workerDbRotationStates = new WeakMap<
+  object,
+  {
+    activeKeyId: string;
+    activeKey: string;
+    keySource: string;
+    previousKeys: Map<string, string>;
+  }
+>();
+
+const workerDbWriteQueues = new WeakMap<object, Promise<any>>();
+
+function enqueueWorkerAuditWrite<T>(db: any, task: () => Promise<T>): Promise<T> {
+  if (!db || typeof db !== 'object') {
+    return task();
+  }
+  const prev = workerDbWriteQueues.get(db) || Promise.resolve();
+  const next = prev.then(task, task);
+  workerDbWriteQueues.set(
+    db,
+    next.catch(() => undefined)
+  );
+  return next;
+}
+
+async function deriveAnchorHmacKeyWeb(rawSecret: string, label = 'serverless-security:audit-chain-anchor:v1'): Promise<string> {
+  return hmacSha256HexWeb(rawSecret, label);
+}
+
+async function parseAnchorKeyRingWeb(rawPreviousKeys?: string): Promise<Map<string, string>> {
+  const ring = new Map<string, string>();
+  if (!rawPreviousKeys || !rawPreviousKeys.trim()) return ring;
+  const trimmed = rawPreviousKeys.trim();
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        for (const [keyId, secret] of Object.entries(parsed)) {
+          if (typeof secret === 'string' && secret.trim()) {
+            ring.set(keyId.trim(), await deriveAnchorHmacKeyWeb(secret.trim()));
+          }
+        }
+        return ring;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  for (const entry of trimmed.split(',')) {
+    const clean = entry.trim();
+    if (!clean) continue;
+    const sepIdx = clean.indexOf(':');
+    if (sepIdx <= 0) continue;
+    const keyId = clean.slice(0, sepIdx).trim();
+    const secret = clean.slice(sepIdx + 1).trim();
+    if (keyId && secret) {
+      ring.set(keyId, await deriveAnchorHmacKeyWeb(secret));
+    }
+  }
+  return ring;
+}
+
+async function resolveWorkerAnchorContext(
+  db: any,
+  jwtSecret: string,
+  env?: Env
+): Promise<{
+  activeKeyId: string;
+  activeKey: string;
+  keySource: string;
+  keyFingerprint: string;
+  previousKeys: Map<string, string>;
+  resolveKeyForId: (keyId?: string | null) => Promise<string | null>;
+}> {
+  const rotationOverride = db && typeof db === 'object' ? workerDbRotationStates.get(db) : undefined;
+  const masterSecret = env?.AUDIT_ANCHOR_KEY?.trim() || jwtSecret;
+  const envKeyId = env?.AUDIT_ANCHOR_KEY_ID?.trim() || 'anchor-v1';
+  const envKeySource = env?.AUDIT_ANCHOR_KEY?.trim() ? 'AUDIT_ANCHOR_KEY_ENV' : 'JWT_SECRET_DOMAIN_DERIVED';
+  const envPreviousKeys = await parseAnchorKeyRingWeb(env?.AUDIT_ANCHOR_PREVIOUS_KEYS);
+
+  const activeKeyId = rotationOverride?.activeKeyId || envKeyId;
+  const activeKey =
+    rotationOverride?.activeKey ||
+    (envKeyId === 'anchor-v1'
+      ? await deriveAnchorHmacKeyWeb(masterSecret)
+      : await deriveAnchorHmacKeyWeb(masterSecret, `serverless-security:audit-chain-anchor:${envKeyId}`));
+  const keySource = rotationOverride?.keySource || envKeySource;
+
+  const previousKeys = new Map<string, string>(envPreviousKeys);
+  if (rotationOverride) {
+    for (const [k, v] of rotationOverride.previousKeys.entries()) {
+      previousKeys.set(k, v);
+    }
+  }
+
+  const keyFingerprint = (await sha256Hex(activeKey)).slice(0, 16);
+
+  const resolveKeyForId = async (keyId?: string | null): Promise<string | null> => {
+    const targetId = (keyId || 'anchor-v1').trim();
+    if (targetId === activeKeyId) return activeKey;
+    if (previousKeys.has(targetId)) return previousKeys.get(targetId)!;
+    if (/^anchor-v\d+(?:[-_][a-z0-9]+)*$/i.test(targetId) && keySource !== 'CUSTOM_ROTATED_KEY') {
+      return targetId === 'anchor-v1'
+        ? deriveAnchorHmacKeyWeb(masterSecret)
+        : deriveAnchorHmacKeyWeb(masterSecret, `serverless-security:audit-chain-anchor:${targetId}`);
+    }
+    return null;
+  };
+
+  return { activeKeyId, activeKey, keySource, keyFingerprint, previousKeys, resolveKeyForId };
+}
+
+async function computeWorkerAnchorHmac(
+  genesisHash: string,
+  headId: number,
+  headHash: string,
+  recordCount: number,
+  keyId: string,
+  hmacKey: string
+): Promise<string> {
+  return hmacSha256HexWeb(hmacKey, `${genesisHash}|${headId}|${headHash}|${recordCount}|${keyId}`);
+}
+
+async function computeWorkerEpochHmac(
+  epoch: {
+    epochLabel: string;
+    legacyCutoffMaxId: number;
+    legacyRecordCount: number;
+    legacySnapshotSha256: string;
+    epochStartId: number;
+    epochGenesisHash: string;
+    createdBy: string;
+    createdAt: string;
+    keyId: string;
+  },
+  hmacKey: string
+): Promise<string> {
+  const payload = [
+    epoch.epochLabel,
+    epoch.legacyCutoffMaxId,
+    epoch.legacyRecordCount,
+    epoch.legacySnapshotSha256,
+    epoch.epochStartId,
+    epoch.epochGenesisHash,
+    epoch.createdBy,
+    epoch.createdAt,
+    epoch.keyId
+  ].join('|');
+  return hmacSha256HexWeb(hmacKey, payload);
+}
+
+async function computeWorkerLegacySnapshotSha256(rows: any[]): Promise<string> {
+  const canonical = rows
+    .map((r) => {
+      const ts = r.timestamp || r.created_at || '';
+      return `${r.id}|${ts}|${r.username}|${r.requested_function}|${r.calculated_risk}|${r.status}|${r.reason}|${r.integrity_hash || ''}|${r.prev_hash || ''}`;
+    })
+    .join('\n');
+  return sha256Hex(canonical);
+}
+
+async function verifyWorkerAnchorRow(
+  anchor: any,
+  jwtSecret: string,
+  ctx: Awaited<ReturnType<typeof resolveWorkerAnchorContext>>
+): Promise<boolean> {
+  if (!anchor) return false;
+  const anchorKeyId = (anchor.key_id || 'anchor-v1').trim();
+  const resolvedKey = await ctx.resolveKeyForId(anchorKeyId);
+  if (!resolvedKey) return false;
+
+  const expectedHmac = await computeWorkerAnchorHmac(
+    String(anchor.genesis_hash),
+    Number(anchor.head_id),
+    String(anchor.head_hash),
+    Number(anchor.record_count),
+    anchorKeyId,
+    resolvedKey
+  );
+  if (timingSafeEqualStr(String(anchor.anchor_hmac).toLowerCase(), expectedHmac.toLowerCase())) {
+    return true;
+  }
+
+  if (anchorKeyId === 'anchor-v1' && !anchor.previous_key_id && !anchor.rotated_at) {
+    const legacyDomain = await hmacSha256HexWeb(
+      resolvedKey,
+      `${anchor.genesis_hash}|${Number(anchor.head_id)}|${String(anchor.head_hash)}|${Number(anchor.record_count)}`
+    );
+    if (timingSafeEqualStr(String(anchor.anchor_hmac).toLowerCase(), legacyDomain.toLowerCase())) {
+      return true;
+    }
+    const legacyJwt = await hmacSha256HexWeb(
+      jwtSecret,
+      `${anchor.genesis_hash}|${Number(anchor.head_id)}|${String(anchor.head_hash)}|${Number(anchor.record_count)}`
+    );
+    if (timingSafeEqualStr(String(anchor.anchor_hmac).toLowerCase(), legacyJwt.toLowerCase())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function ensureWorkerAnchorTable(db: any): Promise<void> {
+  try {
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS audit_chain_anchor (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        genesis_hash TEXT NOT NULL,
+        head_id INTEGER NOT NULL,
+        head_hash TEXT NOT NULL,
+        record_count INTEGER NOT NULL,
+        anchor_hmac TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        key_id TEXT NOT NULL DEFAULT 'anchor-v1',
+        previous_key_id TEXT,
+        rotated_at TEXT
+      )`
+    ).run();
+
+    try {
+      const colsRes = await db.prepare('PRAGMA table_info(audit_chain_anchor)').all();
+      const cols = new Set((colsRes?.results || []).map((c: any) => String(c.name || '').toLowerCase()));
+      if (cols.size > 0) {
+        if (!cols.has('key_id')) {
+          await db.prepare("ALTER TABLE audit_chain_anchor ADD COLUMN key_id TEXT NOT NULL DEFAULT 'anchor-v1'").run();
+        }
+        if (!cols.has('previous_key_id')) {
+          await db.prepare('ALTER TABLE audit_chain_anchor ADD COLUMN previous_key_id TEXT').run();
+        }
+        if (!cols.has('rotated_at')) {
+          await db.prepare('ALTER TABLE audit_chain_anchor ADD COLUMN rotated_at TEXT').run();
+        }
+      }
+    } catch {
+      // ignore if mocked D1 does not support PRAGMA table_info
+    }
+
+    await db.prepare(
+      `CREATE TABLE IF NOT EXISTS audit_ledger_epochs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        epoch_label TEXT NOT NULL,
+        legacy_cutoff_max_id INTEGER NOT NULL,
+        legacy_record_count INTEGER NOT NULL,
+        legacy_snapshot_sha256 TEXT NOT NULL,
+        epoch_start_id INTEGER NOT NULL,
+        epoch_genesis_hash TEXT NOT NULL,
+        reason TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        key_id TEXT NOT NULL DEFAULT 'anchor-v1',
+        epoch_hmac TEXT NOT NULL
+      )`
+    ).run();
+
+    await db.prepare(
+      'CREATE INDEX IF NOT EXISTS idx_audit_ledger_epochs_cutoff ON audit_ledger_epochs(legacy_cutoff_max_id)'
+    ).run();
+  } catch {
+    // ignore if mocked DB cannot run DDL
+  }
+}
+
+async function isWorkerRowStructurallyValidAndHashed(r: any): Promise<boolean> {
+  if (
+    !r?.integrity_hash ||
+    !/^[0-9a-f]{64}$/i.test(String(r.integrity_hash)) ||
+    !r?.prev_hash ||
+    !/^[0-9a-f]{64}$/i.test(String(r.prev_hash))
+  ) {
+    return false;
+  }
+  const ts = r.timestamp || r.created_at || '';
+  const payload = `${ts}|${r.username}|${r.requested_function}|${r.calculated_risk}|${r.status}|${r.reason}|${r.prev_hash}`;
+  const expected = await sha256Hex(payload);
+  return timingSafeEqualStr(String(r.integrity_hash).toLowerCase(), expected.toLowerCase());
+}
+
+async function findWorkerSuggestedLegacyCutoff(chronological: any[]): Promise<{
+  suggestedCutoffMaxId: number | null;
+  modernStartIndex: number;
+}> {
+  if (chronological.length === 0) {
+    return { suggestedCutoffMaxId: null, modernStartIndex: 0 };
+  }
+  let startIdx = chronological.length;
+  for (let i = chronological.length - 1; i >= 0; i--) {
+    const cur = chronological[i];
+    if (!(await isWorkerRowStructurallyValidAndHashed(cur))) break;
+    startIdx = i;
+    if (i > 0) {
+      const prev = chronological[i - 1];
+      if (!(await isWorkerRowStructurallyValidAndHashed(prev))) break;
+      if (String(cur.prev_hash) !== String(prev.integrity_hash)) break;
+      const prevTsMs = Date.parse(prev.timestamp || prev.created_at);
+      const curTsMs = Date.parse(cur.timestamp || cur.created_at);
+      if (Number.isFinite(prevTsMs) && Number.isFinite(curTsMs) && curTsMs + 1000 < prevTsMs) break;
+    }
+  }
+  if (startIdx === 0) {
+    if (chronological[0].prev_hash === TRUSTED_AUDIT_GENESIS_HASH) {
+      return { suggestedCutoffMaxId: null, modernStartIndex: 0 };
+    }
+    return { suggestedCutoffMaxId: Number(chronological[chronological.length - 1].id), modernStartIndex: chronological.length };
+  }
+  if (startIdx >= chronological.length) {
+    return { suggestedCutoffMaxId: Number(chronological[chronological.length - 1].id), modernStartIndex: chronological.length };
+  }
+  return { suggestedCutoffMaxId: Number(chronological[startIdx - 1].id), modernStartIndex: startIdx };
+}
+
+async function getWorkerAnchorStatus(db: any, jwtSecret: string, env?: Env) {
+  await ensureWorkerAnchorTable(db);
+  const ctx = await resolveWorkerAnchorContext(db, jwtSecret, env);
+  const anchor: any = await db.prepare('SELECT * FROM audit_chain_anchor WHERE id = 1').first();
+  let latestEpochRow: any = null;
+  try {
+    latestEpochRow = await db.prepare('SELECT * FROM audit_ledger_epochs ORDER BY id DESC LIMIT 1').first();
+  } catch {
+    latestEpochRow = null;
+  }
+
+  const verified = anchor ? await verifyWorkerAnchorRow(anchor, jwtSecret, ctx) : false;
+
+  let activeEpoch: any = null;
+  if (latestEpochRow) {
+    const cutoffMaxId = Number(latestEpochRow.legacy_cutoff_max_id);
+    const legacyRowsRes = await db
+      .prepare(
+        `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+         FROM audit_events WHERE id <= ? ORDER BY id ASC`
+      )
+      .bind(cutoffMaxId)
+      .all();
+    const legacyRows: any[] = legacyRowsRes?.results || [];
+    const recomputedSnapshot = await computeWorkerLegacySnapshotSha256(legacyRows);
+    const snapshotVerified =
+      legacyRows.length === Number(latestEpochRow.legacy_record_count) &&
+      timingSafeEqualStr(recomputedSnapshot.toLowerCase(), String(latestEpochRow.legacy_snapshot_sha256).toLowerCase());
+
+    const epochKey = await ctx.resolveKeyForId(latestEpochRow.key_id);
+    const epochHmacVerified = Boolean(
+      epochKey &&
+        timingSafeEqualStr(
+          String(latestEpochRow.epoch_hmac).toLowerCase(),
+          (
+            await computeWorkerEpochHmac(
+              {
+                epochLabel: String(latestEpochRow.epoch_label),
+                legacyCutoffMaxId: cutoffMaxId,
+                legacyRecordCount: Number(latestEpochRow.legacy_record_count),
+                legacySnapshotSha256: String(latestEpochRow.legacy_snapshot_sha256),
+                epochStartId: Number(latestEpochRow.epoch_start_id),
+                epochGenesisHash: String(latestEpochRow.epoch_genesis_hash),
+                createdBy: String(latestEpochRow.created_by),
+                createdAt: String(latestEpochRow.created_at),
+                keyId: String(latestEpochRow.key_id)
+              },
+              epochKey
+            )
+          ).toLowerCase()
+        )
+    );
+
+    activeEpoch = {
+      id: Number(latestEpochRow.id),
+      epochLabel: String(latestEpochRow.epoch_label),
+      legacyCutoffMaxId: cutoffMaxId,
+      legacyRecordCount: Number(latestEpochRow.legacy_record_count),
+      legacySnapshotSha256: String(latestEpochRow.legacy_snapshot_sha256),
+      epochStartId: Number(latestEpochRow.epoch_start_id),
+      epochGenesisHash: String(latestEpochRow.epoch_genesis_hash),
+      reason: latestEpochRow.reason || null,
+      createdBy: String(latestEpochRow.created_by),
+      createdAt: String(latestEpochRow.created_at),
+      keyId: String(latestEpochRow.key_id),
+      snapshotVerified,
+      epochHmacVerified
+    };
+  }
+
+  return {
+    present: Boolean(anchor),
+    verified: Boolean(anchor && verified),
+    keyId: anchor?.key_id || null,
+    previousKeyId: anchor?.previous_key_id || null,
+    rotatedAt: anchor?.rotated_at || null,
+    activeKeyId: ctx.activeKeyId,
+    keySource: ctx.keySource,
+    keyFingerprint: ctx.keyFingerprint,
+    activeEpoch,
+    genesisHash: anchor?.genesis_hash || TRUSTED_AUDIT_GENESIS_HASH,
+    headId: Number(anchor?.head_id || 0),
+    headHash: anchor?.head_hash || null,
+    recordCount: Number(anchor?.record_count || 0),
+    updatedAt: anchor?.updated_at || null
+  };
+}
+
+async function rotateWorkerAnchorKey(
+  db: any,
+  jwtSecret: string,
+  env: Env,
+  params: { adminUsername: string; newKeyId?: string; newSecret?: string; reason?: string }
+) {
+  await ensureWorkerAnchorTable(db);
+  const ctx = await resolveWorkerAnchorContext(db, jwtSecret, env);
+  const rotatedAt = new Date().toISOString();
+  const sanitizedNewKeyId = params.newKeyId?.trim() || `anchor-v${Date.now().toString(36)}`;
+  if (sanitizedNewKeyId === ctx.activeKeyId) {
+    throw new Error(`Anchor key ID '${sanitizedNewKeyId}' is already active.`);
+  }
+
+  const anchor: any = await db.prepare('SELECT * FROM audit_chain_anchor WHERE id = 1').first();
+  if (anchor) {
+    const valid = await verifyWorkerAnchorRow(anchor, jwtSecret, ctx);
+    if (!valid) {
+      throw new Error('Refusing anchor key rotation: existing audit_chain_anchor HMAC verification failed.');
+    }
+  }
+
+  const masterSecret = env?.AUDIT_ANCHOR_KEY?.trim() || jwtSecret;
+  const oldKeyId = ctx.activeKeyId;
+  const oldKey = ctx.activeKey;
+  const nextKeys = new Map<string, string>(ctx.previousKeys);
+  nextKeys.set(oldKeyId, oldKey);
+
+  const hasCustomSecret = Boolean(params.newSecret && params.newSecret.trim().length >= 16);
+  const newDerivedKey = hasCustomSecret
+    ? await deriveAnchorHmacKeyWeb(params.newSecret!.trim())
+    : await deriveAnchorHmacKeyWeb(masterSecret, `serverless-security:audit-chain-anchor:${sanitizedNewKeyId}`);
+  const newKeySource = hasCustomSecret ? 'CUSTOM_ROTATED_KEY' : ctx.keySource;
+  const keyFingerprint = (await sha256Hex(newDerivedKey)).slice(0, 16);
+
+  if (db && typeof db === 'object') {
+    workerDbRotationStates.set(db, {
+      activeKeyId: sanitizedNewKeyId,
+      activeKey: newDerivedKey,
+      keySource: newKeySource,
+      previousKeys: nextKeys
+    });
+  }
+
+  if (anchor) {
+    const updatedHmac = await computeWorkerAnchorHmac(
+      String(anchor.genesis_hash),
+      Number(anchor.head_id),
+      String(anchor.head_hash),
+      Number(anchor.record_count),
+      sanitizedNewKeyId,
+      newDerivedKey
+    );
+    await db.prepare(
+      'UPDATE audit_chain_anchor SET anchor_hmac = ?, key_id = ?, previous_key_id = ?, rotated_at = ?, updated_at = ? WHERE id = 1'
+    ).bind(updatedHmac, sanitizedNewKeyId, oldKeyId, rotatedAt, rotatedAt).run();
+  }
+
+  const reasonText =
+    params.reason?.trim() ||
+    `Rotated audit_chain_anchor HMAC signing key from [${oldKeyId}] to [${sanitizedNewKeyId}] (fp:${keyFingerprint})`;
+
+  const rec = await logSecurityEvent(
+    db,
+    params.adminUsername,
+    '/api/v1/audit/rotate-anchor-key',
+    10,
+    'ALLOWED',
+    `[ANCHOR KEY ROTATED] ${reasonText}`,
+    0.9,
+    'AUDIT_ANCHOR_KEY_ROTATED',
+    jwtSecret,
+    env
+  );
+
+  try {
+    await db.prepare('UPDATE audit_chain_anchor SET previous_key_id = ?, rotated_at = ? WHERE id = 1')
+      .bind(oldKeyId, rotatedAt).run();
+  } catch {
+    // ignore
+  }
+
+  return {
+    success: true,
+    keyId: sanitizedNewKeyId,
+    previousKeyId: oldKeyId,
+    rotatedAt,
+    keyFingerprint,
+    keySource: newKeySource,
+    auditEventId: rec?.id || 0
+  };
+}
+
+async function baselineLegacyRecordsWorker(
+  db: any,
+  jwtSecret: string,
+  env: Env,
+  params: { adminUsername: string; cutoffMaxId?: number; epochLabel?: string; reason?: string }
+) {
+  await ensureWorkerAnchorTable(db);
+  const ctx = await resolveWorkerAnchorContext(db, jwtSecret, env);
+
+  const allRes = await db
+    .prepare(
+      `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+       FROM audit_events ORDER BY id ASC`
+    )
+    .all();
+  const allRows: any[] = allRes?.results || [];
+  if (allRows.length === 0) {
+    throw new Error('Audit ledger is empty; no historical rows exist to baseline.');
+  }
+
+  let cutoffMaxId: number;
+  let epochStartId = 0;
+  let epochGenesisHash = TRUSTED_AUDIT_GENESIS_HASH;
+
+  if (params.cutoffMaxId !== undefined && Number.isFinite(params.cutoffMaxId)) {
+    cutoffMaxId = Math.floor(params.cutoffMaxId);
+    const nextModern = allRows.find((r) => Number(r.id) > cutoffMaxId);
+    if (nextModern) {
+      epochStartId = Number(nextModern.id);
+      epochGenesisHash = String(nextModern.prev_hash || '');
+    }
+  } else {
+    const detected = await findWorkerSuggestedLegacyCutoff(allRows);
+    if (detected.suggestedCutoffMaxId === null) {
+      throw new Error('Full ledger is already cleanly verified from trusted genesis; no legacy baseline needed.');
+    }
+    cutoffMaxId = detected.suggestedCutoffMaxId;
+    if (detected.modernStartIndex < allRows.length) {
+      epochStartId = Number(allRows[detected.modernStartIndex].id);
+      epochGenesisHash = String(allRows[detected.modernStartIndex].prev_hash || '');
+    }
+  }
+
+  const legacyRows = allRows.filter((r) => Number(r.id) <= cutoffMaxId);
+  if (legacyRows.length === 0) {
+    throw new Error(`No audit_events rows found with id <= ${cutoffMaxId}.`);
+  }
+
+  const modernRows = allRows.filter((r) => Number(r.id) > cutoffMaxId);
+  for (let i = 0; i < modernRows.length; i++) {
+    const r = modernRows[i];
+    if (!(await isWorkerRowStructurallyValidAndHashed(r))) {
+      throw new Error(`Modern epoch row #${r.id} after cutoff (${cutoffMaxId}) fails SHA-256 verification.`);
+    }
+    if (i > 0 && String(r.prev_hash) !== String(modernRows[i - 1].integrity_hash)) {
+      throw new Error(`Modern epoch chain break at row #${r.id} after cutoff (${cutoffMaxId}).`);
+    }
+  }
+
+  const legacySnapshotSha256 = await computeWorkerLegacySnapshotSha256(legacyRows);
+  const createdAt = new Date().toISOString();
+  const epochLabel = params.epochLabel?.trim() || `epoch-${createdAt.slice(0, 10)}-cutoff-${cutoffMaxId}`;
+  const reasonText =
+    params.reason?.trim() ||
+    `Sealed ${legacyRows.length} archived legacy rows (id <= ${cutoffMaxId}) without modifying historical records.`;
+
+  const latestOverallRow = allRows[allRows.length - 1];
+  const willAppendNewEpochStart = modernRows.length === 0;
+  const effectiveEpochGenesisHash = willAppendNewEpochStart
+    ? String(latestOverallRow?.integrity_hash || TRUSTED_AUDIT_GENESIS_HASH)
+    : epochGenesisHash;
+
+  const tempEpochHmac = await computeWorkerEpochHmac(
+    {
+      epochLabel,
+      legacyCutoffMaxId: cutoffMaxId,
+      legacyRecordCount: legacyRows.length,
+      legacySnapshotSha256,
+      epochStartId: willAppendNewEpochStart ? Number(latestOverallRow.id) + 1 : epochStartId,
+      epochGenesisHash: effectiveEpochGenesisHash,
+      createdBy: params.adminUsername,
+      createdAt,
+      keyId: ctx.activeKeyId
+    },
+    ctx.activeKey
+  );
+
+  const insEpochRes: any = await db
+    .prepare(
+      `INSERT INTO audit_ledger_epochs (
+        epoch_label, legacy_cutoff_max_id, legacy_record_count, legacy_snapshot_sha256,
+        epoch_start_id, epoch_genesis_hash, reason, created_by, created_at, key_id, epoch_hmac
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      epochLabel,
+      cutoffMaxId,
+      legacyRows.length,
+      legacySnapshotSha256,
+      willAppendNewEpochStart ? Number(latestOverallRow.id) + 1 : epochStartId,
+      effectiveEpochGenesisHash,
+      reasonText,
+      params.adminUsername,
+      createdAt,
+      ctx.activeKeyId,
+      tempEpochHmac
+    )
+    .run();
+
+  const insertedEpochId = Number(insEpochRes?.meta?.last_row_id ?? insEpochRes?.lastRowId ?? 0);
+
+  const auditRec = await logSecurityEvent(
+    db,
+    params.adminUsername,
+    '/api/v1/audit/baseline-legacy',
+    10,
+    'ALLOWED',
+    `[LEGACY BASELINE SEALED] ${reasonText} (snapshot:${legacySnapshotSha256.slice(0, 16)})`,
+    1.2,
+    'AUDIT_LEGACY_BASELINE_SEALED',
+    jwtSecret,
+    env
+  );
+
+  let finalEpochStartId = epochStartId;
+  let finalEpochGenesisHash = epochGenesisHash;
+  if (willAppendNewEpochStart && auditRec?.id) {
+    finalEpochStartId = auditRec.id;
+    finalEpochGenesisHash = auditRec.prevHash;
+    const updatedEpochHmac = await computeWorkerEpochHmac(
+      {
+        epochLabel,
+        legacyCutoffMaxId: cutoffMaxId,
+        legacyRecordCount: legacyRows.length,
+        legacySnapshotSha256,
+        epochStartId: finalEpochStartId,
+        epochGenesisHash: finalEpochGenesisHash,
+        createdBy: params.adminUsername,
+        createdAt,
+        keyId: ctx.activeKeyId
+      },
+      ctx.activeKey
+    );
+    await db
+      .prepare('UPDATE audit_ledger_epochs SET epoch_start_id = ?, epoch_genesis_hash = ?, epoch_hmac = ? WHERE id = ?')
+      .bind(finalEpochStartId, finalEpochGenesisHash, updatedEpochHmac, insertedEpochId)
+      .run();
+  }
+
+  return {
+    success: true,
+    epoch: {
+      id: insertedEpochId,
+      epochLabel,
+      legacyCutoffMaxId: cutoffMaxId,
+      legacyRecordCount: legacyRows.length,
+      legacySnapshotSha256,
+      epochStartId: finalEpochStartId,
+      epochGenesisHash: finalEpochGenesisHash,
+      reason: reasonText,
+      createdBy: params.adminUsername,
+      createdAt,
+      keyId: ctx.activeKeyId,
+      snapshotVerified: true,
+      epochHmacVerified: true
+    },
+    auditEventId: auditRec?.id || 0
+  };
+}
+
+async function verifyAuditIntegrityChainWorker(
+  db: any,
+  jwtSecret: string,
+  limit?: number,
+  env?: Env
+) {
+  await ensureWorkerAnchorTable(db);
+  const ctx = await resolveWorkerAnchorContext(db, jwtSecret, env);
+  const countRes: any = await db.prepare('SELECT COUNT(*) as count FROM audit_events').first();
+  const totalInLedger = Number(countRes?.count || 0);
+  const hasExplicitLimit = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
+
+  let latestEpochRow: any = null;
+  try {
+    latestEpochRow = await db.prepare('SELECT * FROM audit_ledger_epochs ORDER BY id DESC LIMIT 1').first();
+  } catch {
+    latestEpochRow = null;
+  }
+
+  const brokenLinks: Array<{ id: number; reason: string; detail?: string }> = [];
+  const failedRowIds = new Set<number>();
+
+  if (latestEpochRow) {
+    const cutoffMaxId = Number(latestEpochRow.legacy_cutoff_max_id);
+    const legacyRowsRes = await db
+      .prepare(
+        `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+         FROM audit_events WHERE id <= ? ORDER BY id ASC`
+      )
+      .bind(cutoffMaxId)
+      .all();
+    const legacyRows: any[] = legacyRowsRes?.results || [];
+    const recomputedSnapshot = await computeWorkerLegacySnapshotSha256(legacyRows);
+    const legacySnapshotVerified =
+      legacyRows.length === Number(latestEpochRow.legacy_record_count) &&
+      timingSafeEqualStr(recomputedSnapshot.toLowerCase(), String(latestEpochRow.legacy_snapshot_sha256).toLowerCase());
+
+    if (!legacySnapshotVerified) {
+      brokenLinks.push({
+        id: cutoffMaxId,
+        reason: 'LEGACY_SNAPSHOT_TAMPERED',
+        detail: `Archived legacy slice (id <= ${cutoffMaxId}) failed SHA-256 snapshot verification`
+      });
+    }
+
+    const epochKey = await ctx.resolveKeyForId(latestEpochRow.key_id);
+    const epochHmacVerified = Boolean(
+      epochKey &&
+        timingSafeEqualStr(
+          String(latestEpochRow.epoch_hmac).toLowerCase(),
+          (
+            await computeWorkerEpochHmac(
+              {
+                epochLabel: String(latestEpochRow.epoch_label),
+                legacyCutoffMaxId: cutoffMaxId,
+                legacyRecordCount: Number(latestEpochRow.legacy_record_count),
+                legacySnapshotSha256: String(latestEpochRow.legacy_snapshot_sha256),
+                epochStartId: Number(latestEpochRow.epoch_start_id),
+                epochGenesisHash: String(latestEpochRow.epoch_genesis_hash),
+                createdBy: String(latestEpochRow.created_by),
+                createdAt: String(latestEpochRow.created_at),
+                keyId: String(latestEpochRow.key_id)
+              },
+              epochKey
+            )
+          ).toLowerCase()
+        )
+    );
+
+    if (!epochHmacVerified) {
+      brokenLinks.push({
+        id: Number(latestEpochRow.epoch_start_id || cutoffMaxId),
+        reason: 'EPOCH_HMAC_MISMATCH',
+        detail: `Epoch baseline record [${latestEpochRow.epoch_label}] HMAC verification failed`
+      });
+    }
+
+    const totalModernRow: any = await db
+      .prepare('SELECT COUNT(*) as count FROM audit_events WHERE id > ?')
+      .bind(cutoffMaxId)
+      .first();
+    const totalModern = Number(totalModernRow?.count || 0);
+
+    const modernRes = hasExplicitLimit
+      ? await db
+          .prepare(
+            `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+             FROM audit_events WHERE id > ? ORDER BY id DESC LIMIT ?`
+          )
+          .bind(cutoffMaxId, Math.floor(limit!))
+          .all()
+      : await db
+          .prepare(
+            `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+             FROM audit_events WHERE id > ? ORDER BY id ASC`
+          )
+          .bind(cutoffMaxId)
+          .all();
+
+    const modernRaw: any[] = modernRes?.results || [];
+    const modernChrono = hasExplicitLimit ? [...modernRaw].reverse() : modernRaw;
+    const coversFullModern = !hasExplicitLimit || modernChrono.length >= totalModern;
+    let epochBoundaryVerified = modernChrono.length > 0;
+
+    if (modernChrono.length > 0 && coversFullModern) {
+      const firstModern = modernChrono[0];
+      if (
+        Number(firstModern.id) !== Number(latestEpochRow.epoch_start_id) ||
+        !timingSafeEqualStr(String(firstModern.prev_hash).toLowerCase(), String(latestEpochRow.epoch_genesis_hash).toLowerCase())
+      ) {
+        epochBoundaryVerified = false;
+        brokenLinks.push({
+          id: Number(firstModern.id),
+          reason: 'EPOCH_BOUNDARY_MISMATCH',
+          detail: `Modern epoch start row (${firstModern.id}) failed boundary continuity`
+        });
+        failedRowIds.add(Number(firstModern.id));
+      }
+    }
+
+    for (let i = 0; i < modernChrono.length; i++) {
+      const r = modernChrono[i];
+      const rowId = Number(r.id);
+
+      if (
+        !r.integrity_hash ||
+        !/^[0-9a-f]{64}$/i.test(String(r.integrity_hash)) ||
+        !r.prev_hash ||
+        !/^[0-9a-f]{64}$/i.test(String(r.prev_hash))
+      ) {
+        brokenLinks.push({ id: rowId, reason: 'INVALID_FORMAT', detail: 'Missing or non-64-hex SHA-256 digest' });
+        failedRowIds.add(rowId);
+        continue;
+      }
+
+      const ts = r.timestamp || r.created_at;
+      const expectedHash = await sha256Hex(`${ts}|${r.username}|${r.requested_function}|${r.calculated_risk}|${r.status}|${r.reason}|${r.prev_hash}`);
+      if (!timingSafeEqualStr(String(r.integrity_hash).toLowerCase(), expectedHash.toLowerCase())) {
+        brokenLinks.push({ id: rowId, reason: 'HASH_MISMATCH', detail: 'Stored SHA-256 digest does not match row contents' });
+        failedRowIds.add(rowId);
+        continue;
+      }
+
+      if (i > 0) {
+        const prevRow = modernChrono[i - 1];
+        if (!timingSafeEqualStr(String(r.prev_hash).toLowerCase(), String(prevRow.integrity_hash).toLowerCase())) {
+          brokenLinks.push({
+            id: rowId,
+            reason: 'CHAIN_LINK_BREAK',
+            detail: `prev_hash mismatch after id ${prevRow.id}`
+          });
+          failedRowIds.add(rowId);
+          continue;
+        }
+        const prevTsMs = Date.parse(prevRow.timestamp || prevRow.created_at);
+        const curTsMs = Date.parse(ts);
+        if (Number.isFinite(prevTsMs) && Number.isFinite(curTsMs) && curTsMs + 1000 < prevTsMs) {
+          brokenLinks.push({
+            id: rowId,
+            reason: 'ORDER_ANOMALY',
+            detail: `Chronological timestamp regression relative to preceding id ${prevRow.id}`
+          });
+          failedRowIds.add(rowId);
+        }
+      }
+    }
+
+    const headRow = modernChrono[modernChrono.length - 1] || legacyRows[legacyRows.length - 1];
+    let anchorPresent = false;
+    let anchorVerified = true;
+    let anchorKeyId: string | null = null;
+    let anchorPreviousKeyId: string | null = null;
+    let anchorRotatedAt: string | null = null;
+
+    try {
+      const anchor: any = await db.prepare('SELECT * FROM audit_chain_anchor WHERE id = 1').first();
+      if (anchor) {
+        anchorPresent = true;
+        anchorKeyId = anchor.key_id || 'anchor-v1';
+        anchorPreviousKeyId = anchor.previous_key_id || null;
+        anchorRotatedAt = anchor.rotated_at || null;
+        const ok = await verifyWorkerAnchorRow(anchor, jwtSecret, ctx);
+        if (!ok) {
+          anchorVerified = false;
+          brokenLinks.push({ id: Number(anchor.head_id || 0), reason: 'ANCHOR_HMAC_MISMATCH', detail: 'Audit chain anchor HMAC signature verification failed' });
+        } else if (anchor.genesis_hash !== TRUSTED_AUDIT_GENESIS_HASH) {
+          anchorVerified = false;
+          brokenLinks.push({ id: Number(anchor.head_id || 0), reason: 'GENESIS_MISMATCH', detail: 'Anchor genesis hash mismatch' });
+        } else if (totalInLedger < Number(anchor.record_count)) {
+          anchorVerified = false;
+          brokenLinks.push({ id: Number(headRow?.id || anchor.head_id || 0), reason: 'TAIL_TRUNCATION', detail: `Ledger count (${totalInLedger}) < anchor count (${anchor.record_count})` });
+        } else if (totalInLedger > Number(anchor.record_count)) {
+          anchorVerified = false;
+          brokenLinks.push({ id: Number(headRow?.id || 0), reason: 'UNTRACKED_INSERTION', detail: `Ledger count (${totalInLedger}) > anchor count (${anchor.record_count})` });
+        } else if (headRow && (Number(headRow.id) !== Number(anchor.head_id) || headRow.integrity_hash !== anchor.head_hash)) {
+          anchorVerified = false;
+          brokenLinks.push({ id: Number(headRow.id), reason: 'HEAD_HASH_MISMATCH', detail: `Head (${headRow.id}) differs from anchor (${anchor.head_id})` });
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const verifiedEpochCount = Math.max(0, modernChrono.length - failedRowIds.size);
+    const verifiedEpochIntact =
+      brokenLinks.length === 0 &&
+      legacySnapshotVerified &&
+      epochHmacVerified &&
+      epochBoundaryVerified &&
+      anchorVerified &&
+      modernChrono.length > 0;
+
+    const verificationStatus = !legacySnapshotVerified
+      ? 'LEGACY_SNAPSHOT_TAMPERED'
+      : verifiedEpochIntact
+        ? 'VERIFIED_EPOCH_WITH_ARCHIVED_LEGACY'
+        : 'INTEGRITY_DISCREPANCY';
+
+    return {
+      chainIntact: false,
+      fullLedgerVerified: false,
+      verifiedEpochIntact,
+      verificationStatus,
+      genesisVerified: false,
+      trustedGenesisHash: TRUSTED_AUDIT_GENESIS_HASH,
+      anchorPresent,
+      anchorVerified,
+      anchorKeyId,
+      anchorPreviousKeyId,
+      anchorRotatedAt,
+      keySource: ctx.keySource,
+      keyFingerprint: ctx.keyFingerprint,
+      legacyRecordsCount: Number(latestEpochRow.legacy_record_count),
+      legacyCutoffMaxId: cutoffMaxId,
+      legacySnapshotVerified,
+      verifiedEpochCount,
+      suggestedLegacyCutoffMaxId: null,
+      epochLabel: String(latestEpochRow.epoch_label),
+      activeEpoch: {
+        id: Number(latestEpochRow.id),
+        epochLabel: String(latestEpochRow.epoch_label),
+        legacyCutoffMaxId: cutoffMaxId,
+        legacyRecordCount: Number(latestEpochRow.legacy_record_count),
+        legacySnapshotSha256: String(latestEpochRow.legacy_snapshot_sha256),
+        epochStartId: Number(latestEpochRow.epoch_start_id),
+        epochGenesisHash: String(latestEpochRow.epoch_genesis_hash),
+        reason: latestEpochRow.reason || null,
+        createdBy: String(latestEpochRow.created_by),
+        createdAt: String(latestEpochRow.created_at),
+        keyId: String(latestEpochRow.key_id),
+        snapshotVerified: legacySnapshotVerified,
+        epochHmacVerified
+      },
+      totalInLedger,
+      totalChecked: modernChrono.length,
+      verifiedCount: verifiedEpochCount,
+      brokenLinks: brokenLinks.slice(0, 50),
+      headHash: headRow?.integrity_hash || null,
+      verifiedAt: new Date().toISOString()
+    };
+  }
+
+  const rowsRes = hasExplicitLimit
+    ? await db
+        .prepare(
+          `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+           FROM audit_events
+           ORDER BY id DESC
+           LIMIT ?`
+        )
+        .bind(Math.floor(limit!))
+        .all()
+    : await db
+        .prepare(
+          `SELECT id, timestamp, created_at, username, requested_function, calculated_risk, status, reason, integrity_hash, prev_hash
+           FROM audit_events
+           ORDER BY id ASC`
+        )
+        .all();
+
+  const rawRows: any[] = rowsRes?.results || [];
+  const chronological = hasExplicitLimit ? [...rawRows].reverse() : rawRows;
+  const fullLedgerVerified = !hasExplicitLimit || chronological.length >= totalInLedger;
+
+  let genesisVerified = false;
+  if (chronological.length === 0) {
+    genesisVerified = true;
+  } else {
+    const firstRow = chronological[0];
+    if (fullLedgerVerified) {
+      genesisVerified = firstRow.prev_hash === TRUSTED_AUDIT_GENESIS_HASH;
+      if (!genesisVerified) {
+        brokenLinks.push({
+          id: Number(firstRow.id),
+          reason: 'GENESIS_MISMATCH',
+          detail: `First record prev_hash (${String(firstRow.prev_hash || 'NULL').slice(0, 16)}) does not match trusted genesis anchor`
+        });
+        failedRowIds.add(Number(firstRow.id));
+      }
+    } else {
+      genesisVerified = firstRow.prev_hash === TRUSTED_AUDIT_GENESIS_HASH;
+    }
+  }
+
+  for (let i = 0; i < chronological.length; i++) {
+    const r = chronological[i];
+    const rowId = Number(r.id);
+
+    if (
+      !r.integrity_hash ||
+      !/^[0-9a-f]{64}$/i.test(String(r.integrity_hash)) ||
+      !r.prev_hash ||
+      !/^[0-9a-f]{64}$/i.test(String(r.prev_hash))
+    ) {
+      brokenLinks.push({ id: rowId, reason: 'INVALID_FORMAT', detail: 'Missing or non-64-hex SHA-256 digest' });
+      failedRowIds.add(rowId);
+      continue;
+    }
+
+    const ts = r.timestamp || r.created_at;
+    const payload = `${ts}|${r.username}|${r.requested_function}|${r.calculated_risk}|${r.status}|${r.reason}|${r.prev_hash}`;
+    const expectedHash = await sha256Hex(payload);
+
+    if (!timingSafeEqualStr(String(r.integrity_hash).toLowerCase(), expectedHash.toLowerCase())) {
+      brokenLinks.push({ id: rowId, reason: 'HASH_MISMATCH', detail: 'Stored SHA-256 digest does not match row contents' });
+      failedRowIds.add(rowId);
+      continue;
+    }
+
+    if (i > 0) {
+      const prevRow = chronological[i - 1];
+      if (!timingSafeEqualStr(String(r.prev_hash).toLowerCase(), String(prevRow.integrity_hash).toLowerCase())) {
+        brokenLinks.push({
+          id: rowId,
+          reason: 'CHAIN_LINK_BREAK',
+          detail: `prev_hash mismatch after id ${prevRow.id} (deletion, insertion, or reordering detected)`
+        });
+        failedRowIds.add(rowId);
+        continue;
+      }
+
+      const prevTsMs = Date.parse(prevRow.timestamp || prevRow.created_at);
+      const curTsMs = Date.parse(ts);
+      if (Number.isFinite(prevTsMs) && Number.isFinite(curTsMs) && curTsMs + 1000 < prevTsMs) {
+        brokenLinks.push({
+          id: rowId,
+          reason: 'ORDER_ANOMALY',
+          detail: `Chronological timestamp regression relative to preceding id ${prevRow.id}`
+        });
+        failedRowIds.add(rowId);
+      }
+    }
+  }
+
+  const headRow = chronological[chronological.length - 1];
+  let anchorPresent = false;
+  let anchorVerified = true;
+  let anchorKeyId: string | null = null;
+  let anchorPreviousKeyId: string | null = null;
+  let anchorRotatedAt: string | null = null;
+
+  try {
+    const anchor: any = await db.prepare('SELECT * FROM audit_chain_anchor WHERE id = 1').first();
+    if (anchor) {
+      anchorPresent = true;
+      anchorKeyId = anchor.key_id || 'anchor-v1';
+      anchorPreviousKeyId = anchor.previous_key_id || null;
+      anchorRotatedAt = anchor.rotated_at || null;
+      const ok = await verifyWorkerAnchorRow(anchor, jwtSecret, ctx);
+      if (!ok) {
+        anchorVerified = false;
+        brokenLinks.push({
+          id: Number(anchor.head_id || 0),
+          reason: 'ANCHOR_HMAC_MISMATCH',
+          detail: `Audit chain anchor HMAC signature verification failed (key_id=${anchorKeyId})`
+        });
+      } else if (anchor.genesis_hash !== TRUSTED_AUDIT_GENESIS_HASH) {
+        anchorVerified = false;
+        brokenLinks.push({
+          id: Number(anchor.head_id || 0),
+          reason: 'GENESIS_MISMATCH',
+          detail: 'Anchor genesis hash mismatch'
+        });
+      } else if (totalInLedger < Number(anchor.record_count)) {
+        anchorVerified = false;
+        brokenLinks.push({
+          id: Number(headRow?.id || anchor.head_id || 0),
+          reason: 'TAIL_TRUNCATION',
+          detail: `Ledger count (${totalInLedger}) is lower than sealed anchor count (${anchor.record_count})`
+        });
+      } else if (totalInLedger > Number(anchor.record_count)) {
+        anchorVerified = false;
+        brokenLinks.push({
+          id: Number(headRow?.id || 0),
+          reason: 'UNTRACKED_INSERTION',
+          detail: `Ledger count (${totalInLedger}) exceeds sealed anchor count (${anchor.record_count})`
+        });
+      } else if (
+        headRow &&
+        (Number(headRow.id) !== Number(anchor.head_id) || headRow.integrity_hash !== anchor.head_hash)
+      ) {
+        anchorVerified = false;
+        brokenLinks.push({
+          id: Number(headRow.id),
+          reason: 'HEAD_HASH_MISMATCH',
+          detail: `Current head (${headRow.id}) differs from sealed anchor head (${anchor.head_id})`
+        });
+      }
+    }
+  } catch {
+    // ignore if anchor table absent in minimal DB
+  }
+
+  const verifiedCount = Math.max(0, chronological.length - failedRowIds.size);
+  const chainIntact =
+    brokenLinks.length === 0 &&
+    chronological.length > 0 &&
+    (!fullLedgerVerified || genesisVerified) &&
+    anchorVerified;
+
+  let suggestedLegacyCutoffMaxId: number | null = null;
+  if (!chainIntact && chronological.length > 0 && fullLedgerVerified) {
+    suggestedLegacyCutoffMaxId = (await findWorkerSuggestedLegacyCutoff(chronological)).suggestedCutoffMaxId;
+  }
+
+  const verificationStatus =
+    totalInLedger === 0
+      ? 'EMPTY_LEDGER'
+      : chainIntact
+        ? 'FULL_LEDGER_VERIFIED'
+        : 'INTEGRITY_DISCREPANCY';
+
+  return {
+    chainIntact,
+    fullLedgerVerified,
+    verifiedEpochIntact: chainIntact,
+    verificationStatus,
+    genesisVerified,
+    trustedGenesisHash: TRUSTED_AUDIT_GENESIS_HASH,
+    anchorPresent,
+    anchorVerified,
+    anchorKeyId,
+    anchorPreviousKeyId,
+    anchorRotatedAt,
+    keySource: ctx.keySource,
+    keyFingerprint: ctx.keyFingerprint,
+    legacyRecordsCount: 0,
+    legacyCutoffMaxId: 0,
+    legacySnapshotVerified: null,
+    verifiedEpochCount: verifiedCount,
+    suggestedLegacyCutoffMaxId,
+    epochLabel: null,
+    activeEpoch: null,
+    totalInLedger,
+    totalChecked: chronological.length,
+    verifiedCount,
+    brokenLinks: brokenLinks.slice(0, 50),
+    headHash: headRow?.integrity_hash || null,
+    verifiedAt: new Date().toISOString()
+  };
+}
+
 async function logSecurityEvent(
   db: any,
   username: string,
@@ -2150,31 +3483,167 @@ async function logSecurityEvent(
   status: 'ALLOWED' | 'BLOCKED',
   reason: string,
   latencyMs: number,
-  eventType: string
-) {
-  if (!db) return;
-  const isoTimestamp = new Date().toISOString();
-  try {
-    let prevHash = 'GENESIS_HASH_ZERO_TRUST_CHAIN';
-    try {
-      const lastRow: any = await db.prepare('SELECT integrity_hash FROM audit_events ORDER BY id DESC LIMIT 1').first();
-      if (lastRow?.integrity_hash) {
-        prevHash = lastRow.integrity_hash;
+  eventType: string,
+  jwtSecret?: string,
+  env?: Env
+): Promise<{ id: number; prevHash: string; integrityHash: string; isoTimestamp: string } | null> {
+  if (!db) return null;
+
+  return enqueueWorkerAuditWrite(db, async () => {
+    const isoTimestamp = new Date().toISOString();
+    const resolvedJwt = jwtSecret || env?.JWT_SECRET || ephemeralWorkerDevSecret || '';
+    const ctx = resolvedJwt ? await resolveWorkerAnchorContext(db, resolvedJwt, env) : null;
+
+    await ensureWorkerAnchorTable(db);
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        let prevHash = TRUSTED_AUDIT_GENESIS_HASH;
+        let nextId = 1;
+        let totalCount = 1;
+
+        try {
+          const lastRow: any = await db.prepare('SELECT id, integrity_hash FROM audit_events ORDER BY id DESC LIMIT 1').first();
+          if (lastRow) {
+            if (lastRow.integrity_hash) prevHash = String(lastRow.integrity_hash);
+            if (Number.isFinite(Number(lastRow.id))) nextId = Number(lastRow.id) + 1;
+          }
+          const countRow: any = await db.prepare('SELECT COUNT(*) as c FROM audit_events').first();
+          totalCount = Number(countRow?.c || 0) + 1;
+        } catch {
+          // ignore
+        }
+
+        const integrityHash = await sha256Hex(`${isoTimestamp}|${username}|${path}|${risk}|${status}|${reason}|${prevHash}`);
+
+        if (ctx && typeof db.batch === 'function') {
+          let existingAnchor: any = null;
+          try {
+            existingAnchor = await db.prepare('SELECT key_id, previous_key_id, rotated_at FROM audit_chain_anchor WHERE id = 1').first();
+          } catch {
+            existingAnchor = null;
+          }
+
+          const previousKeyId =
+            existingAnchor && existingAnchor.key_id && existingAnchor.key_id !== ctx.activeKeyId
+              ? String(existingAnchor.key_id)
+              : (existingAnchor?.previous_key_id ?? null);
+          const rotatedAt =
+            existingAnchor && existingAnchor.key_id && existingAnchor.key_id !== ctx.activeKeyId
+              ? isoTimestamp
+              : (existingAnchor?.rotated_at ?? null);
+
+          const anchorHmac = await computeWorkerAnchorHmac(
+            TRUSTED_AUDIT_GENESIS_HASH,
+            nextId,
+            integrityHash,
+            totalCount,
+            ctx.activeKeyId,
+            ctx.activeKey
+          );
+
+          const stmtAudit = db
+            .prepare(
+              'INSERT INTO audit_events (id, timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, prev_hash, integrity_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )
+            .bind(nextId, isoTimestamp, username, path, risk, status, reason, latencyMs, eventType, prevHash, integrityHash, isoTimestamp);
+
+          const stmtAnchor = db
+            .prepare(
+              `INSERT INTO audit_chain_anchor (id, genesis_hash, head_id, head_hash, record_count, anchor_hmac, updated_at, key_id, previous_key_id, rotated_at)
+               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 genesis_hash = excluded.genesis_hash,
+                 head_id = excluded.head_id,
+                 head_hash = excluded.head_hash,
+                 record_count = excluded.record_count,
+                 anchor_hmac = excluded.anchor_hmac,
+                 updated_at = excluded.updated_at,
+                 key_id = excluded.key_id,
+                 previous_key_id = excluded.previous_key_id,
+                 rotated_at = excluded.rotated_at`
+            )
+            .bind(
+              TRUSTED_AUDIT_GENESIS_HASH,
+              nextId,
+              integrityHash,
+              totalCount,
+              anchorHmac,
+              isoTimestamp,
+              ctx.activeKeyId,
+              previousKeyId,
+              rotatedAt
+            );
+
+          const stmtCompat = db
+            .prepare(
+              'INSERT INTO security_audit_logs (timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            )
+            .bind(isoTimestamp, username, path, risk, status, reason, latencyMs, eventType);
+
+          await db.batch([stmtAudit, stmtAnchor, stmtCompat]);
+          return { id: nextId, prevHash, integrityHash, isoTimestamp };
+        }
+
+        const insRes: any = await db
+          .prepare(
+            'INSERT INTO audit_events (id, timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, prev_hash, integrity_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(nextId, isoTimestamp, username, path, risk, status, reason, latencyMs, eventType, prevHash, integrityHash, isoTimestamp)
+          .run();
+
+        const insertedId = Number(insRes?.meta?.last_row_id ?? insRes?.lastRowId ?? nextId);
+
+        if (ctx && insertedId > 0) {
+          try {
+            const countRow: any = await db.prepare('SELECT COUNT(*) as c FROM audit_events').first();
+            const actualCount = Number(countRow?.c || totalCount);
+            const anchorHmac = await computeWorkerAnchorHmac(
+              TRUSTED_AUDIT_GENESIS_HASH,
+              insertedId,
+              integrityHash,
+              actualCount,
+              ctx.activeKeyId,
+              ctx.activeKey
+            );
+            await db
+              .prepare(
+                `INSERT INTO audit_chain_anchor (id, genesis_hash, head_id, head_hash, record_count, anchor_hmac, updated_at, key_id)
+                 VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   genesis_hash = excluded.genesis_hash,
+                   head_id = excluded.head_id,
+                   head_hash = excluded.head_hash,
+                   record_count = excluded.record_count,
+                   anchor_hmac = excluded.anchor_hmac,
+                   updated_at = excluded.updated_at,
+                   key_id = excluded.key_id`
+              )
+              .bind(TRUSTED_AUDIT_GENESIS_HASH, insertedId, integrityHash, actualCount, anchorHmac, isoTimestamp, ctx.activeKeyId)
+              .run();
+          } catch {
+            // ignore anchor errors on mocked DBs
+          }
+        }
+
+        await db
+          .prepare(
+            'INSERT INTO security_audit_logs (timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(isoTimestamp, username, path, risk, status, reason, latencyMs, eventType)
+          .run();
+
+        return { id: insertedId, prevHash, integrityHash, isoTimestamp };
+      } catch (e: any) {
+        if (attempt < 2 && /UNIQUE constraint|SQLITE_BUSY/i.test(String(e?.message || ''))) {
+          continue;
+        }
+        console.error('[D1] Logging error (fail-closed maintained):', e);
+        return null;
       }
-    } catch { /* ignore */ }
-
-    const integrityHash = await sha256Hex(`${prevHash}:${isoTimestamp}:${username}:${path}:${risk}:${status}`);
-
-    await db.prepare(
-      'INSERT INTO audit_events (timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type, prev_hash, integrity_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).bind(isoTimestamp, username, path, risk, status, reason, latencyMs, eventType, prevHash, integrityHash, isoTimestamp).run();
-
-    await db.prepare(
-      'INSERT INTO security_audit_logs (timestamp, username, requested_function, calculated_risk, status, reason, verification_latency_ms, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).bind(isoTimestamp, username, path, risk, status, reason, latencyMs, eventType).run();
-  } catch (e) {
-    console.error('[D1] Logging error (fail-closed maintained):', e);
-  }
+    }
+    return null;
+  });
 }
 
 function jsonResponse(data: any, status = 200, origin = '', latencyMs?: number, env?: Env): Response {
